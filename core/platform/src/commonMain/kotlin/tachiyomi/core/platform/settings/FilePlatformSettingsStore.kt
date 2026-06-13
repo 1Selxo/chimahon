@@ -71,8 +71,8 @@ class FilePlatformSettingsStore(
     private fun persist() {
         settingsFile.parent?.let(fileSystem::createDirectories)
         val encoded = values
-            .toSortedMap()
             .entries
+            .sortedBy { entry -> entry.key }
             .joinToString(separator = "\n", postfix = if (values.isEmpty()) "" else "\n") { (key, value) ->
                 "${encodeToken(key)}\t${encodeToken(value)}"
             }
