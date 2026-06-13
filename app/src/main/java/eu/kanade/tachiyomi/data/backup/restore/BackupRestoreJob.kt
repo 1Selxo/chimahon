@@ -6,23 +6,26 @@ import android.net.Uri
 import android.os.Build
 import androidx.core.net.toUri
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
-import androidx.work.workDataOf
 import eu.kanade.tachiyomi.data.BackupRestoreStatus
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.cancelNotification
-import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
-import eu.kanade.tachiyomi.util.system.workManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskInputData
+import tachiyomi.core.platform.background.BackgroundTaskInputValue
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -85,8 +88,13 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
     }
 
     companion object {
-        fun isRunning(context: Context): Boolean {
-            return context.workManager.isRunning(TAG)
+        private const val WORKER_KEY = "backup_restore"
+
+        fun isRunning(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = backupRestoreScheduler(context),
+        ): Boolean {
+            return scheduler.isRunning(TAG)
         }
 
         fun start(
@@ -94,25 +102,45 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
             uri: Uri,
             options: RestoreOptions,
             sync: Boolean = false,
+            scheduler: BackgroundTaskScheduler = backupRestoreScheduler(context),
         ) {
-            val inputData = workDataOf(
-                LOCATION_URI_KEY to uri.toString(),
-                SYNC_KEY to sync,
-                OPTIONS_KEY to options.asBooleanArray(),
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = TAG,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.OneTime,
+                    policy = ExistingBackgroundTaskPolicy.Keep,
+                    inputData = BackgroundTaskInputData.of(
+                        LOCATION_URI_KEY to BackgroundTaskInputValue.StringValue(uri.toString()),
+                        SYNC_KEY to BackgroundTaskInputValue.BooleanValue(sync),
+                        OPTIONS_KEY to BackgroundTaskInputValue.BooleanArrayValue(options.asBooleanArray()),
+                    ),
+                    tags = setOf(TAG),
+                ),
             )
-            val request = OneTimeWorkRequestBuilder<BackupRestoreJob>()
-                .addTag(TAG)
-                .setInputData(inputData)
-                .build()
-            context.workManager.enqueueUniqueWork(TAG, ExistingWorkPolicy.KEEP, request)
         }
 
-        fun stop(context: Context) {
-            context.workManager.cancelUniqueWork(TAG)
+        fun stop(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = backupRestoreScheduler(context),
+        ) {
+            scheduler.cancel(TAG)
             // KMK -->
             val backupRestoreStatus: BackupRestoreStatus = Injekt.get()
             runBlocking { backupRestoreStatus.stop() }
             // KMK <--
+        }
+
+        private fun backupRestoreScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> BackupRestoreJob::class.java
+                        else -> null
+                    }
+                },
+            )
         }
     }
 }

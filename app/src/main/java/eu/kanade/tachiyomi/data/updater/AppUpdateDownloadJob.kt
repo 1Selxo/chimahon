@@ -5,19 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.ServiceInfo
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Build
 import androidx.annotation.RequiresApi
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.Data
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.notification.Notifications
@@ -29,7 +20,6 @@ import eu.kanade.tachiyomi.util.system.isConnectedToWifi
 import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.tachiyomi.util.system.workManager
 import exh.log.xLogE
 import exh.source.ExhPreferences
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +32,19 @@ import okhttp3.internal.http2.StreamResetException
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundNetworkConstraint
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskBackoffCriteria
+import tachiyomi.core.platform.background.BackgroundTaskBackoffPolicy
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskConstraints
+import tachiyomi.core.platform.background.BackgroundTaskInputData
+import tachiyomi.core.platform.background.BackgroundTaskInputValue
+import tachiyomi.core.platform.background.BackgroundTaskOutOfQuotaPolicy
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import tachiyomi.domain.release.service.AppUpdatePolicy
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
@@ -49,8 +52,9 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.lang.ref.WeakReference
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 
 class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
@@ -271,6 +275,7 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
 
     companion object {
         private const val TAG = "AppUpdateDownload"
+        private const val WORKER_KEY = "app_update_download"
 
         // KMK -->
         const val PACKAGE_INSTALLED_ACTION =
@@ -293,57 +298,81 @@ class AppUpdateDownloadJob(private val context: Context, workerParams: WorkerPar
             // KMK -->
             scheduled: Boolean = false,
             // KMK <--
+            scheduler: BackgroundTaskScheduler = appUpdateDownloadScheduler(context),
         ) {
-            val data = Data.Builder()
-            data.putString(EXTRA_DOWNLOAD_URL, url)
-            data.putString(EXTRA_DOWNLOAD_TITLE, title)
-            val request = OneTimeWorkRequestBuilder<AppUpdateDownloadJob>()
-                .addTag(TAG)
-                .apply {
-                    // KMK -->
-                    if (scheduled) {
-                        data.putBoolean(SCHEDULED_RUN, true)
-                        val restrictions = Injekt.get<ExhPreferences>().appShouldAutoUpdate().get()
-                        val networkType = if (AppUpdatePolicy.DEVICE_NETWORK_NOT_METERED in restrictions) {
-                            NetworkType.UNMETERED
-                        } else {
-                            NetworkType.CONNECTED
-                        }
-                        val networkRequestBuilder = NetworkRequest.Builder()
-                        if (AppUpdatePolicy.DEVICE_ONLY_ON_WIFI in restrictions) {
-                            networkRequestBuilder.addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                        }
-                        if (AppUpdatePolicy.DEVICE_NETWORK_NOT_METERED in restrictions) {
-                            networkRequestBuilder.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
-                        }
-                        val constraints = Constraints.Builder()
-                            // 'networkRequest' only applies to Android 9+, otherwise 'networkType' is used
-                            .setRequiredNetworkRequest(networkRequestBuilder.build(), networkType)
-                            .setRequiresCharging(AppUpdatePolicy.DEVICE_CHARGING in restrictions)
-                            .setRequiresBatteryNotLow(true)
-                            .build()
+            val inputData = mutableMapOf<String, BackgroundTaskInputValue>(
+                EXTRA_DOWNLOAD_URL to BackgroundTaskInputValue.StringValue(url),
+            )
+            title?.let { inputData[EXTRA_DOWNLOAD_TITLE] = BackgroundTaskInputValue.StringValue(it) }
 
-                        setConstraints(constraints)
-                        setInitialDelay(10, TimeUnit.MINUTES)
-                        setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
+            val constraints: BackgroundTaskConstraints
+            val initialDelay: Duration
+            val backoffCriteria: BackgroundTaskBackoffCriteria?
+            val expeditedPolicy: BackgroundTaskOutOfQuotaPolicy?
+
+            // KMK -->
+            if (scheduled) {
+                inputData[SCHEDULED_RUN] = BackgroundTaskInputValue.BooleanValue(true)
+                val restrictions = Injekt.get<ExhPreferences>().appShouldAutoUpdate().get()
+                constraints = BackgroundTaskConstraints(
+                    network = if (AppUpdatePolicy.DEVICE_NETWORK_NOT_METERED in restrictions) {
+                        BackgroundNetworkConstraint.Unmetered
                     } else {
-                        setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                        // KMK <--
-                        setConstraints(
-                            Constraints(
-                                requiredNetworkType = NetworkType.CONNECTED,
-                            ),
-                        )
-                    }
-                    setInputData(data.build())
-                }
-                .build()
+                        BackgroundNetworkConstraint.Connected
+                    },
+                    requiresWifi = AppUpdatePolicy.DEVICE_ONLY_ON_WIFI in restrictions,
+                    requiresCharging = AppUpdatePolicy.DEVICE_CHARGING in restrictions,
+                    requiresBatteryNotLow = true,
+                )
+                initialDelay = 10.minutes
+                backoffCriteria = BackgroundTaskBackoffCriteria(
+                    policy = BackgroundTaskBackoffPolicy.Linear,
+                    delay = 10.minutes,
+                )
+                expeditedPolicy = null
+            } else {
+                constraints = BackgroundTaskConstraints(
+                    network = BackgroundNetworkConstraint.Connected,
+                )
+                initialDelay = Duration.ZERO
+                backoffCriteria = null
+                expeditedPolicy = BackgroundTaskOutOfQuotaPolicy.RunAsNonExpedited
+            }
+            // KMK <--
 
-            context.workManager.enqueueUniqueWork(TAG, ExistingWorkPolicy.REPLACE, request)
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = TAG,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.OneTime,
+                    constraints = constraints,
+                    policy = ExistingBackgroundTaskPolicy.Replace,
+                    inputData = BackgroundTaskInputData(inputData),
+                    initialDelay = initialDelay,
+                    backoffCriteria = backoffCriteria,
+                    expeditedPolicy = expeditedPolicy,
+                    tags = setOf(TAG),
+                ),
+            )
         }
 
-        fun stop(context: Context) {
-            context.workManager.cancelUniqueWork(TAG)
+        fun stop(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = appUpdateDownloadScheduler(context),
+        ) {
+            scheduler.cancel(TAG)
+        }
+
+        private fun appUpdateDownloadScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> AppUpdateDownloadJob::class.java
+                        else -> null
+                    }
+                },
+            )
         }
     }
 }

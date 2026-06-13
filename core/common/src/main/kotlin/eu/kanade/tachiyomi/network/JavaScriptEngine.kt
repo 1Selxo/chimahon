@@ -1,14 +1,17 @@
 package eu.kanade.tachiyomi.network
 
 import android.content.Context
-import app.cash.quickjs.QuickJs
-import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.platform.javascript.AndroidJavaScriptRuntimeFactory
+import tachiyomi.core.platform.javascript.JavaScriptRuntimeFactory
 
 /**
  * Util for evaluating JavaScript in sources.
  */
 @Suppress("UNUSED", "UNCHECKED_CAST")
-class JavaScriptEngine(@Suppress("UNUSED_PARAMETER") context: Context) {
+class JavaScriptEngine(
+    @Suppress("UNUSED_PARAMETER") context: Context,
+    private val runtimeFactory: JavaScriptRuntimeFactory = AndroidJavaScriptRuntimeFactory,
+) {
 
     /**
      * Evaluate arbitrary JavaScript code and get the result as a primitive type
@@ -18,9 +21,5 @@ class JavaScriptEngine(@Suppress("UNUSED_PARAMETER") context: Context) {
      * @param script JavaScript to execute.
      * @return Result of JavaScript code as a primitive type.
      */
-    suspend fun <T> evaluate(script: String): T = withIOContext {
-        QuickJs.create().use {
-            it.evaluate(script) as T
-        }
-    }
+    suspend fun <T> evaluate(script: String): T = runtimeFactory.create().evaluate(script)
 }

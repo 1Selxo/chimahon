@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.source.model
 
-import android.net.Uri
-import eu.kanade.tachiyomi.network.ProgressListener
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
@@ -13,8 +11,8 @@ open class Page(
     /* SY --> */
     var /* SY <-- */ url: String = "",
     var imageUrl: String? = null,
-    @Transient var uri: Uri? = null, // Deprecated but can't be deleted due to extensions
-) : ProgressListener {
+    @Transient var uri: PlatformUri? = null, // Deprecated but can't be deleted due to extensions
+) : SourceProgressListener {
 
     val number: Int
         get() = index + 1

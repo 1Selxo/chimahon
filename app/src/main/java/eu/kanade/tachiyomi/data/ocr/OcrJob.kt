@@ -4,11 +4,7 @@ import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.Notifications
@@ -17,6 +13,12 @@ import eu.kanade.tachiyomi.util.system.setForegroundSafely
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -58,25 +60,47 @@ class OcrJob(context: Context, workerParams: WorkerParameters) : CoroutineWorker
 
     companion object {
         private const val TAG = "OcrJob"
+        private const val WORKER_KEY = "ocr"
 
-        fun start(context: Context) {
-            val request = OneTimeWorkRequestBuilder<OcrJob>()
-                .addTag(TAG)
-                .build()
-            WorkManager.getInstance(context)
-                .enqueueUniqueWork(TAG, ExistingWorkPolicy.KEEP, request)
+        fun start(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = ocrScheduler(context),
+        ) {
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = TAG,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.OneTime,
+                    policy = ExistingBackgroundTaskPolicy.Keep,
+                    tags = setOf(TAG),
+                ),
+            )
         }
 
-        fun stop(context: Context) {
-            WorkManager.getInstance(context)
-                .cancelUniqueWork(TAG)
+        fun stop(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = ocrScheduler(context),
+        ) {
+            scheduler.cancel(TAG)
         }
 
-        fun isRunning(context: Context): Boolean {
-            return WorkManager.getInstance(context)
-                .getWorkInfosForUniqueWork(TAG)
-                .get()
-                .let { list -> list.count { it.state == WorkInfo.State.RUNNING } == 1 }
+        fun isRunning(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = ocrScheduler(context),
+        ): Boolean {
+            return scheduler.isRunning(TAG)
+        }
+
+        private fun ocrScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> OcrJob::class.java
+                        else -> null
+                    }
+                },
+            )
         }
     }
 }

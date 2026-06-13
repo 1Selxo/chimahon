@@ -4,13 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.os.Build
 import android.util.Log
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkerParameters
 import chimahon.HoshiDicts
 import chimahon.dictionary.checkDictionaryUpdates
@@ -18,17 +12,25 @@ import chimahon.dictionary.readDictionaryIndex
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.ui.dictionary.DictionaryPreferences
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
-import eu.kanade.tachiyomi.util.system.workManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundNetworkConstraint
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskConstraints
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.hours
 
 class DictionaryUpdateJob(context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
@@ -233,6 +235,8 @@ class DictionaryUpdateJob(context: Context, workerParams: WorkerParameters) :
         private const val TAG = "DictUpdateJob"
         private const val UNIQUE_WORK_NAME = "DictionaryUpdate-auto"
         private const val MANUAL_WORK_NAME = "DictionaryUpdate-manual"
+        private const val MANUAL_TAG = "manual"
+        private const val WORKER_KEY = "dictionary_update"
 
         private val downloadClient = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -240,44 +244,66 @@ class DictionaryUpdateJob(context: Context, workerParams: WorkerParameters) :
             .followRedirects(true)
             .build()
 
-        fun checkNow(context: Context) {
-            val request = OneTimeWorkRequestBuilder<DictionaryUpdateJob>()
-                .addTag(TAG)
-                .addTag("manual")
-                .setConstraints(Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build())
-                .build()
-            context.workManager.enqueueUniqueWork(MANUAL_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+        fun checkNow(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = dictionaryUpdateScheduler(context),
+        ) {
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = MANUAL_WORK_NAME,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.OneTime,
+                    constraints = BackgroundTaskConstraints(
+                        network = BackgroundNetworkConstraint.Connected,
+                    ),
+                    policy = ExistingBackgroundTaskPolicy.Keep,
+                    tags = setOf(TAG, MANUAL_TAG),
+                ),
+            )
             Log.d(TAG, "Manual dictionary update check enqueued")
         }
 
-        fun setupTask(context: Context, enabled: Boolean, intervalHours: Int = 24) {
+        fun setupTask(
+            context: Context,
+            enabled: Boolean,
+            intervalHours: Int = 24,
+            scheduler: BackgroundTaskScheduler = dictionaryUpdateScheduler(context),
+        ) {
             if (enabled) {
-                val constraints = Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-
                 val interval = intervalHours.coerceIn(1, 168)
                 val flex = (interval / 24).coerceIn(1, 6)
-                val request = PeriodicWorkRequestBuilder<DictionaryUpdateJob>(
-                    interval.toLong(), TimeUnit.HOURS,
-                    flex.toLong(), TimeUnit.HOURS,
-                )
-                    .addTag(TAG)
-                    .setConstraints(constraints)
-                    .build()
-
-                context.workManager.enqueueUniquePeriodicWork(
-                    UNIQUE_WORK_NAME,
-                    ExistingPeriodicWorkPolicy.UPDATE,
-                    request,
+                scheduler.schedule(
+                    BackgroundTask(
+                        uniqueName = UNIQUE_WORK_NAME,
+                        workerKey = WORKER_KEY,
+                        cadence = BackgroundTaskCadence.Periodic(
+                            repeatInterval = interval.hours,
+                            flexInterval = flex.hours,
+                        ),
+                        constraints = BackgroundTaskConstraints(
+                            network = BackgroundNetworkConstraint.Connected,
+                        ),
+                        policy = ExistingBackgroundTaskPolicy.Update,
+                        tags = setOf(TAG),
+                    ),
                 )
                 Log.d(TAG, "Scheduled daily dictionary update check")
             } else {
-                context.workManager.cancelUniqueWork(UNIQUE_WORK_NAME)
+                scheduler.cancel(UNIQUE_WORK_NAME)
                 Log.d(TAG, "Cancelled dictionary update check")
             }
+        }
+
+        private fun dictionaryUpdateScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> DictionaryUpdateJob::class.java
+                        else -> null
+                    }
+                },
+            )
         }
     }
 }

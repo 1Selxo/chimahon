@@ -326,7 +326,7 @@ class MangaRestorer(
                 chapterFlags = manga.chapterFlags,
                 coverLastModified = manga.coverLastModified,
                 dateAdded = manga.dateAdded,
-                updateStrategy = manga.updateStrategy,
+                updateStrategy = UpdateStrategyColumnAdapter.encode(manga.updateStrategy),
                 version = manga.version,
                 notes = manga.notes,
             )
@@ -424,7 +424,7 @@ class MangaRestorer(
             item.copy(
                 id = dbHistory._id,
                 chapterId = dbHistory.chapter_id,
-                readAt = max(item.readAt?.time ?: 0L, dbHistory.last_read?.time ?: 0L)
+                readAt = max(item.readAt?.time ?: 0L, dbHistory.last_read ?: 0L)
                     .takeIf { it > 0L }
                     ?.let { Date(it) },
                 readDuration = max(item.readDuration, dbHistory.time_read) - dbHistory.time_read,
@@ -436,7 +436,7 @@ class MangaRestorer(
                 toUpdate.forEach {
                     historyQueries.upsert(
                         it.chapterId,
-                        it.readAt,
+                        it.readAt?.time,
                         it.readDuration,
                     )
                 }

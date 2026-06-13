@@ -5,13 +5,8 @@ import android.content.pm.ServiceInfo
 import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.asFlow
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.Notifications
@@ -24,8 +19,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combineTransform
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import tachiyomi.domain.download.service.DownloadPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -105,32 +105,54 @@ class DownloadJob(private val context: Context, workerParams: WorkerParameters) 
 
     companion object {
         private const val TAG = "Downloader"
+        private const val WORKER_KEY = "download"
 
-        fun start(context: Context) {
-            val request = OneTimeWorkRequestBuilder<DownloadJob>()
-                .addTag(TAG)
-                .build()
-            WorkManager.getInstance(context)
-                .enqueueUniqueWork(TAG, ExistingWorkPolicy.REPLACE, request)
+        fun start(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = downloadScheduler(context),
+        ) {
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = TAG,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.OneTime,
+                    policy = ExistingBackgroundTaskPolicy.Replace,
+                    tags = setOf(TAG),
+                ),
+            )
         }
 
-        fun stop(context: Context) {
-            WorkManager.getInstance(context)
-                .cancelUniqueWork(TAG)
+        fun stop(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = downloadScheduler(context),
+        ) {
+            scheduler.cancel(TAG)
         }
 
-        fun isRunning(context: Context): Boolean {
-            return WorkManager.getInstance(context)
-                .getWorkInfosForUniqueWork(TAG)
-                .get()
-                .let { list -> list.count { it.state == WorkInfo.State.RUNNING } == 1 }
+        fun isRunning(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = downloadScheduler(context),
+        ): Boolean {
+            return scheduler.isRunning(TAG)
         }
 
-        fun isRunningFlow(context: Context): Flow<Boolean> {
-            return WorkManager.getInstance(context)
-                .getWorkInfosForUniqueWorkLiveData(TAG)
-                .asFlow()
-                .map { list -> list.count { it.state == WorkInfo.State.RUNNING } == 1 }
+        fun isRunningFlow(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = downloadScheduler(context),
+        ): Flow<Boolean> {
+            return scheduler.isRunningFlow(TAG)
+        }
+
+        private fun downloadScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> DownloadJob::class.java
+                        else -> null
+                    }
+                },
+            )
         }
     }
 }

@@ -9,12 +9,12 @@ object HistoryMapper {
     fun mapHistory(
         id: Long,
         chapterId: Long,
-        readAt: Date?,
+        readAt: Long?,
         readDuration: Long,
     ): History = History(
         id = id,
         chapterId = chapterId,
-        readAt = readAt,
+        readAt = readAt?.let(::Date),
         readDuration = readDuration,
     )
 
@@ -34,7 +34,7 @@ object HistoryMapper {
         totalCount: Double,
         readCount: Double,
         // KMK <--
-        readAt: Date?,
+        readAt: Long?,
         readDuration: Long,
     ): HistoryWithRelations = HistoryWithRelations(
         id = historyId,
@@ -50,7 +50,7 @@ object HistoryMapper {
         totalCountCalculated = totalCount.toLong(),
         readCountCalculated = readCount.toLong(),
         // KMK <--
-        readAt = readAt,
+        readAt = readAt?.let(::Date),
         readDuration = readDuration,
         coverData = MangaCover(
             mangaId = mangaId,

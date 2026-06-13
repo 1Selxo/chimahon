@@ -4,27 +4,25 @@ import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkInfo
-import androidx.work.WorkQuery
 import androidx.work.WorkerParameters
 import eu.kanade.domain.sync.SyncPreferences
 import eu.kanade.tachiyomi.data.SyncStatus
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.isOnline
-import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
-import eu.kanade.tachiyomi.util.system.workManager
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.minutes
 
 class SyncDataJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
@@ -41,7 +39,7 @@ class SyncDataJob(private val context: Context, workerParams: WorkerParameters) 
                 return Result.retry()
             }
             // Find a running manual worker. If exists, try again later
-            if (context.workManager.isRunning(TAG_MANUAL)) {
+            if (syncScheduler(context).isRunningWithTag(TAG_MANUAL)) {
                 return Result.retry()
             }
         }
@@ -82,59 +80,74 @@ class SyncDataJob(private val context: Context, workerParams: WorkerParameters) 
         private const val TAG_JOB = "SyncDataJob"
         private const val TAG_AUTO = "$TAG_JOB:auto"
         const val TAG_MANUAL = "$TAG_JOB:manual"
+        internal const val WORKER_KEY = "sync_data"
 
-        fun isRunning(context: Context): Boolean {
-            return context.workManager.isRunning(TAG_JOB)
+        fun isRunning(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = syncScheduler(context),
+        ): Boolean {
+            return scheduler.isRunningWithTag(TAG_JOB)
         }
 
-        fun setupTask(context: Context, prefInterval: Int? = null) {
+        fun setupTask(
+            context: Context,
+            prefInterval: Int? = null,
+            scheduler: BackgroundTaskScheduler = syncScheduler(context),
+        ) {
             val syncPreferences = Injekt.get<SyncPreferences>()
             val interval = prefInterval ?: syncPreferences.syncInterval().get()
 
             if (interval > 0) {
-                val request = PeriodicWorkRequestBuilder<SyncDataJob>(
-                    interval.toLong(),
-                    TimeUnit.MINUTES,
-                    10,
-                    TimeUnit.MINUTES,
+                scheduler.schedule(
+                    BackgroundTask(
+                        uniqueName = TAG_AUTO,
+                        workerKey = WORKER_KEY,
+                        cadence = BackgroundTaskCadence.Periodic(
+                            repeatInterval = interval.minutes,
+                            flexInterval = 10.minutes,
+                        ),
+                        policy = ExistingBackgroundTaskPolicy.Update,
+                        tags = setOf(TAG_JOB, TAG_AUTO),
+                    ),
                 )
-                    .addTag(TAG_JOB)
-                    .addTag(TAG_AUTO)
-                    .build()
-
-                context.workManager.enqueueUniquePeriodicWork(TAG_AUTO, ExistingPeriodicWorkPolicy.UPDATE, request)
             } else {
-                context.workManager.cancelUniqueWork(TAG_AUTO)
+                scheduler.cancel(TAG_AUTO)
             }
         }
 
-        fun startNow(context: Context, manual: Boolean = false) {
-            val wm = context.workManager
-            if (wm.isRunning(TAG_JOB)) {
+        fun startNow(
+            context: Context,
+            manual: Boolean = false,
+            scheduler: BackgroundTaskScheduler = syncScheduler(context),
+        ) {
+            if (scheduler.isRunningWithTag(TAG_JOB)) {
                 // Already running either as a scheduled or manual job
                 return
             }
             val tag = if (manual) TAG_MANUAL else TAG_AUTO
-            val request = OneTimeWorkRequestBuilder<SyncDataJob>()
-                .addTag(TAG_JOB)
-                .addTag(tag)
-                .build()
-            context.workManager.enqueueUniqueWork(tag, ExistingWorkPolicy.KEEP, request)
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = tag,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.OneTime,
+                    policy = ExistingBackgroundTaskPolicy.Keep,
+                    tags = setOf(TAG_JOB, tag),
+                ),
+            )
         }
 
-        fun stop(context: Context) {
+        fun stop(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = syncScheduler(context),
+        ) {
             // KMK -->
             val syncPreferences = Injekt.get<SyncPreferences>()
             val syncEnabled = syncPreferences.isSyncEnabled()
             // KMK <--
-            val wm = context.workManager
-            val workQuery = WorkQuery.Builder.fromTags(listOf(TAG_JOB, TAG_AUTO, TAG_MANUAL))
-                .addStates(listOf(WorkInfo.State.RUNNING))
-                .build()
-            wm.getWorkInfos(workQuery).get()
+            scheduler.runningTasksWithTag(TAG_JOB)
                 // Should only return one work but just in case
                 .forEach {
-                    wm.cancelWorkById(it.id)
+                    scheduler.cancelTask(it)
                     // KMK -->
                     val syncStatus: SyncStatus = Injekt.get()
                     runBlocking { syncStatus.stop() }
@@ -142,9 +155,21 @@ class SyncDataJob(private val context: Context, workerParams: WorkerParameters) 
 
                     // Re-enqueue cancelled scheduled work
                     if (/* KMK --> */ syncEnabled /* KMK <-- */ && it.tags.contains(TAG_AUTO)) {
-                        setupTask(context)
+                        setupTask(context, scheduler = scheduler)
                     }
                 }
+        }
+
+        private fun syncScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> SyncDataJob::class.java
+                        else -> null
+                    }
+                },
+            )
         }
     }
 }

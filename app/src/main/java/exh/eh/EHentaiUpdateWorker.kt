@@ -2,17 +2,9 @@ package exh.eh
 
 import android.content.Context
 import android.content.pm.ServiceInfo
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Build
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkerParameters
 import com.elvishew.xlog.Logger
 import com.elvishew.xlog.XLog
@@ -24,7 +16,6 @@ import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.source.online.all.EHentai
 import eu.kanade.tachiyomi.util.system.isConnectedToWifi
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
-import eu.kanade.tachiyomi.util.system.workManager
 import exh.debug.DebugToggles
 import exh.eh.EHentaiUpdateWorkerConstants.UPDATES_PER_ITERATION
 import exh.log.xLog
@@ -36,6 +27,15 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.json.Json
 import tachiyomi.core.common.preference.getAndSet
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundNetworkConstraint
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskConstraints
+import tachiyomi.core.platform.background.BackgroundTaskOutOfQuotaPolicy
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -49,8 +49,9 @@ import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
-import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
@@ -272,55 +273,79 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
         private val MIN_BACKGROUND_UPDATE_FREQ = 1.days.inWholeMilliseconds
 
         private const val TAG = "EHBackgroundUpdater"
+        private const val TEST_WORK_NAME = "$TAG:test"
+        private const val WORKER_KEY = "ehentai_update"
 
         private val logger by lazy { XLog.tag("EHUpdaterScheduler") }
 
-        fun launchBackgroundTest(context: Context) {
-            context.workManager.enqueue(
-                OneTimeWorkRequestBuilder<EHentaiUpdateWorker>()
-                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                    .addTag(TAG)
-                    .build(),
+        fun launchBackgroundTest(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = ehentaiUpdateScheduler(context),
+        ) {
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = TEST_WORK_NAME,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.OneTime,
+                    policy = ExistingBackgroundTaskPolicy.Replace,
+                    expeditedPolicy = BackgroundTaskOutOfQuotaPolicy.RunAsNonExpedited,
+                    tags = setOf(TAG),
+                ),
             )
         }
 
-        fun scheduleBackground(context: Context, prefInterval: Int? = null, prefRestrictions: Set<String>? = null) {
+        fun scheduleBackground(
+            context: Context,
+            prefInterval: Int? = null,
+            prefRestrictions: Set<String>? = null,
+            scheduler: BackgroundTaskScheduler = ehentaiUpdateScheduler(context),
+        ) {
             val exhPreferences = Injekt.get<ExhPreferences>()
             val interval = prefInterval ?: exhPreferences.exhAutoUpdateFrequency().get()
             if (interval > 0) {
                 val restrictions = prefRestrictions ?: exhPreferences.exhAutoUpdateRequirements().get()
                 val acRestriction = DEVICE_CHARGING in restrictions
 
-                val networkRequestBuilder = NetworkRequest.Builder()
-                if (DEVICE_ONLY_ON_WIFI in restrictions) {
-                    networkRequestBuilder.addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                }
-
-                val constraints = Constraints.Builder()
-                    // 'networkRequest' only applies to Android 9+, otherwise 'networkType' is used
-                    .setRequiredNetworkRequest(networkRequestBuilder.build(), NetworkType.CONNECTED)
-                    .setRequiresCharging(acRestriction)
-                    .build()
-
-                val request = PeriodicWorkRequestBuilder<EHentaiUpdateWorker>(
-                    interval.toLong(),
-                    TimeUnit.HOURS,
-                    10,
-                    TimeUnit.MINUTES,
+                scheduler.schedule(
+                    BackgroundTask(
+                        uniqueName = TAG,
+                        workerKey = WORKER_KEY,
+                        cadence = BackgroundTaskCadence.Periodic(
+                            repeatInterval = interval.hours,
+                            flexInterval = 10.minutes,
+                        ),
+                        constraints = BackgroundTaskConstraints(
+                            network = BackgroundNetworkConstraint.Connected,
+                            requiresWifi = DEVICE_ONLY_ON_WIFI in restrictions,
+                            requiresCharging = acRestriction,
+                        ),
+                        policy = ExistingBackgroundTaskPolicy.Update,
+                        tags = setOf(TAG),
+                    ),
                 )
-                    .addTag(TAG)
-                    .setConstraints(constraints)
-                    .build()
-
-                context.workManager.enqueueUniquePeriodicWork(TAG, ExistingPeriodicWorkPolicy.UPDATE, request)
                 logger.d("Successfully scheduled background update job!")
             } else {
-                cancelBackground(context)
+                cancelBackground(context, scheduler)
             }
         }
 
-        fun cancelBackground(context: Context) {
-            context.workManager.cancelAllWorkByTag(TAG)
+        fun cancelBackground(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = ehentaiUpdateScheduler(context),
+        ) {
+            scheduler.cancel(TAG)
+        }
+
+        private fun ehentaiUpdateScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> EHentaiUpdateWorker::class.java
+                        else -> null
+                    }
+                },
+            )
         }
     }
 

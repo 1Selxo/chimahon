@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import chimahon.DictionaryRepository
 import chimahon.audio.WordAudioPreferences
@@ -18,6 +19,7 @@ import com.canopus.chimareader.ttusync.SyncSettingsRepository
 import com.canopus.chimareader.ttusync.TtuOAuthManager
 import com.canopus.chimareader.ttusync.TtuSyncManager
 import eu.kanade.domain.track.store.DelayedTrackingStore
+import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.animesource.AndroidAnimeSourceManager
 import eu.kanade.tachiyomi.data.BackupRestoreStatus
@@ -56,13 +58,16 @@ import exh.eh.EHentaiUpdateHelper
 import io.requery.android.database.sqlite.RequerySQLiteOpenHelperFactory
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
+import mihon.core.archive.CbzCrypto
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import nl.adaptivity.xmlutil.XmlDeclMode.Charset
 import nl.adaptivity.xmlutil.core.XmlVersion
 import nl.adaptivity.xmlutil.serialization.XML
 import tachiyomi.core.common.storage.AndroidStorageFolderProvider
 import tachiyomi.core.common.storage.UniFileTempFileManager
-import tachiyomi.data.Database
+import tachiyomi.core.database.AndroidDatabaseDriverFactory
 import tachiyomi.data.AndroidDatabaseHandler
+import tachiyomi.data.Database
 import tachiyomi.data.DatabaseHandler
 import tachiyomi.data.DateColumnAdapter
 import tachiyomi.data.FetchTypeColumnAdapter
@@ -75,6 +80,7 @@ import tachiyomi.data.handlers.anime.AndroidAnimeDatabaseHandler
 import tachiyomi.data.handlers.anime.AnimeDatabaseHandler
 import tachiyomi.data.track.anime.AnimeTrackRepositoryImpl
 import tachiyomi.domain.source.anime.service.AnimeSourceManager
+import tachiyomi.domain.manga.interactor.GetCustomMangaInfo
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
 import tachiyomi.domain.track.anime.repository.AnimeTrackRepository
@@ -92,42 +98,54 @@ import uy.kohesive.injekt.api.InjektRegistrar
 import uy.kohesive.injekt.api.addSingleton
 import uy.kohesive.injekt.api.addSingletonFactory
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
+
+private fun setPragma(db: SupportSQLiteDatabase, pragma: String) {
+    val cursor = db.query("PRAGMA $pragma")
+    cursor.moveToFirst()
+    cursor.close()
+}
+
+private const val LEGACY_DATABASE_NAME = "tachiyomi.db"
 
 class AppModule(val app: Application) : InjektModule {
+    private val securityPreferences: SecurityPreferences by injectLazy()
 
     override fun InjektRegistrar.registerInjectables() {
         addSingleton(app)
         addSingleton<Context>(app)
         NovelReaderActivity.activityClass = ChimaReaderActivity::class.java
 
-        val sqlDriverManga = AndroidSqliteDriver(
-            schema = Database.Schema,
-            context = app,
-            name = "tachiyomi.db",
-            factory = if (isDebugBuildType && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        addSingletonFactory<SqlDriver> {
+            if (securityPreferences.encryptDatabase().get()) {
+                System.loadLibrary("sqlcipher")
+            }
+            val databaseName = if (securityPreferences.encryptDatabase().get()) {
+                CbzCrypto.DATABASE_NAME
+            } else {
+                LEGACY_DATABASE_NAME
+            }
+            val openHelperFactory = if (securityPreferences.encryptDatabase().get()) {
+                SupportOpenHelperFactory(CbzCrypto.getDecryptedPasswordSql(), null, false, 25)
+            } else if (isDebugBuildType && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 // Support database inspector in Android Studio
                 FrameworkSQLiteOpenHelperFactory()
             } else {
                 RequerySQLiteOpenHelperFactory()
-            },
-            callback = object : AndroidSqliteDriver.Callback(Database.Schema) {
-                override fun onOpen(db: SupportSQLiteDatabase) {
-                    super.onOpen(db)
+            }
+            AndroidDatabaseDriverFactory(
+                context = app,
+                openHelperFactory = openHelperFactory,
+                onOpen = { db ->
                     setPragma(db, "foreign_keys = ON")
                     setPragma(db, "journal_mode = WAL")
                     setPragma(db, "synchronous = NORMAL")
-                }
-                private fun setPragma(db: SupportSQLiteDatabase, pragma: String) {
-                    val cursor = db.query("PRAGMA $pragma")
-                    cursor.moveToFirst()
-                    cursor.close()
-                }
-            },
-        )
-
+                },
+            ).create(Database.Schema, databaseName)
+        }
         addSingletonFactory {
             Database(
-                driver = sqlDriverManga,
+                driver = get(),
                 historyAdapter = History.Adapter(
                     last_readAdapter = DateColumnAdapter,
                 ),
@@ -144,7 +162,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory<DatabaseHandler> {
             AndroidDatabaseHandler(
                 get(),
-                sqlDriverManga,
+                get(),
             )
         }
 

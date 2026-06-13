@@ -2,22 +2,10 @@ package eu.kanade.tachiyomi.data.library
 
 import android.content.Context
 import android.content.pm.ServiceInfo
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Build
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkInfo
-import androidx.work.WorkQuery
 import androidx.work.WorkerParameters
-import androidx.work.workDataOf
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.manga.model.toSManga
@@ -36,16 +24,13 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.all.MergedSource
 import eu.kanade.tachiyomi.util.system.isConnectedToWifi
-import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
-import eu.kanade.tachiyomi.util.system.workManager
 import exh.log.xLogE
 import exh.md.utils.FollowStatus
 import exh.md.utils.MdUtil
 import exh.source.LIBRARY_UPDATE_EXCLUDED_SOURCES
 import exh.source.MERGED_SOURCE_ID
 import exh.source.mangaDexSourceIds
-import exh.util.WorkerUtil
 import exh.util.nullIfBlank
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -62,6 +47,19 @@ import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundNetworkConstraint
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskBackoffCriteria
+import tachiyomi.core.platform.background.BackgroundTaskBackoffPolicy
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskChain
+import tachiyomi.core.platform.background.BackgroundTaskConstraints
+import tachiyomi.core.platform.background.BackgroundTaskInputData
+import tachiyomi.core.platform.background.BackgroundTaskInputValue
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.NoChaptersException
@@ -99,11 +97,12 @@ import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.time.ZonedDateTime
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.TimeUnit
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 @OptIn(ExperimentalAtomicApi::class)
 class LibraryUpdateJob(private val context: Context, workerParams: WorkerParameters) :
@@ -153,7 +152,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             }
 
             // Find a running manual worker. If exists, try again later
-            if (context.workManager.isRunning(WORK_NAME_MANUAL)) {
+            if (libraryUpdateScheduler(context).isRunning(WORK_NAME_MANUAL)) {
                 return Result.retry()
             }
         }
@@ -720,6 +719,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         private const val TAG = "LibraryUpdate"
         private const val WORK_NAME_AUTO = "LibraryUpdate-auto"
         private const val WORK_NAME_MANUAL = "LibraryUpdate-manual"
+        private const val WORKER_KEY = "library_update"
 
         private const val ERROR_LOG_HELP_URL = "https://komikku-app.github.io/docs/guides/troubleshooting/"
 
@@ -748,56 +748,50 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         private const val KEY_MANGA_IDS = "manga_ids"
         // KMK <--
 
-        fun cancelAllWorks(context: Context) {
-            context.workManager.cancelAllWorkByTag(TAG)
+        fun cancelAllWorks(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = libraryUpdateScheduler(context),
+        ) {
+            scheduler.cancel(TAG)
         }
 
         fun setupTask(
             context: Context,
             prefInterval: Int? = null,
+            scheduler: BackgroundTaskScheduler = libraryUpdateScheduler(context),
         ) {
             val preferences = Injekt.get<LibraryPreferences>()
             val interval = prefInterval ?: preferences.autoUpdateInterval().get()
             if (interval > 0) {
                 val restrictions = preferences.autoUpdateDeviceRestrictions().get()
-                val networkType = if (DEVICE_NETWORK_NOT_METERED in restrictions) {
-                    NetworkType.UNMETERED
-                } else {
-                    NetworkType.CONNECTED
-                }
-                val networkRequestBuilder = NetworkRequest.Builder()
-                if (DEVICE_ONLY_ON_WIFI in restrictions) {
-                    networkRequestBuilder.addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                }
-                if (DEVICE_NETWORK_NOT_METERED in restrictions) {
-                    networkRequestBuilder.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
-                }
-                val constraints = Constraints.Builder()
-                    // 'networkRequest' only applies to Android 9+, otherwise 'networkType' is used
-                    .setRequiredNetworkRequest(networkRequestBuilder.build(), networkType)
-                    .setRequiresCharging(DEVICE_CHARGING in restrictions)
-                    .setRequiresBatteryNotLow(true)
-                    .build()
-
-                val request = PeriodicWorkRequestBuilder<LibraryUpdateJob>(
-                    interval.toLong(),
-                    TimeUnit.HOURS,
-                    10,
-                    TimeUnit.MINUTES,
-                )
-                    .addTag(TAG)
-                    .addTag(WORK_NAME_AUTO)
-                    .setConstraints(constraints)
-                    .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.MINUTES)
-                    .build()
-
-                context.workManager.enqueueUniquePeriodicWork(
-                    WORK_NAME_AUTO,
-                    ExistingPeriodicWorkPolicy.UPDATE,
-                    request,
+                scheduler.schedule(
+                    BackgroundTask(
+                        uniqueName = WORK_NAME_AUTO,
+                        workerKey = WORKER_KEY,
+                        cadence = BackgroundTaskCadence.Periodic(
+                            repeatInterval = interval.hours,
+                            flexInterval = 10.minutes,
+                        ),
+                        constraints = BackgroundTaskConstraints(
+                            network = if (DEVICE_NETWORK_NOT_METERED in restrictions) {
+                                BackgroundNetworkConstraint.Unmetered
+                            } else {
+                                BackgroundNetworkConstraint.Connected
+                            },
+                            requiresWifi = DEVICE_ONLY_ON_WIFI in restrictions,
+                            requiresCharging = DEVICE_CHARGING in restrictions,
+                            requiresBatteryNotLow = true,
+                        ),
+                        policy = ExistingBackgroundTaskPolicy.Update,
+                        backoffCriteria = BackgroundTaskBackoffCriteria(
+                            policy = BackgroundTaskBackoffPolicy.Linear,
+                            delay = 10.minutes,
+                        ),
+                        tags = setOf(TAG),
+                    ),
                 )
             } else {
-                context.workManager.cancelUniqueWork(WORK_NAME_AUTO)
+                scheduler.cancel(WORK_NAME_AUTO)
             }
         }
 
@@ -812,24 +806,20 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             // KMK -->
             mangaIds: List<Long>? = null,
             // KMK <--
+            scheduler: BackgroundTaskScheduler = libraryUpdateScheduler(context),
         ): Boolean {
-            val wm = context.workManager
             // Check if the LibraryUpdateJob is already running
-            if (wm.isRunning(TAG)) {
+            if (scheduler.isRunningWithTag(TAG)) {
                 // Already running either as a scheduled or manual job
                 return false
             }
 
-            val inputData = workDataOf(
-                KEY_CATEGORY to category?.id,
-                KEY_TARGET to target.name,
-                // SY -->
-                KEY_GROUP to group,
-                KEY_GROUP_EXTRA to groupExtra,
-                // SY <--
-                // KMK -->
-                KEY_MANGA_IDS to mangaIds?.toLongArray(),
-                // KMK <--
+            val inputData = libraryUpdateInputData(
+                category = category,
+                target = target,
+                group = group,
+                groupExtra = groupExtra,
+                mangaIds = mangaIds,
             )
 
             val syncPreferences: SyncPreferences = Injekt.get()
@@ -842,43 +832,36 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                     return false
                 }
 
-                // Define the SyncDataJob
-                val syncDataJob = OneTimeWorkRequestBuilder<SyncDataJob>()
-                    .addTag(SyncDataJob.TAG_MANUAL)
-                    .build()
-
-                // Chain SyncDataJob to run before LibraryUpdateJob
-                val libraryUpdateJob = OneTimeWorkRequestBuilder<LibraryUpdateJob>()
-                    .addTag(TAG)
-                    .addTag(WORK_NAME_MANUAL)
-                    .setInputData(inputData)
-                    .build()
-
-                wm.beginUniqueWork(WORK_NAME_MANUAL, ExistingWorkPolicy.KEEP, syncDataJob)
-                    .then(libraryUpdateJob)
-                    .enqueue()
+                scheduler.schedule(
+                    BackgroundTaskChain(
+                        uniqueName = WORK_NAME_MANUAL,
+                        policy = ExistingBackgroundTaskPolicy.Keep,
+                        tasks = listOf(
+                            BackgroundTask(
+                                uniqueName = SyncDataJob.TAG_MANUAL,
+                                workerKey = SyncDataJob.WORKER_KEY,
+                                cadence = BackgroundTaskCadence.OneTime,
+                                policy = ExistingBackgroundTaskPolicy.Keep,
+                            ),
+                            libraryUpdateTask(inputData),
+                        ),
+                    ),
+                )
             } else {
-                val request = OneTimeWorkRequestBuilder<LibraryUpdateJob>()
-                    .addTag(TAG)
-                    .addTag(WORK_NAME_MANUAL)
-                    .setInputData(inputData)
-                    .build()
-
-                wm.enqueueUniqueWork(WORK_NAME_MANUAL, ExistingWorkPolicy.KEEP, request)
+                scheduler.schedule(libraryUpdateTask(inputData))
             }
 
             return true
         }
 
-        fun stop(context: Context) {
-            val wm = context.workManager
-            val workQuery = WorkQuery.Builder.fromTags(listOf(TAG))
-                .addStates(listOf(WorkInfo.State.RUNNING))
-                .build()
-            wm.getWorkInfos(workQuery).get()
+        fun stop(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = libraryUpdateScheduler(context),
+        ) {
+            scheduler.runningTasksWithTag(TAG)
                 // Should only return one work but just in case
                 .forEach {
-                    wm.cancelWorkById(it.id)
+                    scheduler.cancelTask(it)
                     // KMK -->
                     val libraryUpdateStatus: LibraryUpdateStatus = Injekt.get()
                     runBlocking { libraryUpdateStatus.stop() }
@@ -886,7 +869,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
                     // Re-enqueue cancelled scheduled work
                     if (it.tags.contains(WORK_NAME_AUTO)) {
-                        setupTask(context)
+                        setupTask(context, scheduler = scheduler)
                     }
                 }
         }
@@ -898,9 +881,53 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
          * @return True if a periodic job is scheduled, false otherwise.
          * @throws Exception If there is an error retrieving the work info.
          */
-        suspend fun isPeriodicUpdateScheduled(context: Context): Boolean {
-            return WorkerUtil.isPeriodicJobScheduled(context, WORK_NAME_AUTO)
+        suspend fun isPeriodicUpdateScheduled(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = libraryUpdateScheduler(context),
+        ): Boolean {
+            return scheduler.isScheduled(WORK_NAME_AUTO)
         }
         // KMK <--
+
+        private fun libraryUpdateTask(inputData: BackgroundTaskInputData): BackgroundTask {
+            return BackgroundTask(
+                uniqueName = WORK_NAME_MANUAL,
+                workerKey = WORKER_KEY,
+                cadence = BackgroundTaskCadence.OneTime,
+                policy = ExistingBackgroundTaskPolicy.Keep,
+                inputData = inputData,
+                tags = setOf(TAG),
+            )
+        }
+
+        private fun libraryUpdateInputData(
+            category: Category?,
+            target: Target,
+            group: Int,
+            groupExtra: String?,
+            mangaIds: List<Long>?,
+        ): BackgroundTaskInputData {
+            val values = mutableMapOf<String, BackgroundTaskInputValue>(
+                KEY_TARGET to BackgroundTaskInputValue.StringValue(target.name),
+                KEY_GROUP to BackgroundTaskInputValue.IntValue(group),
+            )
+            category?.id?.let { values[KEY_CATEGORY] = BackgroundTaskInputValue.LongValue(it) }
+            groupExtra?.let { values[KEY_GROUP_EXTRA] = BackgroundTaskInputValue.StringValue(it) }
+            mangaIds?.let { values[KEY_MANGA_IDS] = BackgroundTaskInputValue.LongArrayValue(it.toLongArray()) }
+            return BackgroundTaskInputData(values)
+        }
+
+        private fun libraryUpdateScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> LibraryUpdateJob::class.java
+                        SyncDataJob.WORKER_KEY -> SyncDataJob::class.java
+                        else -> null
+                    }
+                },
+            )
+        }
     }
 }

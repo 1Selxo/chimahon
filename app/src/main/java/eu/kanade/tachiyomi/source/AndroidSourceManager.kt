@@ -7,6 +7,7 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.online.ScriptSourceFactory
 import eu.kanade.tachiyomi.source.online.all.EHentai
 import eu.kanade.tachiyomi.source.online.all.Lanraragi
 import eu.kanade.tachiyomi.source.online.all.MangaDex
@@ -38,9 +39,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import tachiyomi.core.extensions.ScriptExtensionInvoker
+import tachiyomi.core.extensions.ScriptExtensionLoader
+import tachiyomi.core.extensions.ScriptExtensionStore
+import tachiyomi.core.platform.javascript.AndroidJavaScriptRuntimeFactory
+import tachiyomi.core.platform.storage.AndroidPlatformStorageDirectories
 import tachiyomi.domain.manga.interactor.GetMergedReferencesById
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
@@ -65,13 +70,13 @@ class AndroidSourceManager(
 
     private val scope = CoroutineScope(Job() + Dispatchers.IO)
 
-    private val sourcesMapFlow = MutableStateFlow(ConcurrentHashMap<Long, Source>())
+    private val sourceRegistry = SourceRegistry()
 
     private val stubSourcesMap = ConcurrentHashMap<Long, StubSource>()
 
-    override val catalogueSources: Flow<List<CatalogueSource>> = sourcesMapFlow.map {
-        it.values.filterIsInstance<CatalogueSource>()
-    }
+    private val scriptSources = MutableStateFlow<List<Source>>(emptyList())
+
+    override val catalogueSources: Flow<List<CatalogueSource>> = sourceRegistry.catalogueSources
 
     // SY -->
     private val exhPreferences: ExhPreferences by injectLazy()
@@ -83,6 +88,24 @@ class AndroidSourceManager(
 
     init {
         scope.launch {
+            val loader = ScriptExtensionLoader(AndroidJavaScriptRuntimeFactory)
+            scriptSources.value = runCatching {
+                ScriptExtensionStore(
+                    storageDirectories = AndroidPlatformStorageDirectories(context),
+                    loader = loader,
+                ).loadInstalled()
+                    .flatMap { extension ->
+                        ScriptSourceFactory(
+                            extension = extension,
+                            invoker = ScriptExtensionInvoker(AndroidJavaScriptRuntimeFactory),
+                        ).createSources()
+                    }
+            }.getOrElse {
+                emptyList()
+            }
+        }
+
+        scope.launch {
             extensionManager.installedExtensionsFlow
                 // SY -->
                 .combine(exhPreferences.enableExhentai().changes()) { extensions, enableExhentai ->
@@ -92,9 +115,13 @@ class AndroidSourceManager(
                 .combine(
                     exhPreferences.isHentaiEnabled().changes(),
                 ) { (a, b), c -> Triple(a, b, c) }
+                .combine(scriptSources) { extensionState, installedScriptSources ->
+                    extensionState to installedScriptSources
+                }
                 // KMK <--
                 // SY <--
-                .collectLatest { (extensions, enableExhentai/* KMK --> */, isHentaiEnabled/* KMK <-- */) ->
+                .collectLatest { (extensionState, installedScriptSources) ->
+                    val (extensions, enableExhentai, isHentaiEnabled) = extensionState
                     val mutableMap = ConcurrentHashMap<Long, Source>(
                         mapOf(
                             LocalSource.ID to LocalSource(
@@ -129,7 +156,12 @@ class AndroidSourceManager(
                             registerStubSource(StubSource.from(it))
                         }
                     }
-                    sourcesMapFlow.value = mutableMap
+                    installedScriptSources.forEach { source ->
+                        if (mutableMap.putIfAbsent(source.id, source) == null) {
+                            registerStubSource(StubSource.from(source))
+                        }
+                    }
+                    sourceRegistry.replaceAll(mutableMap.values)
                     _isInitialized.value = true
                 }
         }
@@ -204,18 +236,18 @@ class AndroidSourceManager(
     }
 
     override fun get(sourceKey: Long): Source? {
-        return sourcesMapFlow.value[sourceKey]
+        return sourceRegistry.get(sourceKey)
     }
 
     override fun getOrStub(sourceKey: Long): Source {
-        return sourcesMapFlow.value[sourceKey] ?: stubSourcesMap.getOrPut(sourceKey) {
+        return sourceRegistry.get(sourceKey) ?: stubSourcesMap.getOrPut(sourceKey) {
             runBlocking { createStubSource(sourceKey) }
         }
     }
 
-    override fun getOnlineSources() = sourcesMapFlow.value.values.filterIsInstance<HttpSource>()
+    override fun getOnlineSources() = sourceRegistry.getOnlineSources()
 
-    override fun getCatalogueSources() = sourcesMapFlow.value.values.filterIsInstance<CatalogueSource>()
+    override fun getCatalogueSources() = sourceRegistry.getCatalogueSources()
 
     override fun getStubSources(): List<StubSource> {
         val onlineSourceIds = getOnlineSources().map { it.id }
@@ -223,19 +255,17 @@ class AndroidSourceManager(
     }
 
     // SY -->
-    override fun getVisibleOnlineSources() = sourcesMapFlow.value.values
-        .filterIsInstance<HttpSource>()
+    override fun getVisibleOnlineSources() = sourceRegistry.getOnlineSources()
         .filter {
             it.id !in BlacklistedSources.HIDDEN_SOURCES
         }
 
-    override fun getVisibleCatalogueSources() = sourcesMapFlow.value.values
-        .filterIsInstance<CatalogueSource>()
+    override fun getVisibleCatalogueSources() = sourceRegistry.getCatalogueSources()
         .filter {
             it.id !in BlacklistedSources.HIDDEN_SOURCES
         }
 
-    fun getDelegatedCatalogueSources() = sourcesMapFlow.value.values
+    fun getDelegatedCatalogueSources() = sourceRegistry.sources.value.values
         .filterIsInstance<EnhancedHttpSource>()
         .mapNotNull { enhancedHttpSource ->
             enhancedHttpSource.enhancedSource as? DelegatedHttpSource

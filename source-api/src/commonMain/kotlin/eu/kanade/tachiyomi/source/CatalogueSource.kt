@@ -7,9 +7,6 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
-import logcat.LogPriority
-import tachiyomi.core.common.util.QuerySanitizer.sanitize
-import tachiyomi.core.common.util.system.logcat
 
 /**
  * A basic interface for creating a source. It could be an online source, a local source, etc.
@@ -126,7 +123,7 @@ interface CatalogueSource : Source {
         runCatching { fetchRelatedMangaList(manga) }
             .onSuccess { if (it.isNotEmpty()) pushResults(Pair("", it), false) }
             .onFailure { e ->
-                logcat(LogPriority.ERROR, e) { "## getRelatedMangaListByExtension: $e" }
+                sourceApiLogError("getRelatedMangaListByExtension failed", e)
             }
     }
 
@@ -190,15 +187,27 @@ interface CatalogueSource : Source {
             words.map { keyword ->
                 launch {
                     runCatching {
-                        getSearchManga(1, keyword.sanitize(), filterList).mangas
+                        getSearchManga(1, keyword.sanitizeRelatedQuery(), filterList).mangas
                     }
                         .onSuccess { if (it.isNotEmpty()) pushResults(Pair(keyword, it), false) }
                         .onFailure { e ->
-                            logcat(LogPriority.ERROR, e) { "## getRelatedMangaListBySearch: $e" }
+                            sourceApiLogError("getRelatedMangaListBySearch failed", e)
                         }
                 }
             }
         }
     }
     // KMK <--
+}
+
+private fun String.sanitizeRelatedQuery(): String {
+    return trim()
+        .trim(' ', '-', '_', ',', ':')
+        .replace('\u2018', '\'')
+        .replace('\u2019', '\'')
+        .replace('\u201C', '"')
+        .replace('\u201D', '"')
+        .replace('\u2013', '-')
+        .replace('\u2014', '-')
+        .replace("\u2026", "...")
 }

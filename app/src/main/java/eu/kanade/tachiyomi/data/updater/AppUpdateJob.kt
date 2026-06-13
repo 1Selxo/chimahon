@@ -2,19 +2,23 @@ package eu.kanade.tachiyomi.data.updater
 
 import android.content.Context
 import androidx.core.app.NotificationCompat
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.updaterEnabled
 import exh.log.xLogE
 import kotlinx.coroutines.coroutineScope
-import java.util.concurrent.TimeUnit
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundNetworkConstraint
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskConstraints
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 
 class AppUpdateJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
@@ -40,29 +44,48 @@ class AppUpdateJob(private val context: Context, workerParams: WorkerParameters)
 
     companion object {
         private const val TAG = "AppUpdateChecker"
+        private const val WORKER_KEY = "app_update_check"
 
-        fun setupTask(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
-            val request = PeriodicWorkRequestBuilder<AppUpdateJob>(
-                3,
-                TimeUnit.DAYS,
-                3,
-                TimeUnit.HOURS,
+        fun setupTask(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = appUpdateScheduler(context),
+        ) {
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = TAG,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.Periodic(
+                        repeatInterval = 3.days,
+                        flexInterval = 3.hours,
+                    ),
+                    constraints = BackgroundTaskConstraints(
+                        network = BackgroundNetworkConstraint.Connected,
+                    ),
+                    policy = ExistingBackgroundTaskPolicy.Update,
+                    tags = setOf(TAG),
+                ),
             )
-                .addTag(TAG)
-                .setConstraints(constraints)
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(TAG, ExistingPeriodicWorkPolicy.UPDATE, request)
         }
 
-        fun cancelTask(context: Context) {
+        fun cancelTask(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = appUpdateScheduler(context),
+        ) {
             // cancel and remove job
-            WorkManager.getInstance(context).cancelAllWorkByTag(TAG)
-            WorkManager.getInstance(context).pruneWork()
+            scheduler.cancel(TAG)
+            scheduler.prune()
+        }
+
+        private fun appUpdateScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> AppUpdateJob::class.java
+                        else -> null
+                    }
+                },
+            )
         }
     }
 }

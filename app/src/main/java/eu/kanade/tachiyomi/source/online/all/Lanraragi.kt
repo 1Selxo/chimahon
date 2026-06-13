@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.source.online.all
 
 import android.content.Context
-import android.net.Uri
 import androidx.core.net.toUri
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
@@ -42,10 +41,6 @@ class Lanraragi(delegate: HttpSource, val context: Context) :
     override fun newMetaInstance() = LanraragiSearchMetadata()
     override val lang = delegate.lang
 
-    private fun getApiUriBuilder(path: String): Uri.Builder {
-        return LanraragiSearchMetadata.getApiUriBuilder(baseUrl, path)
-    }
-
     private fun getReaderId(url: String): String {
         return READER_ID_REGEX.find(url)?.groupValues?.get(1) ?: ""
     }
@@ -70,9 +65,7 @@ class Lanraragi(delegate: HttpSource, val context: Context) :
         } else {
             getReaderId(manga.url)
         }
-        val uri = getApiUriBuilder("/api/archives/$id/metadata").build()
-
-        return GET(uri.toString(), headers)
+        return GET("$baseUrl/api/archives/$id/metadata", headers)
     }
 
     override suspend fun getMangaDetails(manga: SManga): SManga {
@@ -188,7 +181,7 @@ class Lanraragi(delegate: HttpSource, val context: Context) :
     suspend fun minionJobDone(jobId: Int): Boolean {
         return client.newCall(
             GET(
-                getApiUriBuilder("/api/minion/$jobId").build().toString(),
+                "$baseUrl/api/minion/$jobId",
                 headers = headers,
             ),
         ).awaitSuccess().let {

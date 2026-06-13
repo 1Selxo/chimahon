@@ -142,7 +142,7 @@ class MangaRepositoryImpl(
                     chapterFlags = it.chapterFlags,
                     coverLastModified = it.coverLastModified,
                     dateAdded = it.dateAdded,
-                    updateStrategy = it.updateStrategy,
+                    updateStrategy = UpdateStrategyColumnAdapter.encode(it.updateStrategy),
                     version = it.version,
                     // SY -->
                     updateTitle = it.ogTitle.isNotBlank(),
