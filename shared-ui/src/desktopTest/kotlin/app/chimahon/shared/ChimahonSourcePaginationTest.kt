@@ -52,6 +52,9 @@ class ChimahonSourcePaginationTest {
         assertEquals(listOf("latest-page-3"), latest.entries.map { it.title })
         assertEquals(listOf("search-space cats-page-4"), search.entries.map { it.title })
         assertTrue(popular.hasNextPage)
+        assertEquals(source.id, popular.sourceId)
+        assertEquals(source.name, popular.sourceName)
+        assertEquals(ChimahonSourceBrowseMode.Search, search.mode)
     }
 
     @Test
@@ -71,6 +74,25 @@ class ChimahonSourcePaginationTest {
         assertEquals(listOf(SourceCall("popular", 5)), source.calls)
         assertEquals(listOf("popular-page-5"), preview.entries.map { it.title })
         assertEquals(ChimahonSourceBrowseMode.Latest, preview.mode)
+    }
+
+    @Test
+    fun terminalPagePreservesFalseHasNextPage() = runBlocking {
+        val source = RecordingCatalogueSource()
+        val services = chimahonServiceForTest(
+            sourceRegistry = SourceRegistry(listOf(source)),
+        )
+
+        val preview = services.loadSourcePreview(
+            sourceId = source.id,
+            mode = ChimahonSourceBrowseMode.Popular,
+            query = "",
+            pageNumber = 9,
+        )
+
+        assertEquals(listOf(SourceCall("popular", 9)), source.calls)
+        assertEquals(listOf("popular-page-9"), preview.entries.map { it.title })
+        assertEquals(false, preview.hasNextPage)
     }
 
     @Test

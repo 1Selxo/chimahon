@@ -21,6 +21,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okio.FileSystem
+import okio.Path
 import tachiyomi.core.extensions.LoadedScriptExtension
 import tachiyomi.core.extensions.ScriptExtensionInvoker
 import tachiyomi.core.extensions.ScriptExtensionLoader
@@ -58,9 +60,11 @@ class ChimahonSharedAppServices private constructor(
         LibraryUpdateErrorMessageRepositoryImpl(platformServices.databaseHandler)
     private val getLibraryUpdateErrorMessages =
         GetLibraryUpdateErrorMessages(libraryUpdateErrorMessageRepository)
-    private val settingsRepository = ChimahonSettingsRepository(
-        FilePlatformSettingsStore(platformServices.storageDirectories.filesDir / SETTINGS_FILE_NAME),
-    )
+    private val settingsStore =
+        FilePlatformSettingsStore(platformServices.storageDirectories.filesDir / SETTINGS_FILE_NAME)
+    private val settingsRepository = ChimahonSettingsRepository(settingsStore)
+    private val serviceSettingsRepository = ChimahonServiceSettingsRepository(settingsStore)
+    private val downloadQueueRepository = ChimahonDownloadQueueRepository(settingsStore)
     private val json = Json {
         ignoreUnknownKeys = true
     }
@@ -200,6 +204,339 @@ class ChimahonSharedAppServices private constructor(
                 extensionState = extensionState.label,
                 backgroundState = platformServices.backgroundState,
             ),
+        )
+    }
+
+    suspend fun loadLibraryData(
+        downloadedOnly: Boolean? = null,
+        includeHiddenCategories: Boolean? = null,
+    ): ChimahonLibraryData {
+        val state = loadServiceDatabaseState()
+        val useDownloadedOnly = downloadedOnly ?: loadDownloadedOnlySetting()
+        val showHiddenCategories = includeHiddenCategories ?: loadShowHiddenCategoriesSetting()
+        val allEntries = state.libraryManga.map { manga ->
+            manga.toLibraryMangaData(state)
+        }
+        val visibleEntries = allEntries
+            .asSequence()
+            .filter { !useDownloadedOnly || it.hasDownloads }
+            .sortedBy { it.manga.title.lowercase() }
+            .toList()
+        val visibleMangaIds = visibleEntries.mapTo(mutableSetOf()) { it.manga.id }
+        val categoryData = state.categories
+            .asSequence()
+            .map(GetCategories::toSharedLibraryCategory)
+            .filter { showHiddenCategories || !it.hidden }
+            .map { category ->
+                val categoryEntries = visibleEntries.filter { category.id in it.categoryIds }
+                ChimahonCategoryData(
+                    category = category,
+                    mangaCount = categoryEntries.size,
+                    unreadChapterCount = categoryEntries.sumOf(ChimahonLibraryMangaData::unreadChapterCount),
+                    downloadedChapterCount = categoryEntries.sumOf(
+                        ChimahonLibraryMangaData::downloadedChapterCount,
+                    ),
+                )
+            }
+            .filter { category ->
+                category.category.id == DEFAULT_LIBRARY_CATEGORY_ID ||
+                    category.mangaCount > 0 ||
+                    state.libraryCategoryMemberships.values.any { category.category.id in it }
+            }
+            .toList()
+
+        return ChimahonLibraryData(
+            entries = visibleEntries,
+            categories = categoryData,
+            downloadedOnly = useDownloadedOnly,
+            totalMangaCount = allEntries.size,
+            downloadedMangaCount = allEntries.count(ChimahonLibraryMangaData::hasDownloads),
+        )
+    }
+
+    suspend fun loadLibrary(
+        downloadedOnly: Boolean? = null,
+    ): List<ChimahonLibraryMangaData> {
+        return loadLibraryData(downloadedOnly = downloadedOnly).entries
+    }
+
+    suspend fun loadDownloadedLibrary(): List<ChimahonLibraryMangaData> {
+        return loadLibrary(downloadedOnly = true)
+    }
+
+    suspend fun loadDownloadedChapterIds(
+        mangaId: Long? = null,
+    ): Set<Long> {
+        val state = loadServiceDatabaseState()
+        if (mangaId == null) return state.downloadedIndex.chapterIds
+        val mangaChapterIds = state.chaptersByMangaId[mangaId].orEmpty().mapTo(mutableSetOf(), Chapters::_id)
+        return state.downloadedIndex.chapterIds.filterTo(mutableSetOf()) { it in mangaChapterIds }
+    }
+
+    suspend fun isChapterDownloaded(chapterId: Long): Boolean {
+        return chapterId in loadDownloadedChapterIds()
+    }
+
+    suspend fun loadUpdates(
+        after: Long = 0L,
+        limit: Int = DEFAULT_SERVICE_PAGE_SIZE,
+        filter: ChimahonUpdatesFilter = ChimahonUpdatesFilter(),
+    ): List<ChimahonRecentUpdateEntry> {
+        return loadUpdatesData(after, limit, filter).entries.map(ChimahonUpdateData::update)
+    }
+
+    suspend fun loadUpdatesData(
+        after: Long = 0L,
+        limit: Int = DEFAULT_SERVICE_PAGE_SIZE,
+        filter: ChimahonUpdatesFilter = ChimahonUpdatesFilter(),
+    ): ChimahonUpdatesData {
+        require(limit > 0) { "Updates limit must be positive." }
+        val state = loadServiceDatabaseState()
+        val effectiveDownloadedFilter = filter.downloadedOnly
+            ?: true.takeIf { loadDownloadedOnlySetting() }
+        val updates = platformServices.databaseHandler.awaitList {
+            updatesViewQueries.getRecentUpdates(
+                after = after.coerceAtLeast(0L),
+                limit = Long.MAX_VALUE,
+            )
+        }
+            .asSequence()
+            .filter { update -> filter.read == null || update.read == filter.read }
+            .filter { update ->
+                when (filter.started) {
+                    true -> !update.read && update.last_page_read > 0L
+                    false -> !update.read && update.last_page_read == 0L
+                    null -> true
+                }
+            }
+            .filter { update -> filter.bookmarked == null || update.bookmark == filter.bookmarked }
+            .map { update ->
+                ChimahonUpdateData(
+                    update = update.toSharedUpdateEntry(),
+                    downloaded = update.chapterId in state.downloadedIndex.chapterIds,
+                )
+            }
+            .filter { entry ->
+                effectiveDownloadedFilter == null || entry.downloaded == effectiveDownloadedFilter
+            }
+            .take(limit + 1)
+            .toList()
+
+        return ChimahonUpdatesData(
+            entries = updates.take(limit),
+            after = after.coerceAtLeast(0L),
+            limit = limit,
+            hasMore = updates.size > limit,
+        )
+    }
+
+    suspend fun loadHistory(
+        limit: Int = DEFAULT_SERVICE_PAGE_SIZE,
+        filter: ChimahonHistoryFilter = ChimahonHistoryFilter(),
+    ): List<ChimahonHistoryEntry> {
+        return loadHistoryData(limit, filter).entries.map { it.history }
+    }
+
+    suspend fun loadHistoryData(
+        limit: Int = DEFAULT_SERVICE_PAGE_SIZE,
+        filter: ChimahonHistoryFilter = ChimahonHistoryFilter(),
+    ): ChimahonHistoryData {
+        require(limit > 0) { "History limit must be positive." }
+        val state = loadServiceDatabaseState()
+        val effectiveDownloadedFilter = filter.downloadedOnly
+            ?: true.takeIf { loadDownloadedOnlySetting() }
+        val history = platformServices.databaseHandler.awaitList {
+            historyViewQueries.history(
+                bookmarkUnmask = CHAPTER_SHOW_NOT_BOOKMARKED,
+                bookmarkMask = CHAPTER_SHOW_BOOKMARKED,
+                unfinishedManga = filter.unfinishedManga?.let { if (it) 1L else 0L },
+                unfinishedChapter = filter.unfinishedChapter,
+                nonLibraryEntries = false.takeIf { !filter.includeNonLibrary },
+                query = filter.query.trim().lowercase(),
+            )
+        }
+            .asSequence()
+            .map { historyEntry ->
+                ChimahonHistoryDataEntry(
+                    history = historyEntry.toSharedHistoryEntry(),
+                    downloaded = historyEntry.chapterId in state.downloadedIndex.chapterIds,
+                )
+            }
+            .filter { entry ->
+                effectiveDownloadedFilter == null || entry.downloaded == effectiveDownloadedFilter
+            }
+            .take(limit + 1)
+            .toList()
+
+        return ChimahonHistoryData(
+            entries = history.take(limit),
+            limit = limit,
+            hasMore = history.size > limit,
+        )
+    }
+
+    suspend fun loadLibraryCategories(
+        includeDefault: Boolean = true,
+        includeHidden: Boolean = true,
+    ): List<ChimahonLibraryCategory> {
+        return platformServices.databaseHandler.awaitList {
+            categoriesQueries.getCategories()
+        }
+            .asSequence()
+            .map(GetCategories::toSharedLibraryCategory)
+            .filter { includeDefault || it.id != DEFAULT_LIBRARY_CATEGORY_ID }
+            .filter { includeHidden || !it.hidden }
+            .toList()
+    }
+
+    suspend fun loadCategoryData(
+        includeHidden: Boolean = true,
+        downloadedOnly: Boolean? = null,
+    ): List<ChimahonCategoryData> {
+        return loadLibraryData(
+            downloadedOnly = downloadedOnly,
+            includeHiddenCategories = includeHidden,
+        ).categories
+    }
+
+    suspend fun renameCategory(
+        categoryId: Long,
+        name: String,
+    ) {
+        val normalizedName = name.trim()
+        require(categoryId > DEFAULT_LIBRARY_CATEGORY_ID) { "The default category cannot be renamed." }
+        require(normalizedName.isNotEmpty()) { "Category name is empty." }
+        val categories = platformServices.databaseHandler.awaitList {
+            categoriesQueries.getCategories()
+        }
+        require(categories.any { it.id == categoryId }) { "Category $categoryId does not exist." }
+        require(
+            categories.none {
+                it.id != categoryId && it.name.equals(normalizedName, ignoreCase = true)
+            },
+        ) {
+            "A category named $normalizedName already exists."
+        }
+        platformServices.databaseHandler.await {
+            categoriesQueries.update(
+                name = normalizedName,
+                order = null,
+                flags = null,
+                hidden = null,
+                categoryId = categoryId,
+            )
+        }
+    }
+
+    suspend fun setCategoryHidden(
+        categoryId: Long,
+        hidden: Boolean,
+    ) {
+        require(categoryId > DEFAULT_LIBRARY_CATEGORY_ID) { "The default category cannot be hidden." }
+        platformServices.databaseHandler.await {
+            categoriesQueries.update(
+                name = null,
+                order = null,
+                flags = null,
+                hidden = if (hidden) 1L else 0L,
+                categoryId = categoryId,
+            )
+        }
+    }
+
+    suspend fun reorderCategories(categoryIds: List<Long>) {
+        val existing = platformServices.databaseHandler.awaitList {
+            categoriesQueries.getCategories()
+        }
+            .filter { it.id > DEFAULT_LIBRARY_CATEGORY_ID }
+        val existingIds = existing.mapTo(mutableSetOf(), GetCategories::id)
+        val requestedIds = categoryIds
+            .asSequence()
+            .filter { it in existingIds }
+            .distinct()
+            .toList()
+        val orderedIds = requestedIds + existing.map(GetCategories::id).filterNot { it in requestedIds }
+        platformServices.databaseHandler.await(inTransaction = true) {
+            orderedIds.forEachIndexed { index, categoryId ->
+                categoriesQueries.update(
+                    name = null,
+                    order = (index + 1).toLong(),
+                    flags = null,
+                    hidden = null,
+                    categoryId = categoryId,
+                )
+            }
+        }
+    }
+
+    suspend fun moveCategory(
+        categoryId: Long,
+        newIndex: Int,
+    ) {
+        require(categoryId > DEFAULT_LIBRARY_CATEGORY_ID) { "The default category cannot be moved." }
+        val categoryIds = platformServices.databaseHandler.awaitList {
+            categoriesQueries.getCategories()
+        }
+            .filter { it.id > DEFAULT_LIBRARY_CATEGORY_ID }
+            .map(GetCategories::id)
+            .toMutableList()
+        val oldIndex = categoryIds.indexOf(categoryId)
+        require(oldIndex >= 0) { "Category $categoryId does not exist." }
+        val destination = newIndex.coerceIn(0, categoryIds.lastIndex)
+        categoryIds.add(destination, categoryIds.removeAt(oldIndex))
+        reorderCategories(categoryIds)
+    }
+
+    suspend fun loadStatistics(): ChimahonStatisticsData {
+        val state = loadServiceDatabaseState()
+        val libraryMangaIds = state.libraryManga.mapTo(mutableSetOf(), Mangas::_id)
+        val libraryChapters = state.chapters.filter { it.manga_id in libraryMangaIds }
+        val history = platformServices.databaseHandler.awaitList {
+            historyQueries.getAllHistory()
+        }
+
+        return ChimahonStatisticsData(
+            libraryMangaCount = state.libraryManga.size,
+            startedMangaCount = state.libraryManga.count { manga ->
+                state.chaptersByMangaId[manga._id].orEmpty().any {
+                    it.read || it.last_page_read > 0L
+                }
+            },
+            completedMangaCount = state.libraryManga.count { it.status == SManga.COMPLETED.toLong() },
+            sourceCount = state.libraryManga.map(Mangas::source).distinct().size,
+            categoryCount = state.categories.count { it.id > DEFAULT_LIBRARY_CATEGORY_ID },
+            totalChapterCount = libraryChapters.size,
+            readChapterCount = libraryChapters.count(Chapters::read),
+            unreadChapterCount = libraryChapters.count { !it.read },
+            bookmarkedChapterCount = libraryChapters.count(Chapters::bookmark),
+            downloadedMangaCount = state.downloadedIndex.mangaIds.count { it in libraryMangaIds },
+            downloadedChapterCount = state.downloadedIndex.chapterIds.count { chapterId ->
+                libraryChapters.any { it._id == chapterId }
+            },
+            historyEntryCount = history.size,
+            totalReadDurationMillis = history.sumOf { it.time_read.coerceAtLeast(0L) },
+        )
+    }
+
+    suspend fun loadStorageData(): ChimahonStorageData {
+        val directories = runCatching { platformServices.storageDirectories }.getOrNull()
+        if (directories == null) {
+            val empty = ChimahonStorageSection("", false, 0L, 0, 0)
+            return ChimahonStorageData(empty, empty, empty, 0L, 0, 0)
+        }
+        val downloadsDirectory = directories.defaultDownloadsDir(APP_NAME)
+        val files = collectTreeStats(directories.filesDir).toStorageSection(directories.filesDir)
+        val cache = collectTreeStats(directories.cacheDir).toStorageSection(directories.cacheDir)
+        val downloads = collectTreeStats(downloadsDirectory).toStorageSection(downloadsDirectory)
+        val downloadedIndex = loadServiceDatabaseState().downloadedIndex
+
+        return ChimahonStorageData(
+            files = files,
+            cache = cache,
+            downloads = downloads,
+            totalSizeBytes = files.sizeBytes + cache.sizeBytes + downloads.sizeBytes,
+            downloadedMangaCount = downloadedIndex.mangaIds.size,
+            downloadedChapterCount = downloadedIndex.chapterIds.size,
         )
     }
 
@@ -692,12 +1029,208 @@ class ChimahonSharedAppServices private constructor(
         return settingsRepository.saveReaderSettings(settings)
     }
 
+    suspend fun saveLibrarySettings(settings: ChimahonLibrarySettings): ChimahonLibrarySettings {
+        return settingsRepository.saveLibrarySettings(settings)
+    }
+
     suspend fun setDownloadedOnly(enabled: Boolean): ChimahonAppModeSettings {
         return settingsRepository.setDownloadedOnly(enabled)
     }
 
     suspend fun setIncognitoMode(enabled: Boolean): ChimahonAppModeSettings {
         return settingsRepository.setIncognitoMode(enabled)
+    }
+
+    suspend fun loadServiceSettings(): ChimahonServiceSettings {
+        return serviceSettingsRepository.load()
+    }
+
+    suspend fun loadUiSettings(): ChimahonUiSettings {
+        return serviceSettingsRepository.loadUiSettings()
+    }
+
+    suspend fun saveUiSettings(settings: ChimahonUiSettings): ChimahonUiSettings {
+        return serviceSettingsRepository.saveUiSettings(settings)
+    }
+
+    suspend fun setKeepReaderControlsVisible(enabled: Boolean): ChimahonUiSettings {
+        return serviceSettingsRepository.saveUiSettings(
+            serviceSettingsRepository.loadUiSettings().copy(
+                keepReaderControlsVisible = enabled,
+            ),
+        )
+    }
+
+    suspend fun setRightToLeftByDefault(enabled: Boolean): ChimahonUiSettings {
+        return serviceSettingsRepository.saveUiSettings(
+            serviceSettingsRepository.loadUiSettings().copy(
+                rightToLeftByDefault = enabled,
+            ),
+        )
+    }
+
+    suspend fun setShowUnreadBadges(enabled: Boolean): ChimahonUiSettings {
+        return serviceSettingsRepository.saveUiSettings(
+            serviceSettingsRepository.loadUiSettings().copy(
+                showUnreadBadges = enabled,
+            ),
+        )
+    }
+
+    suspend fun setShowCategoryTabs(enabled: Boolean): ChimahonUiSettings {
+        return serviceSettingsRepository.saveUiSettings(
+            serviceSettingsRepository.loadUiSettings().copy(
+                showCategoryTabs = enabled,
+            ),
+        )
+    }
+
+    suspend fun setShowHiddenCategories(enabled: Boolean): ChimahonUiSettings {
+        return serviceSettingsRepository.saveUiSettings(
+            serviceSettingsRepository.loadUiSettings().copy(
+                showHiddenCategories = enabled,
+            ),
+        )
+    }
+
+    suspend fun loadDownloadSettings(): ChimahonDownloadSettings {
+        return serviceSettingsRepository.loadDownloadSettings()
+    }
+
+    suspend fun saveDownloadSettings(
+        settings: ChimahonDownloadSettings,
+    ): ChimahonDownloadSettings {
+        return serviceSettingsRepository.saveDownloadSettings(settings)
+    }
+
+    suspend fun loadDownloadQueue(): ChimahonDownloadQueueData {
+        return downloadQueueRepository.load()
+    }
+
+    suspend fun enqueueDownload(chapterId: Long): ChimahonDownloadQueueData {
+        return enqueueDownloads(listOf(chapterId))
+    }
+
+    suspend fun enqueueDownloads(chapterIds: Collection<Long>): ChimahonDownloadQueueData {
+        val requestedIds = chapterIds.toSet()
+        if (requestedIds.isEmpty()) return downloadQueueRepository.load()
+        val state = loadServiceDatabaseState()
+        val mangaById = state.allManga.associateBy(Mangas::_id)
+        val paused = downloadQueueRepository.load().paused
+        val entries = state.chapters
+            .asSequence()
+            .filter { it._id in requestedIds }
+            .mapNotNull { chapter ->
+                val manga = mangaById[chapter.manga_id] ?: return@mapNotNull null
+                ChimahonDownloadQueueEntry(
+                    id = chapter._id.toString(),
+                    mangaId = manga._id,
+                    chapterId = chapter._id,
+                    sourceId = manga.source,
+                    mangaTitle = manga.title,
+                    chapterName = chapter.name,
+                    chapterUrl = chapter.url,
+                    status = if (paused) {
+                        ChimahonDownloadState.Paused
+                    } else {
+                        ChimahonDownloadState.Queued
+                    },
+                    addedAt = platformServices.currentTimeMillis(),
+                )
+            }
+            .toList()
+        require(entries.size == requestedIds.size) {
+            "One or more chapters are not present in the shared database."
+        }
+        return downloadQueueRepository.enqueue(entries)
+    }
+
+    suspend fun removeDownload(chapterId: Long): ChimahonDownloadQueueData {
+        return removeDownloads(listOf(chapterId))
+    }
+
+    suspend fun removeDownloads(chapterIds: Collection<Long>): ChimahonDownloadQueueData {
+        return downloadQueueRepository.remove(chapterIds.toSet())
+    }
+
+    suspend fun clearDownloadQueue(): ChimahonDownloadQueueData {
+        return downloadQueueRepository.clear(completedOnly = false)
+    }
+
+    suspend fun clearCompletedDownloads(): ChimahonDownloadQueueData {
+        return downloadQueueRepository.clear(completedOnly = true)
+    }
+
+    suspend fun setDownloadQueuePaused(paused: Boolean): ChimahonDownloadQueueData {
+        return downloadQueueRepository.setPaused(paused)
+    }
+
+    suspend fun pauseDownloadQueue(): ChimahonDownloadQueueData {
+        return setDownloadQueuePaused(true)
+    }
+
+    suspend fun resumeDownloadQueue(): ChimahonDownloadQueueData {
+        return setDownloadQueuePaused(false)
+    }
+
+    suspend fun claimNextDownload(): ChimahonDownloadQueueEntry? {
+        return downloadQueueRepository.claimNext()
+    }
+
+    suspend fun retryDownload(chapterId: Long): ChimahonDownloadQueueData {
+        val paused = downloadQueueRepository.load().paused
+        return downloadQueueRepository.update(chapterId) { entry ->
+            entry.copy(
+                status = if (paused) ChimahonDownloadState.Paused else ChimahonDownloadState.Queued,
+                progress = 0,
+                downloadedBytes = 0L,
+                totalBytes = null,
+                errorMessage = null,
+            )
+        }
+    }
+
+    suspend fun updateDownloadProgress(
+        chapterId: Long,
+        progress: Int,
+        downloadedBytes: Long = 0L,
+        totalBytes: Long? = null,
+        status: ChimahonDownloadState = ChimahonDownloadState.Downloading,
+    ): ChimahonDownloadQueueData {
+        return downloadQueueRepository.update(chapterId) { entry ->
+            entry.copy(
+                status = status,
+                progress = if (status == ChimahonDownloadState.Downloaded) 100 else progress,
+                downloadedBytes = downloadedBytes,
+                totalBytes = totalBytes,
+                errorMessage = null,
+            )
+        }
+    }
+
+    suspend fun markDownloadCompleted(
+        chapterId: Long,
+        downloadedBytes: Long = 0L,
+    ): ChimahonDownloadQueueData {
+        return updateDownloadProgress(
+            chapterId = chapterId,
+            progress = 100,
+            downloadedBytes = downloadedBytes,
+            totalBytes = downloadedBytes.takeIf { it > 0L },
+            status = ChimahonDownloadState.Downloaded,
+        )
+    }
+
+    suspend fun markDownloadFailed(
+        chapterId: Long,
+        message: String,
+    ): ChimahonDownloadQueueData {
+        return downloadQueueRepository.update(chapterId) { entry ->
+            entry.copy(
+                status = ChimahonDownloadState.Error,
+                errorMessage = message.trim().takeIf(String::isNotEmpty) ?: "Download failed.",
+            )
+        }
     }
 
     suspend fun saveReaderProgress(
@@ -746,6 +1279,89 @@ class ChimahonSharedAppServices private constructor(
         }
     }
 
+    private suspend fun loadServiceDatabaseState(): ServiceDatabaseState {
+        val allManga = platformServices.databaseHandler.awaitList {
+            mangasQueries.getAllManga()
+        }
+        val chapters = if (allManga.isEmpty()) {
+            emptyList()
+        } else {
+            platformServices.databaseHandler.awaitList {
+                ehQueries.getChaptersByMangaIds(allManga.map(Mangas::_id))
+            }
+        }
+        val libraryManga = allManga.filter(Mangas::favorite)
+        val categories = platformServices.databaseHandler.awaitList {
+            categoriesQueries.getCategories()
+        }
+        val libraryCategoryMemberships = libraryManga.associate { manga ->
+            val categoryIds = platformServices.databaseHandler.awaitList {
+                categoriesQueries.getCategoriesByMangaId(manga._id)
+            }.map(GetCategoriesByMangaId::id)
+            manga._id to categoryIds.ifEmpty { listOf(DEFAULT_LIBRARY_CATEGORY_ID) }
+        }
+        val sourceDirectoryNames = runCatching {
+            platformServices.sourceRegistry.getCatalogueSources().associate { source ->
+                source.id to setOf(
+                    source.toString(),
+                    source.name,
+                    "${source.name} (${source.lang.uppercase()})",
+                )
+            }
+        }.getOrDefault(emptyMap())
+        val downloadedIndex = runCatching {
+            val downloadsDirectory = platformServices.storageDirectories.defaultDownloadsDir(APP_NAME)
+            ChimahonDownloadStorage(downloadsDirectory).scanDownloadedChapters(
+                manga = allManga,
+                chapters = chapters,
+                sourceDirectoryNames = sourceDirectoryNames,
+            )
+        }.getOrDefault(ChimahonDownloadedIndex.Empty)
+
+        return ServiceDatabaseState(
+            allManga = allManga,
+            libraryManga = libraryManga,
+            chapters = chapters,
+            chaptersByMangaId = chapters.groupBy(Chapters::manga_id),
+            categories = categories,
+            libraryCategoryMemberships = libraryCategoryMemberships,
+            downloadedIndex = downloadedIndex,
+        )
+    }
+
+    private fun Mangas.toLibraryMangaData(
+        state: ServiceDatabaseState,
+    ): ChimahonLibraryMangaData {
+        val mangaChapters = state.chaptersByMangaId[_id].orEmpty()
+            .sortedWith(
+                compareBy<Chapters> { it.source_order }
+                    .thenBy { it.chapter_number },
+            )
+        return ChimahonLibraryMangaData(
+            manga = toSharedMangaEntry(),
+            chapters = mangaChapters.map(Chapters::toSharedChapterEntry),
+            categoryIds = state.libraryCategoryMemberships[_id]
+                .orEmpty()
+                .ifEmpty { listOf(DEFAULT_LIBRARY_CATEGORY_ID) },
+            unreadChapterCount = mangaChapters.count { !it.read },
+            readChapterCount = mangaChapters.count(Chapters::read),
+            bookmarkedChapterCount = mangaChapters.count(Chapters::bookmark),
+            downloadedChapterCount = mangaChapters.count { it._id in state.downloadedIndex.chapterIds },
+        )
+    }
+
+    private suspend fun loadDownloadedOnlySetting(): Boolean {
+        return runCatching {
+            settingsRepository.loadAppModeSettings().downloadedOnly
+        }.getOrDefault(false)
+    }
+
+    private suspend fun loadShowHiddenCategoriesSetting(): Boolean {
+        return runCatching {
+            serviceSettingsRepository.loadUiSettings().showHiddenCategories
+        }.getOrDefault(false)
+    }
+
     fun close() {
         httpClient.close()
         platformServices.apkExtensionManager.close()
@@ -779,6 +1395,16 @@ class ChimahonSharedAppServices private constructor(
         val extensionCount: Int,
         val label: String,
         val installedExtensions: List<ChimahonInstalledExtensionEntry>,
+    )
+
+    private data class ServiceDatabaseState(
+        val allManga: List<Mangas>,
+        val libraryManga: List<Mangas>,
+        val chapters: List<Chapters>,
+        val chaptersByMangaId: Map<Long, List<Chapters>>,
+        val categories: List<GetCategories>,
+        val libraryCategoryMemberships: Map<Long, List<Long>>,
+        val downloadedIndex: ChimahonDownloadedIndex,
     )
 }
 
@@ -1103,6 +1729,16 @@ private fun formatTimestamp(epochSeconds: Long): String {
     return "Unix $epochSeconds"
 }
 
+private fun ChimahonFileTreeStats.toStorageSection(path: Path): ChimahonStorageSection {
+    return ChimahonStorageSection(
+        path = path.toString(),
+        exists = exists,
+        sizeBytes = sizeBytes,
+        fileCount = fileCount,
+        directoryCount = directoryCount,
+    )
+}
+
 internal const val APP_NAME = "chimahon"
 internal const val DATABASE_DIRECTORY = "database"
 internal const val DATABASE_NAME = "chimahon.db"
@@ -1110,6 +1746,7 @@ internal const val SETTINGS_FILE_NAME = "chimahon.settings"
 
 private const val CHAPTER_SHOW_BOOKMARKED = 0x00000020L
 private const val CHAPTER_SHOW_NOT_BOOKMARKED = 0x00000040L
+private const val DEFAULT_SERVICE_PAGE_SIZE = 50
 private const val DEFAULT_LIBRARY_CATEGORY_ID = 0L
 private const val MAX_THUMBNAIL_CACHE_ENTRIES = 192
 private const val SCRIPT_EXTENSION_SUFFIX = ".js"

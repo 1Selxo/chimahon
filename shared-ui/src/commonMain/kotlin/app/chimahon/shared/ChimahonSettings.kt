@@ -6,6 +6,7 @@ import tachiyomi.core.platform.settings.writeBoolean
 
 data class ChimahonSettings(
     val reader: ChimahonReaderSettings = ChimahonReaderSettings(),
+    val library: ChimahonLibrarySettings = ChimahonLibrarySettings(),
     val appMode: ChimahonAppModeSettings = ChimahonAppModeSettings(),
 )
 
@@ -13,6 +14,8 @@ data class ChimahonReaderSettings(
     val mode: ChimahonReaderMode = ChimahonReaderMode.Webtoon,
     val scale: ChimahonReaderScale = ChimahonReaderScale.FitWidth,
     val canvas: ChimahonReaderCanvas = ChimahonReaderCanvas.Black,
+    val showPageStrip: Boolean = true,
+    val keepControlsVisible: Boolean = true,
 )
 
 enum class ChimahonReaderMode {
@@ -33,6 +36,19 @@ enum class ChimahonReaderCanvas {
     White,
 }
 
+data class ChimahonLibrarySettings(
+    val displayMode: ChimahonLibraryDisplayMode = ChimahonLibraryDisplayMode.ComfortableGrid,
+    val showCategoryTabs: Boolean = true,
+    val showUnreadBadges: Boolean = true,
+    val showContinueButtons: Boolean = true,
+)
+
+enum class ChimahonLibraryDisplayMode {
+    ComfortableGrid,
+    CompactGrid,
+    List,
+}
+
 data class ChimahonAppModeSettings(
     val downloadedOnly: Boolean = false,
     val incognitoMode: Boolean = false,
@@ -45,6 +61,7 @@ internal class ChimahonSettingsRepository(
     suspend fun loadSettings(): ChimahonSettings {
         return ChimahonSettings(
             reader = loadReaderSettings(),
+            library = loadLibrarySettings(),
             appMode = loadAppModeSettings(),
         )
     }
@@ -54,6 +71,8 @@ internal class ChimahonSettingsRepository(
             mode = readEnum(READER_MODE_KEY, ChimahonReaderMode.Webtoon),
             scale = readEnum(READER_SCALE_KEY, ChimahonReaderScale.FitWidth),
             canvas = readEnum(READER_CANVAS_KEY, ChimahonReaderCanvas.Black),
+            showPageStrip = settingsStore.readBoolean(READER_PAGE_STRIP_KEY, defaultValue = true),
+            keepControlsVisible = settingsStore.readBoolean(READER_CONTROLS_KEY, defaultValue = true),
         )
     }
 
@@ -61,6 +80,37 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(READER_MODE_KEY, settings.mode.name)
         settingsStore.writeString(READER_SCALE_KEY, settings.scale.name)
         settingsStore.writeString(READER_CANVAS_KEY, settings.canvas.name)
+        settingsStore.writeBoolean(READER_PAGE_STRIP_KEY, settings.showPageStrip)
+        settingsStore.writeBoolean(READER_CONTROLS_KEY, settings.keepControlsVisible)
+        return settings
+    }
+
+    suspend fun loadLibrarySettings(): ChimahonLibrarySettings {
+        return ChimahonLibrarySettings(
+            displayMode = readEnum(
+                LIBRARY_DISPLAY_MODE_KEY,
+                ChimahonLibraryDisplayMode.ComfortableGrid,
+            ),
+            showCategoryTabs = settingsStore.readBoolean(
+                LIBRARY_CATEGORY_TABS_KEY,
+                defaultValue = true,
+            ),
+            showUnreadBadges = settingsStore.readBoolean(
+                LIBRARY_UNREAD_BADGES_KEY,
+                defaultValue = true,
+            ),
+            showContinueButtons = settingsStore.readBoolean(
+                LIBRARY_CONTINUE_BUTTONS_KEY,
+                defaultValue = true,
+            ),
+        )
+    }
+
+    suspend fun saveLibrarySettings(settings: ChimahonLibrarySettings): ChimahonLibrarySettings {
+        settingsStore.writeString(LIBRARY_DISPLAY_MODE_KEY, settings.displayMode.name)
+        settingsStore.writeBoolean(LIBRARY_CATEGORY_TABS_KEY, settings.showCategoryTabs)
+        settingsStore.writeBoolean(LIBRARY_UNREAD_BADGES_KEY, settings.showUnreadBadges)
+        settingsStore.writeBoolean(LIBRARY_CONTINUE_BUTTONS_KEY, settings.showContinueButtons)
         return settings
     }
 
@@ -97,6 +147,12 @@ internal class ChimahonSettingsRepository(
         const val READER_MODE_KEY = "__APP_STATE_chimahon_reader_mode"
         const val READER_SCALE_KEY = "__APP_STATE_chimahon_reader_scale"
         const val READER_CANVAS_KEY = "__APP_STATE_chimahon_reader_canvas"
+        const val READER_PAGE_STRIP_KEY = "__APP_STATE_chimahon_reader_page_strip"
+        const val READER_CONTROLS_KEY = "__APP_STATE_chimahon_reader_controls"
+        const val LIBRARY_DISPLAY_MODE_KEY = "__APP_STATE_chimahon_library_display_mode"
+        const val LIBRARY_CATEGORY_TABS_KEY = "__APP_STATE_chimahon_library_category_tabs"
+        const val LIBRARY_UNREAD_BADGES_KEY = "__APP_STATE_chimahon_library_unread_badges"
+        const val LIBRARY_CONTINUE_BUTTONS_KEY = "__APP_STATE_chimahon_library_continue_buttons"
         const val DOWNLOADED_ONLY_KEY = "__APP_STATE_pref_downloaded_only"
         const val INCOGNITO_MODE_KEY = "__APP_STATE_incognito_mode"
     }

@@ -39,7 +39,7 @@ class ChimahonReaderRequestQueueTest {
     fun libraryChaptersBuildReaderRequestsWithIdsAndClampedInitialPages() {
         val manga = mangaEntry()
         val chapters = listOf(
-            chapterEntry(id = 101L, url = "chapter-1", lastPageRead = 8L),
+            chapterEntry(id = 101L, url = "chapter-1", lastPageRead = -4L),
             chapterEntry(
                 id = 102L,
                 url = "chapter-2",
@@ -53,7 +53,7 @@ class ChimahonReaderRequestQueueTest {
 
         assertEquals(manga.id, request.mangaId)
         assertEquals(chapters.first().id, request.chapterId)
-        assertEquals(8, request.initialPage)
+        assertEquals(0, request.initialPage)
         assertEquals(0, request.chapterIndex)
         assertEquals(listOf(101L, 102L), request.chapterQueue.map { it.chapterId })
 
@@ -64,6 +64,33 @@ class ChimahonReaderRequestQueueTest {
         assertEquals(1, next.chapterIndex)
         assertEquals(manga.sourceId, next.sourceId)
         assertEquals(manga.title, next.mangaTitle)
+    }
+
+    @Test
+    fun adjacentNavigationPreservesDescendingQueueAndPerChapterProgress() {
+        val manga = mangaEntry()
+        val chapters = listOf(
+            chapterEntry(id = 103L, url = "chapter-3", chapterNumber = 3.0, lastPageRead = 12L),
+            chapterEntry(id = 102L, url = "chapter-2", chapterNumber = 2.0, lastPageRead = 6L),
+            chapterEntry(id = 101L, url = "chapter-1", chapterNumber = 1.0, lastPageRead = 2L),
+        )
+
+        val current = chapters[1].toPrivateReaderRequest(manga, chapters)
+        val newer = current.chapterQueue[0].toPrivateReaderRequest(current)
+        val older = current.chapterQueue[2].toPrivateReaderRequest(current)
+
+        assertEquals(listOf(3.0, 2.0, 1.0), current.chapterQueue.map { it.chapterNumber })
+        assertEquals(1, current.chapterIndex)
+        assertEquals(0, newer.chapterIndex)
+        assertEquals(103L, newer.chapterId)
+        assertEquals(12, newer.initialPage)
+        assertEquals(2, older.chapterIndex)
+        assertEquals(101L, older.chapterId)
+        assertEquals(2, older.initialPage)
+        assertEquals(current.chapterQueue, newer.chapterQueue)
+        assertEquals(current.chapterQueue, older.chapterQueue)
+        assertEquals(current.mangaId, newer.mangaId)
+        assertEquals(current.sourceId, older.sourceId)
     }
 
     private fun ChimahonRemoteChapterEntry.toPrivateReaderRequest(

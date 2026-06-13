@@ -40,7 +40,9 @@ internal actual class ChimahonPlatformServices actual constructor() {
 
     actual fun resolveExternalMangaUrl(source: CatalogueSource, manga: SManga): String? = manga.url
 
-    actual fun openExternalUrl(url: String): Boolean = false
+    actual fun openExternalUrl(url: String): Boolean {
+        return ChimahonPlatformIntegration.openExternalUrl(url)
+    }
 
     actual fun close() {
         databaseDriver.close()

@@ -141,6 +141,58 @@ class ChimahonServiceMutationTest {
         }
     }
 
+    @Test
+    fun readerProgressMutationHonorsIncognitoAndRemoteChapterGuards() = runBlocking {
+        createSharedUiTestDatabase("chimahon-reader-progress-guards-test").use { testDb ->
+            val handler = testDb.handler
+            val settingsStore = InMemoryPlatformSettingsStore()
+            val services = chimahonServiceForTest(
+                databaseHandler = handler,
+                settingsStore = settingsStore,
+            )
+            val mangaId = handler.insertManga(url = "/reader-progress-guards")
+            val chapterId = handler.insertChapter(mangaId, url = "/guarded-chapter")
+            val storedRequest = ChimahonReaderRequest(
+                sourceId = 1L,
+                mangaTitle = "Reader manga",
+                chapterName = "Guarded chapter",
+                chapterUrl = "/guarded-chapter",
+                chapterNumber = 1.0,
+                scanlator = null,
+                dateUpload = 0L,
+                mangaId = mangaId,
+                chapterId = chapterId,
+            )
+
+            services.setIncognitoMode(true)
+            services.saveReaderProgress(storedRequest, pageIndex = 5, completed = true)
+            handler.awaitOne { chaptersQueries.getChapterById(chapterId) }.let { chapter ->
+                assertFalse(chapter.read)
+                assertEquals(0L, chapter.last_page_read)
+            }
+            assertEquals(emptyList(), handler.historyRows())
+
+            services.setIncognitoMode(false)
+            services.saveReaderProgress(
+                storedRequest.copy(chapterId = null),
+                pageIndex = 7,
+                completed = true,
+            )
+            handler.awaitOne { chaptersQueries.getChapterById(chapterId) }.let { chapter ->
+                assertFalse(chapter.read)
+                assertEquals(0L, chapter.last_page_read)
+            }
+            assertEquals(emptyList(), handler.historyRows())
+
+            services.saveReaderProgress(storedRequest, pageIndex = -3, completed = false)
+            handler.awaitOne { chaptersQueries.getChapterById(chapterId) }.let { chapter ->
+                assertFalse(chapter.read)
+                assertEquals(0L, chapter.last_page_read)
+            }
+            assertEquals(listOf(chapterId), handler.historyRows().map { it.chapter_id })
+        }
+    }
+
     private suspend fun DatabaseHandler.insertManga(
         source: Long = 1L,
         url: String = "/manga",
