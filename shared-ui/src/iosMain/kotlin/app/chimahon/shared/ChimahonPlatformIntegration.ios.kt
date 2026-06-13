@@ -80,13 +80,6 @@ private fun presentShareSheet(items: List<*>, title: String?): Boolean {
         activityItems = items,
         applicationActivities = null,
     )
-    if (!title.isNullOrBlank()) {
-        activityController.setValue(title, forKey = "subject")
-    }
-    activityController.popoverPresentationController?.let { popover ->
-        popover.sourceView = presenter.view
-        popover.sourceRect = presenter.view.bounds
-    }
     presenter.presentViewController(activityController, animated = true, completion = null)
     return true
 }
