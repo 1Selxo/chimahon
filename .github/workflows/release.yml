@@ -123,6 +123,7 @@ jobs:
         run: |
           ./gradlew :app:assembleRelease \
             -Penable-updater \
+            -Pdisable-code-shrink \
             -PreleaseVersionName=${{ needs.metadata.outputs.version_name }} \
             -PreleaseVersionCode=${{ needs.metadata.outputs.version_code }} \
             --no-daemon --console=plain --max-workers=2
