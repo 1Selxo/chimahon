@@ -9,25 +9,46 @@ plugins {
 
 kotlin {
     androidTarget()
+    jvm("desktop")
+    mingwX64("windows")
+    linuxX64("linux")
+    iosX64()
+    iosArm64()
+    iosSimulatorArm64()
+
+    applyDefaultHierarchyTemplate()
+
     sourceSets {
         val commonMain by getting {
             dependencies {
+                api(projects.core.extensions)
+                api(project.dependencies.platform(kotlinx.coroutines.bom))
+                api(kotlinx.coroutines.core)
                 api(kotlinx.serialization.json)
+
+                implementation(project.dependencies.platform(compose.bom))
+                implementation(compose.runtime)
+            }
+        }
+        val jvmCompatMain by creating {
+            dependsOn(commonMain)
+            dependencies {
+                api(projects.core.network)
                 api(libs.injekt)
+                api(libs.logcat)
                 api(libs.rxjava)
                 api(libs.jsoup)
+                api(libs.okhttp.core)
 
                 // SY -->
                 api(projects.i18n)
                 api(projects.i18nSy)
                 api(kotlinx.reflect)
                 // SY <--
-
-                implementation(project.dependencies.platform(compose.bom))
-                implementation(compose.runtime)
             }
         }
         val androidMain by getting {
+            dependsOn(jvmCompatMain)
             dependencies {
                 implementation(projects.core.common)
                 api(libs.preferencektx)
@@ -35,6 +56,26 @@ kotlin {
                 // Workaround for https://youtrack.jetbrains.com/issue/KT-57605
                 implementation(kotlinx.coroutines.android)
                 implementation(project.dependencies.platform(kotlinx.coroutines.bom))
+            }
+        }
+        val desktopMain by getting {
+            dependsOn(jvmCompatMain)
+        }
+        val nativeMain by getting {
+            dependencies {
+                implementation("io.ktor:ktor-client-core:3.5.0")
+                implementation("io.ktor:ktor-client-cio:3.5.0")
+            }
+        }
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+        val desktopTest by getting {
+            dependencies {
+                implementation(libs.bundles.test)
+                runtimeOnly(libs.junit.platform.launcher)
             }
         }
     }

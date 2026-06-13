@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.util.system
 
 import android.content.Context
 import androidx.work.CoroutineWorker
-import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import kotlinx.coroutines.delay
 import logcat.LogPriority
@@ -10,11 +9,6 @@ import tachiyomi.core.common.util.system.logcat
 
 val Context.workManager: WorkManager
     get() = WorkManager.getInstance(this)
-
-fun WorkManager.isRunning(tag: String): Boolean {
-    val list = this.getWorkInfosByTag(tag).get()
-    return list.any { it.state == WorkInfo.State.RUNNING }
-}
 
 /**
  * Makes this worker run in the context of a foreground service.

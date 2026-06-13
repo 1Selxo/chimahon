@@ -27,6 +27,8 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.util.system.copyToClipboard
+import exh.metadata.metadata.MetadataStringProvider
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -69,7 +71,10 @@ class MetadataViewScreen(
                 MetadataViewState.SourceNotFound -> EmptyScreen(MR.strings.source_empty_screen)
                 is MetadataViewState.Success -> {
                     val context = LocalContext.current
-                    val items = remember(state.meta) { state.meta.getExtraInfoPairs(context) }
+                    val stringProvider = remember(context) {
+                        MetadataStringProvider { resource -> context.stringResource(resource) }
+                    }
+                    val items = remember(state.meta, stringProvider) { state.meta.getExtraInfoPairs(stringProvider) }
                     ScrollbarLazyColumn(
                         contentPadding =
                         paddingValues + WindowInsets.navigationBars.asPaddingValues() + topSmallPaddingValues,

@@ -29,7 +29,7 @@ object MangaMapper {
         @Suppress("UNUSED_PARAMETER")
         filteredScanlators: String?,
         // SY <--
-        updateStrategy: UpdateStrategy,
+        updateStrategy: Long,
         calculateInterval: Long,
         lastModifiedAt: Long,
         favoriteModifiedAt: Long?,
@@ -58,7 +58,7 @@ object MangaMapper {
         ogGenre = genre,
         ogStatus = status,
         // SY <--
-        updateStrategy = updateStrategy,
+        updateStrategy = updateStrategy.toUpdateStrategy(),
         initialized = initialized,
         lastModifiedAt = lastModifiedAt,
         favoriteModifiedAt = favoriteModifiedAt,
@@ -88,7 +88,7 @@ object MangaMapper {
         // SY -->
         filteredScanlators: String?,
         // SY <--
-        updateStrategy: UpdateStrategy,
+        updateStrategy: Long,
         calculateInterval: Long,
         lastModifiedAt: Long,
         favoriteModifiedAt: Long?,
@@ -171,7 +171,7 @@ object MangaMapper {
         // SY -->
         filteredScanlators: String?,
         // SY <--
-        updateStrategy: UpdateStrategy,
+        updateStrategy: Long,
         calculateInterval: Long,
         lastModifiedAt: Long,
         favoriteModifiedAt: Long?,
@@ -212,4 +212,8 @@ object MangaMapper {
         ),
         chapterCount = totalCount,
     )
+}
+
+private fun Long.toUpdateStrategy(): UpdateStrategy {
+    return UpdateStrategy.entries.getOrElse(toInt()) { UpdateStrategy.ALWAYS_UPDATE }
 }

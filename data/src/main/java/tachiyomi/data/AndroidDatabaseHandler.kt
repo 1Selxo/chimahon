@@ -82,7 +82,7 @@ class AndroidDatabaseHandler(
         return block(db).asFlow().mapToOneOrNull(queryDispatcher)
     }
 
-    override fun <T : Any> subscribeToPagingSource(
+    fun <T : Any> subscribeToPagingSource(
         countQuery: Database.() -> Query<Long>,
         queryProvider: Database.(Long, Long) -> Query<T>,
     ): PagingSource<Long, T> {

@@ -6,7 +6,6 @@ import androidx.core.content.ContextCompat
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import app.cash.sqldelight.db.SqlDriver
-import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import chimahon.ocr.LensClient
 import chimahon.ocr.OcrCacheManager
 import chimahon.audio.WordAudioService
@@ -50,15 +49,12 @@ import nl.adaptivity.xmlutil.core.XmlVersion
 import nl.adaptivity.xmlutil.serialization.XML
 import tachiyomi.core.common.storage.AndroidStorageFolderProvider
 import tachiyomi.core.common.storage.UniFileTempFileManager
+import tachiyomi.core.database.AndroidDatabaseDriverFactory
 import tachiyomi.data.AndroidDatabaseHandler
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseHandler
-import tachiyomi.data.DateColumnAdapter
-import tachiyomi.data.History
-import tachiyomi.data.Reading_sessions
 import tachiyomi.data.Mangas
 import tachiyomi.data.StringListColumnAdapter
-import tachiyomi.data.UpdateStrategyColumnAdapter
 import tachiyomi.domain.manga.interactor.GetCustomMangaInfo
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
@@ -74,6 +70,12 @@ import uy.kohesive.injekt.injectLazy
 // SY -->
 private const val LEGACY_DATABASE_NAME = "tachiyomi.db"
 // SY <--
+
+private fun setPragma(db: SupportSQLiteDatabase, pragma: String) {
+    val cursor = db.query("PRAGMA $pragma")
+    cursor.moveToFirst()
+    cursor.close()
+}
 
 class AppModule(val app: Application) : InjektModule {
     // SY -->
@@ -92,51 +94,35 @@ class AppModule(val app: Application) : InjektModule {
             }
 
             // SY <--
-            AndroidSqliteDriver(
-                schema = Database.Schema,
+            val databaseName = if (securityPreferences.encryptDatabase().get()) {
+                CbzCrypto.DATABASE_NAME
+            } else {
+                LEGACY_DATABASE_NAME
+            }
+            val openHelperFactory = if (securityPreferences.encryptDatabase().get()) {
+                SupportOpenHelperFactory(CbzCrypto.getDecryptedPasswordSql(), null, false, 25)
+            } else if (isDebugBuildType && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Support database inspector in Android Studio
+                FrameworkSQLiteOpenHelperFactory()
+            } else {
+                RequerySQLiteOpenHelperFactory()
+            }
+            // SY <--
+            AndroidDatabaseDriverFactory(
                 context = app,
-                // SY -->
-                name = if (securityPreferences.encryptDatabase().get()) {
-                    CbzCrypto.DATABASE_NAME
-                } else {
-                    LEGACY_DATABASE_NAME
+                openHelperFactory = openHelperFactory,
+                onOpen = { db ->
+                    setPragma(db, "foreign_keys = ON")
+                    setPragma(db, "journal_mode = WAL")
+                    setPragma(db, "synchronous = NORMAL")
                 },
-                factory = if (securityPreferences.encryptDatabase().get()) {
-                    SupportOpenHelperFactory(CbzCrypto.getDecryptedPasswordSql(), null, false, 25)
-                } else if (isDebugBuildType && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // Support database inspector in Android Studio
-                    FrameworkSQLiteOpenHelperFactory()
-                } else {
-                    RequerySQLiteOpenHelperFactory()
-                },
-                // SY <--
-                callback = object : AndroidSqliteDriver.Callback(Database.Schema) {
-                    override fun onOpen(db: SupportSQLiteDatabase) {
-                        super.onOpen(db)
-                        setPragma(db, "foreign_keys = ON")
-                        setPragma(db, "journal_mode = WAL")
-                        setPragma(db, "synchronous = NORMAL")
-                    }
-                    private fun setPragma(db: SupportSQLiteDatabase, pragma: String) {
-                        val cursor = db.query("PRAGMA $pragma")
-                        cursor.moveToFirst()
-                        cursor.close()
-                    }
-                },
-            )
+            ).create(Database.Schema, databaseName)
         }
         addSingletonFactory {
             Database(
                 driver = get(),
-                historyAdapter = History.Adapter(
-                    last_readAdapter = DateColumnAdapter,
-                ),
                 mangasAdapter = Mangas.Adapter(
                     genreAdapter = StringListColumnAdapter,
-                    update_strategyAdapter = UpdateStrategyColumnAdapter,
-                ),
-                reading_sessionsAdapter = Reading_sessions.Adapter(
-                    read_atAdapter = DateColumnAdapter,
                 ),
             )
         }

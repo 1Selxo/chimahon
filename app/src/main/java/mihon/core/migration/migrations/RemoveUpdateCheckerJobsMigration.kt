@@ -4,9 +4,10 @@ import android.app.Application
 import androidx.core.content.edit
 import androidx.preference.PreferenceManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
-import eu.kanade.tachiyomi.util.system.workManager
 import mihon.core.migration.Migration
 import mihon.core.migration.MigrationContext
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.preference.getEnum
@@ -21,8 +22,12 @@ class RemoveUpdateCheckerJobsMigration : Migration {
         val preferenceStore = migrationContext.get<PreferenceStore>() ?: return@withIOContext false
         val trackerManager = migrationContext.get<TrackerManager>() ?: return@withIOContext false
         // Removed background jobs
-        context.workManager.cancelAllWorkByTag("UpdateChecker")
-        context.workManager.cancelAllWorkByTag("ExtensionUpdate")
+        val scheduler = AndroidWorkManagerBackgroundTaskScheduler(
+            context = context,
+            workerRegistry = AndroidBackgroundWorkerRegistry { null },
+        )
+        scheduler.cancel("UpdateChecker")
+        scheduler.cancel("ExtensionUpdate")
         prefs.edit {
             remove("automatic_ext_updates")
         }

@@ -96,7 +96,7 @@ class HistoryRepositoryImpl(
             handler.await {
                 historyQueries.upsert(
                     historyUpdate.chapterId,
-                    historyUpdate.readAt,
+                    historyUpdate.readAt.time,
                     historyUpdate.sessionReadDuration,
                 )
             }
@@ -112,7 +112,7 @@ class HistoryRepositoryImpl(
                 historyUpdates.forEach { historyUpdate ->
                     historyQueries.upsert(
                         historyUpdate.chapterId,
-                        historyUpdate.readAt,
+                        historyUpdate.readAt.time,
                         historyUpdate.sessionReadDuration,
                     )
                 }
@@ -128,7 +128,7 @@ class HistoryRepositoryImpl(
             handler.await {
                 reading_sessionsQueries.insertSession(
                     session.chapterId,
-                    session.readAt,
+                    session.readAt.time,
                     session.duration,
                 )
             }
@@ -140,7 +140,7 @@ class HistoryRepositoryImpl(
     override suspend fun getAllSessions(): List<ReadingSession> {
         return handler.awaitList {
             reading_sessionsQueries.getAllSessions { id, chapterId, readAt, duration ->
-                ReadingSession(id, chapterId, readAt, duration)
+                ReadingSession(id, chapterId, java.util.Date(readAt), duration)
             }
         }
     }
@@ -148,7 +148,7 @@ class HistoryRepositoryImpl(
     override suspend fun getLibrarySessions(): List<ReadingSession> {
         return handler.awaitList {
             reading_sessionsQueries.getLibrarySessions { id, chapterId, readAt, duration ->
-                ReadingSession(id, chapterId, readAt, duration)
+                ReadingSession(id, chapterId, java.util.Date(readAt), duration)
             }
         }
     }

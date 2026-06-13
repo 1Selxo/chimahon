@@ -19,6 +19,9 @@ kotlin {
 }
 
 dependencies {
+    implementation(projects.core.platform)
+    api(projects.core.network)
+
     implementation(projects.i18n)
     // SY -->
     implementation(projects.i18nSy)
@@ -49,9 +52,6 @@ dependencies {
 
     // Sort
     implementation(libs.natural.comparator)
-
-    // JavaScript engine
-    implementation(libs.bundles.js.engine)
 
     testImplementation(libs.bundles.test)
     testRuntimeOnly(libs.junit.platform.launcher)

@@ -219,6 +219,8 @@ dependencies {
     // SY <--
     implementation(projects.core.archive)
     implementation(projects.core.common)
+    implementation(projects.core.database)
+    implementation(projects.core.platform)
     implementation(projects.coreMetadata)
     implementation(projects.sourceApi)
     implementation(projects.sourceLocal)

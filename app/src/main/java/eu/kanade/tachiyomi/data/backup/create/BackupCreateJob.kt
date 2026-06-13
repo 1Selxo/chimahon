@@ -5,32 +5,34 @@ import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import androidx.core.net.toUri
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkerParameters
-import androidx.work.workDataOf
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.cancelNotification
-import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
-import eu.kanade.tachiyomi.util.system.workManager
-import exh.util.WorkerUtil
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.core.platform.background.AndroidBackgroundWorkerRegistry
+import tachiyomi.core.platform.background.AndroidWorkManagerBackgroundTaskScheduler
+import tachiyomi.core.platform.background.BackgroundTask
+import tachiyomi.core.platform.background.BackgroundTaskBackoffCriteria
+import tachiyomi.core.platform.background.BackgroundTaskBackoffPolicy
+import tachiyomi.core.platform.background.BackgroundTaskCadence
+import tachiyomi.core.platform.background.BackgroundTaskConstraints
+import tachiyomi.core.platform.background.BackgroundTaskInputData
+import tachiyomi.core.platform.background.BackgroundTaskInputValue
+import tachiyomi.core.platform.background.BackgroundTaskScheduler
+import tachiyomi.core.platform.background.ExistingBackgroundTaskPolicy
 import tachiyomi.domain.backup.service.BackupPreferences
 import tachiyomi.domain.storage.service.StorageManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 class BackupCreateJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
@@ -84,47 +86,70 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
     }
 
     companion object {
-        fun isManualJobRunning(context: Context): Boolean {
-            return context.workManager.isRunning(TAG_MANUAL)
+        private const val WORKER_KEY = "backup_create"
+
+        fun isManualJobRunning(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = backupCreateScheduler(context),
+        ): Boolean {
+            return scheduler.isRunning(TAG_MANUAL)
         }
 
-        fun setupTask(context: Context, prefInterval: Int? = null) {
+        fun setupTask(
+            context: Context,
+            prefInterval: Int? = null,
+            scheduler: BackgroundTaskScheduler = backupCreateScheduler(context),
+        ) {
             val backupPreferences = Injekt.get<BackupPreferences>()
             val interval = prefInterval ?: backupPreferences.backupInterval().get()
             if (interval > 0) {
-                val constraints = Constraints(
-                    requiresBatteryNotLow = true,
+                scheduler.schedule(
+                    BackgroundTask(
+                        uniqueName = TAG_AUTO,
+                        workerKey = WORKER_KEY,
+                        cadence = BackgroundTaskCadence.Periodic(
+                            repeatInterval = interval.hours,
+                            flexInterval = 10.minutes,
+                        ),
+                        constraints = BackgroundTaskConstraints(
+                            requiresBatteryNotLow = true,
+                        ),
+                        policy = ExistingBackgroundTaskPolicy.Update,
+                        inputData = BackgroundTaskInputData.of(
+                            IS_AUTO_BACKUP_KEY to BackgroundTaskInputValue.BooleanValue(true),
+                        ),
+                        backoffCriteria = BackgroundTaskBackoffCriteria(
+                            policy = BackgroundTaskBackoffPolicy.Exponential,
+                            delay = 10.minutes,
+                        ),
+                        tags = setOf(TAG_AUTO),
+                    ),
                 )
-
-                val request = PeriodicWorkRequestBuilder<BackupCreateJob>(
-                    interval.toLong(),
-                    TimeUnit.HOURS,
-                    10,
-                    TimeUnit.MINUTES,
-                )
-                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
-                    .addTag(TAG_AUTO)
-                    .setConstraints(constraints)
-                    .setInputData(workDataOf(IS_AUTO_BACKUP_KEY to true))
-                    .build()
-
-                context.workManager.enqueueUniquePeriodicWork(TAG_AUTO, ExistingPeriodicWorkPolicy.UPDATE, request)
             } else {
-                context.workManager.cancelUniqueWork(TAG_AUTO)
+                scheduler.cancel(TAG_AUTO)
             }
         }
 
-        fun startNow(context: Context, uri: Uri, options: BackupOptions) {
-            val inputData = workDataOf(
-                IS_AUTO_BACKUP_KEY to false,
-                LOCATION_URI_KEY to uri.toString(),
-                OPTIONS_KEY to options.asBooleanArray(),
+        fun startNow(
+            context: Context,
+            uri: Uri,
+            options: BackupOptions,
+            scheduler: BackgroundTaskScheduler = backupCreateScheduler(context),
+        ) {
+            scheduler.schedule(
+                BackgroundTask(
+                    uniqueName = TAG_MANUAL,
+                    workerKey = WORKER_KEY,
+                    cadence = BackgroundTaskCadence.OneTime,
+                    policy = ExistingBackgroundTaskPolicy.Keep,
+                    inputData = BackgroundTaskInputData.of(
+                        IS_AUTO_BACKUP_KEY to BackgroundTaskInputValue.BooleanValue(false),
+                        LOCATION_URI_KEY to BackgroundTaskInputValue.StringValue(uri.toString()),
+                        OPTIONS_KEY to BackgroundTaskInputValue.BooleanArrayValue(options.asBooleanArray()),
+                    ),
+                    tags = setOf(TAG_MANUAL),
+                ),
             )
-            val request = OneTimeWorkRequestBuilder<BackupCreateJob>()
-                .addTag(TAG_MANUAL)
-                .setInputData(inputData)
-                .build()
-            context.workManager.enqueueUniqueWork(TAG_MANUAL, ExistingWorkPolicy.KEEP, request)
         }
 
         // KMK -->
@@ -134,10 +159,25 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
          * @return True if a periodic job is scheduled, false otherwise.
          * @throws Exception If there is an error retrieving the work info.
          */
-        suspend fun isPeriodicBackupScheduled(context: Context): Boolean {
-            return WorkerUtil.isPeriodicJobScheduled(context, TAG_AUTO)
+        suspend fun isPeriodicBackupScheduled(
+            context: Context,
+            scheduler: BackgroundTaskScheduler = backupCreateScheduler(context),
+        ): Boolean {
+            return scheduler.isScheduled(TAG_AUTO)
         }
         // KMK <--
+
+        private fun backupCreateScheduler(context: Context): BackgroundTaskScheduler {
+            return AndroidWorkManagerBackgroundTaskScheduler(
+                context = context,
+                workerRegistry = AndroidBackgroundWorkerRegistry { workerKey ->
+                    when (workerKey) {
+                        WORKER_KEY -> BackupCreateJob::class.java
+                        else -> null
+                    }
+                },
+            )
+        }
     }
 }
 

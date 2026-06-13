@@ -16,6 +16,7 @@ materialKolor = "5.0.0-alpha06"
 image-cropper = "4.7.0"
 datastore = "1.1.2"
 media3 = "1.5.1"
+rhino = "1.9.1"
 
 
 [libraries]
@@ -35,6 +36,7 @@ datastore-preferences = { module = "androidx.datastore:datastore-preferences", v
 
 
 quickjs-android = { group = "com.github.zhanghai.quickjs-java", name = "quickjs-android", version = "547f5b1597" }
+rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 
 jsoup = "org.jsoup:jsoup:1.22.1"
 
@@ -101,6 +103,9 @@ leakcanary-plumber = { module = "com.squareup.leakcanary:plumber-android", versi
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
 sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions-jvm", version.ref = "sqldelight" }
 sqldelight-android-paging = { module = "app.cash.sqldelight:androidx-paging3-extensions", version.ref = "sqldelight" }
+sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
 sqldelight-dialects-sql = { module = "app.cash.sqldelight:sqlite-3-38-dialect", version = "2.2.1" }
 
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
@@ -141,4 +146,3 @@ voyager = ["voyager-navigator", "voyager-screenmodel", "voyager-tab-navigator", 
 test = ["junit-jupiter", "kotest-assertions", "mockk"]
 markdown = ["markdown-core", "markdown-coil"]
 media3 = ["media3-exoplayer", "media3-common"]
-
