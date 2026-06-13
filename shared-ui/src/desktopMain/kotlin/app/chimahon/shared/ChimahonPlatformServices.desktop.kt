@@ -12,8 +12,6 @@ import tachiyomi.core.platform.storage.PlatformStorageDirectories
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseHandler
 import tachiyomi.data.DesktopDatabaseHandler
-import java.awt.Desktop
-import java.net.URI
 
 internal actual class ChimahonPlatformServices actual constructor() {
     actual val platformName: String = "Desktop"
@@ -38,19 +36,7 @@ internal actual class ChimahonPlatformServices actual constructor() {
     }
 
     actual fun openExternalUrl(url: String): Boolean {
-        val uri = runCatching { URI(url) }.getOrNull() ?: return false
-        if (uri.scheme?.lowercase() !in setOf("http", "https")) return false
-        if (!Desktop.isDesktopSupported()) return false
-
-        return runCatching {
-            val desktop = Desktop.getDesktop()
-            if (desktop.isSupported(Desktop.Action.BROWSE)) {
-                desktop.browse(uri)
-                true
-            } else {
-                false
-            }
-        }.getOrDefault(false)
+        return ChimahonPlatformIntegration.openExternalUrl(url)
     }
 
     actual fun close() {

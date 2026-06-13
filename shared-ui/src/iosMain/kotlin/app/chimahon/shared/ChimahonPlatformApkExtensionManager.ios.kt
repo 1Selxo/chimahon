@@ -13,7 +13,17 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
         extension: ChimahonRepoExtensionEntry,
         apkBytes: ByteArray,
     ): ChimahonInstalledExtensionEntry {
-        error("Android APK extensions are currently supported by the desktop compatibility engine only.")
+        error("Android APK extensions cannot run on iOS. Install a JavaScript extension instead.")
+    }
+
+    actual suspend fun uninstall(packageId: String): Boolean = false
+
+    actual fun status(): ChimahonApkExtensionManagerStatus {
+        return ChimahonApkExtensionManagerStatus(
+            isSupported = false,
+            installedExtensionCount = 0,
+            registeredSourceCount = 0,
+        )
     }
 
     actual fun close() = Unit

@@ -6,6 +6,7 @@ import kotlinx.coroutines.sync.Mutex
 import okio.Path.Companion.toPath
 import sun.misc.Unsafe
 import tachiyomi.core.database.DesktopDatabaseDriverFactory
+import tachiyomi.core.platform.settings.PlatformSettingsStore
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseHandler
 import tachiyomi.data.DesktopDatabaseHandler
@@ -43,6 +44,7 @@ internal fun createSharedUiTestDatabase(name: String): SharedUiTestDatabase {
 internal fun chimahonServiceForTest(
     databaseHandler: DatabaseHandler? = null,
     sourceRegistry: SourceRegistry = SourceRegistry(),
+    settingsStore: PlatformSettingsStore = InMemoryPlatformSettingsStore(),
 ): ChimahonSharedAppServices {
     val platformServices = unsafeAllocate<ChimahonPlatformServices>().apply {
         forceSetField("sourceRegistry", sourceRegistry)
@@ -52,9 +54,30 @@ internal fun chimahonServiceForTest(
     }
     return unsafeAllocate<ChimahonSharedAppServices>().apply {
         forceSetField("platformServices", platformServices)
+        forceSetField("settingsRepository", ChimahonSettingsRepository(settingsStore))
         forceSetField("readerProgressMutex", Mutex())
         forceSetField("readerProgressMarks", mutableMapOf<Long, TimeMark>())
     }
+}
+
+internal class InMemoryPlatformSettingsStore(
+    private val values: MutableMap<String, String> = mutableMapOf(),
+) : PlatformSettingsStore {
+    override suspend fun readString(key: String): String? = values[key]
+
+    override suspend fun writeString(key: String, value: String) {
+        values[key] = value
+    }
+
+    override suspend fun remove(key: String) {
+        values.remove(key)
+    }
+
+    override suspend fun clear() {
+        values.clear()
+    }
+
+    override suspend fun snapshot(): Map<String, String> = values.toMap()
 }
 
 internal fun invokePrivateChimahonAppFunction(

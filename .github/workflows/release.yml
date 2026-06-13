@@ -1,9 +1,21 @@
 name: Release
+
 on:
   push:
     tags:
-      - v*
-      - '[0-9]+.*'
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+      - '[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semver release version without the v prefix, for example 1.2.0'
+        required: true
+        default: '1.2.0'
+      draft:
+        description: 'Create the GitHub release as a draft'
+        type: boolean
+        required: true
+        default: true
 
 permissions:
   contents: write
@@ -13,23 +25,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  get_tag:
-    name: Extract tag name
-    runs-on: 'ubuntu-24.04'
+  metadata:
+    name: Release metadata
+    runs-on: ubuntu-24.04
     outputs:
-      tag: ${{ steps.extract.outputs.tag }}
-      version_name: ${{ steps.extract.outputs.version_name }}
-      version_code: ${{ steps.extract.outputs.version_code }}
+      tag: ${{ steps.release.outputs.tag }}
+      version_name: ${{ steps.release.outputs.version_name }}
+      version_code: ${{ steps.release.outputs.version_code }}
+      draft: ${{ steps.release.outputs.draft }}
 
     steps:
-      - name: Get tag name
-        id: extract
+      - name: Compute release names
+        id: release
+        shell: bash
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          version_name="${tag#v}"
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version_name="${{ github.event.inputs.version }}"
+            tag="v${version_name#v}"
+            draft="${{ github.event.inputs.draft }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+            version_name="${tag#v}"
+            draft="true"
+          fi
 
           if [[ ! "$version_name" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "::error::Release tag must be semver-like (e.g. v1.2.3 or 1.2.3). Got: $tag"
+            echo "::error::Release version must be semver-like, for example v1.2.3 or 1.2.3. Got: $tag"
             exit 1
           fi
 
@@ -41,52 +64,83 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: Build
-    runs-on: 'ubuntu-24.04'
-    needs: get_tag
+  android:
+    name: Android APKs
+    runs-on: ubuntu-24.04
+    needs: metadata
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Checkout private submodules
+      - name: Checkout submodules
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
+        shell: bash
         run: |
-          # Convert SSH submodule URLs to HTTPS (e.g. utf8proc uses git@github.com:)
+          set -euo pipefail
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-          if [ -n "$GH_PAT" ]; then
-            git config --global url."https://$GH_PAT@github.com/".insteadOf "https://github.com/"
+          if [[ -n "${GH_PAT:-}" ]]; then
+            git config --global url."https://${GH_PAT}@github.com/".insteadOf "https://github.com/"
           fi
           git submodule update --init --recursive
 
       - name: Set up JDK
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        uses: actions/setup-java@v4
         with:
           java-version: 17
           distribution: temurin
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Write client_secrets.json
-        uses: DamianReeves/write-file-action@6929a9a6d1807689191dcc8bbe62b54d70a32b42 # v1.3
-        with:
-          path: app/src/main/assets/client_secrets.json
-          contents: ${{ secrets.GOOGLE_CLIENT_SECRETS_JSON }}
-          write-mode: overwrite
+      - name: Write optional Google client secrets
+        env:
+          GOOGLE_CLIENT_SECRETS_JSON: ${{ secrets.GOOGLE_CLIENT_SECRETS_JSON }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets
+          if [[ -n "${GOOGLE_CLIENT_SECRETS_JSON:-}" ]]; then
+            printf '%s' "$GOOGLE_CLIENT_SECRETS_JSON" > app/src/main/assets/client_secrets.json
+          else
+            printf '{}\n' > app/src/main/assets/client_secrets.json
+          fi
 
       - name: Clean CMake cache
+        shell: bash
         run: rm -rf app/.cxx chimahon/.cxx
 
-      - name: Build
-        run: ./gradlew assembleRelease -Penable-updater -PreleaseVersionName=${{ needs.get_tag.outputs.version_name }} -PreleaseVersionCode=${{ needs.get_tag.outputs.version_code }}
+      - name: Build release APKs
+        shell: bash
+        run: |
+          ./gradlew :app:assembleRelease \
+            -Penable-updater \
+            -PreleaseVersionName=${{ needs.metadata.outputs.version_name }} \
+            -PreleaseVersionCode=${{ needs.metadata.outputs.version_code }} \
+            --no-daemon --console=plain --max-workers=2
 
-      - name: Sign APK
+      - name: Check Android signing secrets
+        id: signing
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -n "${SIGNING_KEY:-}" && -n "${ALIAS:-}" && -n "${KEY_STORE_PASSWORD:-}" && -n "${KEY_PASSWORD:-}" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sign APKs
+        if: steps.signing.outputs.available == 'true'
         uses: r0adkll/sign-android-release@f30bdd30588842ac76044ecdbd4b6d0e3e813478
         with:
           releaseDirectory: app/build/outputs/apk/release
@@ -97,91 +151,222 @@ jobs:
         env:
           BUILD_TOOLS_VERSION: '35.0.1'
 
-      - name: Rename APK
+      - name: Collect APK assets
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release-assets
 
-          mv app/build/outputs/apk/release/app-universal-release-unsigned-signed.apk chimahon-${{ needs.get_tag.outputs.tag }}.apk
-          mv app/build/outputs/apk/release/app-arm64-v8a-release-unsigned-signed.apk chimahon-arm64-v8a-${{ needs.get_tag.outputs.tag }}.apk
-          mv app/build/outputs/apk/release/app-armeabi-v7a-release-unsigned-signed.apk chimahon-armeabi-v7a-${{ needs.get_tag.outputs.tag }}.apk
-          mv app/build/outputs/apk/release/app-x86-release-unsigned-signed.apk chimahon-x86-${{ needs.get_tag.outputs.tag }}.apk
-          mv app/build/outputs/apk/release/app-x86_64-release-unsigned-signed.apk chimahon-x86_64-${{ needs.get_tag.outputs.tag }}.apk
+          signed=(app/build/outputs/apk/release/*-signed.apk)
+          if (( ${#signed[@]} > 0 )); then
+            files=("${signed[@]}")
+            suffix=""
+          else
+            files=(app/build/outputs/apk/release/*-unsigned.apk)
+            suffix="-unsigned"
+          fi
 
-      - name: Upload APK
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::No APK outputs were produced."
+            exit 1
+          fi
+
+          for apk in "${files[@]}"; do
+            base="$(basename "$apk")"
+            abi="${base#app-}"
+            abi="${abi%-release-unsigned-signed.apk}"
+            abi="${abi%-release-unsigned.apk}"
+            if [[ "$abi" == "universal" ]]; then
+              name="chimahon-android-${{ needs.metadata.outputs.tag }}${suffix}.apk"
+            else
+              name="chimahon-android-${abi}-${{ needs.metadata.outputs.tag }}${suffix}.apk"
+            fi
+            cp "$apk" "release-assets/$name"
+          done
+
+      - name: Upload Android assets
+        uses: actions/upload-artifact@v4
         with:
-          name: chimahon
-          path: |
-            chimahon-${{ needs.get_tag.outputs.tag }}.apk
-            chimahon-arm64-v8a-${{ needs.get_tag.outputs.tag }}.apk
-            chimahon-armeabi-v7a-${{ needs.get_tag.outputs.tag }}.apk
-            chimahon-x86-${{ needs.get_tag.outputs.tag }}.apk
-            chimahon-x86_64-${{ needs.get_tag.outputs.tag }}.apk
+          name: release-android
+          path: release-assets/*
 
-  release:
-    name: Create GitHub Release
-    runs-on: ubuntu-24.04
-    needs: [get_tag, build]
+  desktop:
+    name: Desktop ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+          - os: ubuntu-24.04
+            platform: linux-x64
+          - os: macos-15-intel
+            platform: macos-x64
+          - os: macos-15
+            platform: macos-arm64
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/checkout@v4
         with:
+          fetch-depth: 0
+
+      - name: Checkout submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Windows desktop distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\gradlew.bat :desktop-app:installDist --no-daemon --console=plain --max-workers=2
+
+      - name: Build Unix desktop distribution
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./gradlew :desktop-app:installDist --no-daemon --console=plain --max-workers=2
+
+      - name: Package Windows desktop
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Compress-Archive `
+            -Path "desktop-app\build\install\chimahon-desktop-smoke" `
+            -DestinationPath "release-assets\chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.zip" `
+            -Force
+
+      - name: Package Unix desktop
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          (cd desktop-app/build/install && zip -qry "../../../release-assets/chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.zip" chimahon-desktop-smoke)
+
+      - name: Upload desktop asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-${{ matrix.platform }}
+          path: release-assets/*
+
+  ios:
+    name: iOS framework
+    runs-on: macos-15
+    needs: metadata
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build iOS release frameworks
+        shell: bash
+        run: |
+          ./gradlew \
+            :shared-ui:linkReleaseFrameworkIosArm64 \
+            :shared-ui:linkReleaseFrameworkIosSimulatorArm64 \
+            --no-daemon --console=plain --max-workers=2
+
+      - name: Package iOS frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets/ios-device release-assets/ios-simulator
+          cp -R shared-ui/build/bin/iosArm64/releaseFramework/ChimahonShared.framework release-assets/ios-device/
+          cp -R shared-ui/build/bin/iosSimulatorArm64/releaseFramework/ChimahonShared.framework release-assets/ios-simulator/
+          (cd release-assets && zip -qry "chimahon-ios-frameworks-${{ needs.metadata.outputs.tag }}.zip" ios-device ios-simulator)
+          find release-assets -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+
+      - name: Upload iOS asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ios
+          path: release-assets/*
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-24.04
+    needs:
+      - metadata
+      - android
+      - desktop
+      - ios
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
           merge-multiple: true
 
-      - name: Generate release notes from CHANGELOG
+      - name: Generate release notes
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
+          {
+            echo "## Chimahon ${{ needs.metadata.outputs.tag }}"
+            echo
+            echo "Kotlin Multiplatform release assets are attached for:"
+            echo
+            echo "- Android APKs"
+            echo "- Windows desktop"
+            echo "- Linux desktop"
+            echo "- macOS desktop x64 and arm64"
+            echo "- iOS device and simulator shared frameworks"
+            echo
+            echo "Android APKs are signed when repository signing secrets are configured. If signing secrets are missing, unsigned APKs are still published for testing."
+            echo
+            echo "iOS app distribution still requires Apple signing/provisioning; this release includes the compiled shared iOS framework artifacts."
+          } > release_notes.md
 
-          version_name="${{ needs.get_tag.outputs.version_name }}"
+      - name: List release assets
+        shell: bash
+        run: find release-assets -maxdepth 2 -type f -print | sort
 
-          changelog_section=$(awk -v v="$version_name" '
-            $0 ~ "^## \\\[(v?" v ")\\\]" { found = 1; next }
-            found && $0 ~ "^## \\\[" { exit }
-            found { print }
-          ' CHANGELOG.md)
-
-          if [[ -z "$changelog_section" ]]; then
-            changelog_section=$(awk '
-              $0 ~ "^## \\\[Unreleased\\\]" { found = 1; next }
-              found && $0 ~ "^## \\\[" { exit }
-              found { print }
-            ' CHANGELOG.md)
-          fi
-
-          if [[ -n "$changelog_section" ]]; then
-            {
-              echo "$changelog_section"
-            } > release_notes.md
-          else
-            {
-              echo "Release ${{ needs.get_tag.outputs.tag }}"
-              echo
-              echo "No matching section found in CHANGELOG.md for version $version_name."
-            } > release_notes.md
-          fi
-          echo -e "\n<!-->" >> release_notes.md
-
-      - name: Delete all artifacts
-        uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          failOnError: false
-          name: chimahon
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
-        with:
-          tag_name: ${{ needs.get_tag.outputs.tag }}
-          name: Chimahon ${{ needs.get_tag.outputs.tag }}
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Chimahon ${{ needs.metadata.outputs.tag }}
           body_path: release_notes.md
-          files: |
-            chimahon-${{ needs.get_tag.outputs.tag }}.apk
-            chimahon-arm64-v8a-${{ needs.get_tag.outputs.tag }}.apk
-            chimahon-armeabi-v7a-${{ needs.get_tag.outputs.tag }}.apk
-            chimahon-x86-${{ needs.get_tag.outputs.tag }}.apk
-            chimahon-x86_64-${{ needs.get_tag.outputs.tag }}.apk
-          draft: true
+          files: release-assets/*
+          draft: ${{ needs.metadata.outputs.draft }}
           prerelease: false
