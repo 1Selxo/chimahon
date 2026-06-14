@@ -39,6 +39,9 @@ kotlin {
             implementation("io.ktor:ktor-client-cio:3.5.0")
             implementation("org.jetbrains.compose.runtime:runtime:$composeMultiplatformVersion")
             implementation("org.jetbrains.compose.foundation:foundation:$composeMultiplatformVersion")
+            // JetBrains last published the multiplatform extended icon pack at 1.7.3.
+            implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
+            implementation("org.jetbrains.compose.material:material:$composeMultiplatformVersion")
             implementation("org.jetbrains.compose.ui:ui:$composeMultiplatformVersion")
             implementation("org.jetbrains.compose.components:components-resources:$composeMultiplatformVersion")
         }

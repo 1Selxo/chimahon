@@ -44,7 +44,7 @@ class ChimahonServiceMutationTest {
 
             services.deleteCategory(categoryId)
             assertEquals(listOf(0L), handler.awaitList { categoriesQueries.getCategories() }.map { it.id })
-            assertEquals(emptyList(), handler.categoryIdsForManga(mangaId))
+            assertEquals(listOf(0L), handler.categoryIdsForManga(mangaId))
         }
     }
 
@@ -76,8 +76,10 @@ class ChimahonServiceMutationTest {
             assertEquals(listOf(otherMangaChapterId), handler.historyRows().map { it.chapter_id })
 
             handler.insertHistory(firstChapterId, readAt = 4_000L)
-            services.clearHistory()
+            val result = services.clearHistoryWithResult()
             assertEquals(emptyList(), handler.historyRows())
+            assertEquals(2, result.historyEntriesRemoved)
+            assertEquals(0, result.remainingHistoryEntryCount)
         }
     }
 
@@ -95,14 +97,55 @@ class ChimahonServiceMutationTest {
                 .single { it.manga_id == firstMangaId }
                 ._id
 
-            services.dismissUpdateIssue(firstIssueId)
+            val dismissResult = services.dismissUpdateIssueWithResult(firstIssueId)
             handler.updateIssues().single().let { issue ->
                 assertEquals(secondMangaId, issue.manga_id)
                 assertEquals(20L, issue.message_id)
             }
+            assertEquals(1, dismissResult.updateIssuesRemoved)
+            assertEquals(1, dismissResult.remainingUpdateIssueCount)
 
-            services.clearUpdateIssues()
+            val clearResult = services.clearUpdateIssuesWithResult()
             assertEquals(emptyList(), handler.updateIssues())
+            assertEquals(1, clearResult.updateIssuesRemoved)
+            assertEquals(0, clearResult.remainingUpdateIssueCount)
+        }
+    }
+
+    @Test
+    fun updateIssueSummaryGroupsMessagesAndMaintenanceRemovesOnlyStaleRows() = runBlocking {
+        createSharedUiTestDatabase("chimahon-maintenance-service-test").use { testDb ->
+            val handler = testDb.handler
+            val services = chimahonServiceForTest(databaseHandler = handler)
+            val firstMangaId = handler.insertManga(url = "/maintained-one")
+            val secondMangaId = handler.insertManga(url = "/maintained-two")
+            val staleMangaId = handler.insertManga(
+                url = "/maintained-stale",
+                favorite = false,
+            )
+            val networkMessageId = handler.insertUpdateIssueMessage("Network unavailable")
+            val parseMessageId = handler.insertUpdateIssueMessage("Unable to parse")
+
+            handler.insertUpdateIssue(firstMangaId, messageId = networkMessageId)
+            handler.insertUpdateIssue(secondMangaId, messageId = networkMessageId)
+            handler.insertUpdateIssue(staleMangaId, messageId = parseMessageId)
+
+            val summary = services.loadUpdateIssueSummary()
+            assertEquals(3, summary.totalIssueCount)
+            assertEquals(3, summary.affectedMangaCount)
+            assertEquals(1, summary.staleIssueCount)
+            assertEquals(
+                listOf("Network unavailable" to 2, "Unable to parse" to 1),
+                summary.groups.map { it.message to it.issueCount },
+            )
+
+            val maintenanceResult = services.runDatabaseMaintenance()
+            assertEquals(1, maintenanceResult.updateIssuesRemoved)
+            assertEquals(2, maintenanceResult.remainingUpdateIssueCount)
+            assertEquals(
+                listOf(firstMangaId, secondMangaId),
+                handler.updateIssues().map { it.manga_id }.sorted(),
+            )
         }
     }
 
@@ -197,6 +240,7 @@ class ChimahonServiceMutationTest {
         source: Long = 1L,
         url: String = "/manga",
         title: String = "Manga $url",
+        favorite: Boolean = true,
     ): Long {
         await {
             mangasQueries.insert(
@@ -209,7 +253,7 @@ class ChimahonServiceMutationTest {
                 title = title,
                 status = 1L,
                 thumbnailUrl = null,
-                favorite = true,
+                favorite = favorite,
                 lastUpdate = null,
                 nextUpdate = null,
                 initialized = true,
@@ -275,6 +319,12 @@ class ChimahonServiceMutationTest {
                 mangaId = mangaId,
                 messageId = messageId,
             )
+        }
+    }
+
+    private suspend fun DatabaseHandler.insertUpdateIssueMessage(message: String): Long {
+        return awaitOneExecutable {
+            libraryUpdateErrorMessageQueries.insertAndGet(message)
         }
     }
 

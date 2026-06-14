@@ -44,6 +44,44 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CollectionsBookmark
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DoneAll
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Label
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.NewReleases
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.QueryStats
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Reorder
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.SkipPrevious
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -70,6 +108,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -10092,6 +10131,62 @@ private enum class UiIcon {
 
 @Composable
 private fun IconGlyph(
+    icon: UiIcon,
+    contentDescription: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    Icon(
+        imageVector = icon.imageVector,
+        contentDescription = contentDescription.takeIf { it.isNotBlank() },
+        tint = tint,
+        modifier = modifier,
+    )
+}
+
+private val UiIcon.imageVector: ImageVector
+    get() = when (this) {
+        UiIcon.Library -> Icons.Outlined.CollectionsBookmark
+        UiIcon.Updates -> Icons.Outlined.NewReleases
+        UiIcon.History -> Icons.Outlined.History
+        UiIcon.Browse -> Icons.Outlined.Explore
+        UiIcon.More -> Icons.Outlined.MoreHoriz
+        UiIcon.Search -> Icons.Outlined.Search
+        UiIcon.Filter -> Icons.Outlined.FilterList
+        UiIcon.Refresh -> Icons.Outlined.Refresh
+        UiIcon.Back -> Icons.Outlined.ArrowBack
+        UiIcon.Forward -> Icons.Outlined.ArrowForward
+        UiIcon.Play -> Icons.Outlined.PlayArrow
+        UiIcon.DoneAll -> Icons.Outlined.DoneAll
+        UiIcon.Swap -> Icons.Outlined.SwapHoriz
+        UiIcon.Favorite -> Icons.Outlined.Favorite
+        UiIcon.FavoriteBorder -> Icons.Outlined.FavoriteBorder
+        UiIcon.Web -> Icons.Outlined.Public
+        UiIcon.CheckCircle -> Icons.Outlined.CheckCircle
+        UiIcon.Circle -> Icons.Outlined.RadioButtonUnchecked
+        UiIcon.Bookmark -> Icons.Outlined.Bookmark
+        UiIcon.BookmarkBorder -> Icons.Outlined.BookmarkBorder
+        UiIcon.Download -> Icons.Outlined.Download
+        UiIcon.Incognito -> Icons.Outlined.VisibilityOff
+        UiIcon.Tag -> Icons.Outlined.Label
+        UiIcon.Statistics -> Icons.Outlined.QueryStats
+        UiIcon.Storage -> Icons.Outlined.Storage
+        UiIcon.Extensions -> Icons.Outlined.Extension
+        UiIcon.Settings -> Icons.Outlined.Settings
+        UiIcon.Info -> Icons.Outlined.Info
+        UiIcon.Help -> Icons.Outlined.HelpOutline
+        UiIcon.Star -> Icons.Outlined.Star
+        UiIcon.Add -> Icons.Outlined.Add
+        UiIcon.Reorder -> Icons.Outlined.Reorder
+        UiIcon.Chapters -> Icons.Outlined.MenuBook
+        UiIcon.SkipPrevious -> Icons.Outlined.SkipPrevious
+        UiIcon.SkipNext -> Icons.Outlined.SkipNext
+        UiIcon.Delete -> Icons.Outlined.DeleteOutline
+    }
+
+@Suppress("unused")
+@Composable
+private fun LegacyIconGlyph(
     icon: UiIcon,
     contentDescription: String,
     tint: Color,

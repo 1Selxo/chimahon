@@ -540,6 +540,103 @@ class ChimahonSharedAppServices private constructor(
         )
     }
 
+    suspend fun loadThumbnailCacheData(): ChimahonThumbnailCacheData {
+        return thumbnailCacheMutex.withLock {
+            ChimahonThumbnailCacheData(
+                entryCount = thumbnailCache.size,
+                sizeBytes = thumbnailCache.values.sumOf { it.size.toLong() },
+            )
+        }
+    }
+
+    suspend fun loadUpdateIssueSummary(): ChimahonUpdateIssueSummary {
+        val issues = platformServices.databaseHandler.awaitList {
+            libraryUpdateErrorQueries.getAllErrors()
+        }
+        val messages = platformServices.databaseHandler.awaitList {
+            libraryUpdateErrorMessageQueries.getAllErrorMessages()
+        }.associate { it._id to it.message }
+        val mangaById = platformServices.databaseHandler.awaitList {
+            mangasQueries.getAllManga()
+        }.associateBy(Mangas::_id)
+
+        val groups = issues
+            .groupBy { it.message_id }
+            .map { (messageId, groupedIssues) ->
+                ChimahonUpdateIssueAggregate(
+                    messageId = messageId,
+                    message = messages[messageId] ?: "Unknown update error",
+                    issueCount = groupedIssues.size,
+                    affectedMangaCount = groupedIssues.map { it.manga_id }.distinct().size,
+                    latestUpdateEpochSeconds = groupedIssues.maxOfOrNull { it.last_update } ?: 0L,
+                )
+            }
+            .sortedWith(
+                compareByDescending<ChimahonUpdateIssueAggregate> { it.issueCount }
+                    .thenBy { it.message.lowercase() },
+            )
+
+        return ChimahonUpdateIssueSummary(
+            totalIssueCount = issues.size,
+            affectedMangaCount = issues.map { it.manga_id }.distinct().size,
+            staleIssueCount = issues.count { issue ->
+                mangaById[issue.manga_id]?.favorite != true
+            },
+            groups = groups,
+        )
+    }
+
+    suspend fun loadDatabaseMaintenanceData(): ChimahonDatabaseMaintenanceData {
+        val historyEntryCount = platformServices.databaseHandler.awaitList {
+            historyQueries.getAllHistory()
+        }.size
+        return ChimahonDatabaseMaintenanceData(
+            historyEntryCount = historyEntryCount,
+            updateIssues = loadUpdateIssueSummary(),
+        )
+    }
+
+    suspend fun loadDataMaintenanceSnapshot(): ChimahonDataMaintenanceSnapshot {
+        return ChimahonDataMaintenanceSnapshot(
+            storage = loadStorageData(),
+            thumbnailCache = loadThumbnailCacheData(),
+            database = loadDatabaseMaintenanceData(),
+        )
+    }
+
+    suspend fun clearThumbnailCache(): ChimahonCacheClearResult {
+        val cleared = thumbnailCacheMutex.withLock {
+            val data = ChimahonThumbnailCacheData(
+                entryCount = thumbnailCache.size,
+                sizeBytes = thumbnailCache.values.sumOf { it.size.toLong() },
+            )
+            thumbnailCache.clear()
+            data
+        }
+        return ChimahonCacheClearResult(
+            target = ChimahonCacheClearTarget.Thumbnails,
+            diskBytesRemoved = 0L,
+            diskFilesRemoved = 0,
+            diskDirectoriesRemoved = 0,
+            memoryBytesRemoved = cleared.sizeBytes,
+            memoryEntriesRemoved = cleared.entryCount,
+        )
+    }
+
+    suspend fun clearCacheData(): ChimahonCacheClearResult {
+        val memoryResult = clearThumbnailCache()
+        val diskResult = clearDirectoryContents(platformServices.storageDirectories.cacheDir)
+        return ChimahonCacheClearResult(
+            target = ChimahonCacheClearTarget.ApplicationCache,
+            diskBytesRemoved = diskResult.bytesRemoved,
+            diskFilesRemoved = diskResult.filesRemoved,
+            diskDirectoriesRemoved = diskResult.directoriesRemoved,
+            memoryBytesRemoved = memoryResult.memoryBytesRemoved,
+            memoryEntriesRemoved = memoryResult.memoryEntriesRemoved,
+            failures = diskResult.failures,
+        )
+    }
+
     suspend fun addExtensionRepo(input: String): ChimahonExtensionRepoEntry {
         val baseUrl = normalizeExtensionRepoBaseUrl(input)
         val repo = if (baseUrl.endsWith(SCRIPT_EXTENSION_SUFFIX, ignoreCase = true)) {
@@ -914,21 +1011,48 @@ class ChimahonSharedAppServices private constructor(
     }
 
     suspend fun clearHistory() {
+        clearHistoryWithResult()
+    }
+
+    suspend fun clearHistoryWithResult(): ChimahonDatabaseMaintenanceResult {
+        val before = loadDatabaseMaintenanceData()
         platformServices.databaseHandler.await {
             historyQueries.removeAllHistory()
         }
+        return databaseMaintenanceResult(before)
     }
 
     suspend fun dismissUpdateIssue(issueId: Long) {
+        dismissUpdateIssueWithResult(issueId)
+    }
+
+    suspend fun dismissUpdateIssueWithResult(issueId: Long): ChimahonDatabaseMaintenanceResult {
+        val before = loadDatabaseMaintenanceData()
         platformServices.databaseHandler.await {
             libraryUpdateErrorQueries.deleteErrors(listOf(issueId))
         }
+        return databaseMaintenanceResult(before)
     }
 
     suspend fun clearUpdateIssues() {
+        clearUpdateIssuesWithResult()
+    }
+
+    suspend fun clearUpdateIssuesWithResult(): ChimahonDatabaseMaintenanceResult {
+        val before = loadDatabaseMaintenanceData()
         platformServices.databaseHandler.await {
             libraryUpdateErrorQueries.deleteAllErrors()
         }
+        return databaseMaintenanceResult(before)
+    }
+
+    suspend fun runDatabaseMaintenance(): ChimahonDatabaseMaintenanceResult {
+        val before = loadDatabaseMaintenanceData()
+        platformServices.databaseHandler.await(inTransaction = true) {
+            historyQueries.removeResettedHistory()
+            libraryUpdateErrorQueries.cleanUnrelevantMangaErrors()
+        }
+        return databaseMaintenanceResult(before)
     }
 
     suspend fun setMangaChaptersRead(
@@ -1374,6 +1498,22 @@ class ChimahonSharedAppServices private constructor(
         }.getOrDefault(false)
     }
 
+    private suspend fun databaseMaintenanceResult(
+        before: ChimahonDatabaseMaintenanceData,
+    ): ChimahonDatabaseMaintenanceResult {
+        val after = loadDatabaseMaintenanceData()
+        return ChimahonDatabaseMaintenanceResult(
+            historyEntriesRemoved = (
+                before.historyEntryCount - after.historyEntryCount
+                ).coerceAtLeast(0),
+            updateIssuesRemoved = (
+                before.updateIssues.totalIssueCount - after.updateIssues.totalIssueCount
+                ).coerceAtLeast(0),
+            remainingHistoryEntryCount = after.historyEntryCount,
+            remainingUpdateIssueCount = after.updateIssues.totalIssueCount,
+        )
+    }
+
     fun close() {
         httpClient.close()
         platformServices.apkExtensionManager.close()
@@ -1748,6 +1888,75 @@ private fun ChimahonFileTreeStats.toStorageSection(path: Path): ChimahonStorageS
         sizeBytes = sizeBytes,
         fileCount = fileCount,
         directoryCount = directoryCount,
+    )
+}
+
+internal data class ChimahonDirectoryClearResult(
+    val bytesRemoved: Long,
+    val filesRemoved: Int,
+    val directoriesRemoved: Int,
+    val failures: List<ChimahonMaintenanceFailure>,
+)
+
+internal fun clearDirectoryContents(
+    path: Path,
+    fileSystem: FileSystem = FileSystem.SYSTEM,
+): ChimahonDirectoryClearResult {
+    if (path.segments.isEmpty()) {
+        return ChimahonDirectoryClearResult(
+            bytesRemoved = 0L,
+            filesRemoved = 0,
+            directoriesRemoved = 0,
+            failures = listOf(
+                ChimahonMaintenanceFailure(
+                    path = path.toString(),
+                    reason = "Refusing to clear a filesystem root.",
+                ),
+            ),
+        )
+    }
+
+    val before = collectTreeStats(path, fileSystem)
+    val failures = mutableListOf<ChimahonMaintenanceFailure>()
+    val children = runCatching {
+        if (before.exists) fileSystem.list(path) else emptyList()
+    }.getOrElse { error ->
+        failures += ChimahonMaintenanceFailure(
+            path = path.toString(),
+            reason = error.message ?: "Unable to list cache directory.",
+        )
+        emptyList()
+    }
+
+    if (failures.isEmpty()) {
+        children.forEach { child ->
+            runCatching {
+                fileSystem.deleteRecursively(child)
+            }.onFailure { error ->
+                failures += ChimahonMaintenanceFailure(
+                    path = child.toString(),
+                    reason = error.message ?: "Unable to delete cache entry.",
+                )
+            }
+        }
+        runCatching {
+            fileSystem.createDirectories(path)
+        }.onFailure { error ->
+            failures += ChimahonMaintenanceFailure(
+                path = path.toString(),
+                reason = error.message ?: "Unable to recreate cache directory.",
+            )
+        }
+    }
+
+    val after = collectTreeStats(path, fileSystem)
+    return ChimahonDirectoryClearResult(
+        bytesRemoved = (before.sizeBytes - after.sizeBytes).coerceAtLeast(0L),
+        filesRemoved = (before.fileCount - after.fileCount).coerceAtLeast(0),
+        directoriesRemoved = (
+            before.directoryCount - after.directoryCount
+            ).coerceAtLeast(0),
+        failures = failures,
     )
 }
 

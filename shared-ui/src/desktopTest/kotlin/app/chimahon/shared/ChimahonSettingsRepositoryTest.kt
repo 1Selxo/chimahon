@@ -3,66 +3,99 @@ package app.chimahon.shared
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ChimahonSettingsRepositoryTest {
 
     @Test
-    fun defaultsMatchCurrentSharedReaderUi() = runBlocking {
+    fun emptyStoreUsesBackwardCompatibleDefaults() = runBlocking {
         val repository = ChimahonSettingsRepository(InMemoryPlatformSettingsStore())
 
         val settings = repository.loadSettings()
 
-        assertEquals(ChimahonReaderMode.Webtoon, settings.reader.mode)
-        assertEquals(ChimahonReaderScale.FitWidth, settings.reader.scale)
-        assertEquals(ChimahonReaderCanvas.Black, settings.reader.canvas)
-        assertTrue(settings.reader.showPageStrip)
-        assertTrue(settings.reader.keepControlsVisible)
-        assertEquals(ChimahonLibraryDisplayMode.ComfortableGrid, settings.library.displayMode)
-        assertTrue(settings.library.showCategoryTabs)
-        assertTrue(settings.library.showUnreadBadges)
-        assertTrue(settings.library.showContinueButtons)
-        assertFalse(settings.appMode.downloadedOnly)
-        assertFalse(settings.appMode.incognitoMode)
+        assertEquals(ChimahonSettings(), settings)
     }
 
     @Test
-    fun persistsReaderLibraryAndModeSettings() = runBlocking {
+    fun persistsEverySettingsGroupAcrossRepositoryInstances() = runBlocking {
         val store = InMemoryPlatformSettingsStore()
         val repository = ChimahonSettingsRepository(store)
+        val reader = ChimahonReaderSettings(
+            mode = ChimahonReaderMode.RightToLeft,
+            scale = ChimahonReaderScale.FitScreen,
+            canvas = ChimahonReaderCanvas.White,
+            showPageStrip = false,
+            keepControlsVisible = false,
+            tapZonesEnabled = false,
+            smallerTapZones = true,
+            invertTapZones = ChimahonTapZoneInvert.Both,
+            volumeKeysEnabled = true,
+            volumeKeysInverted = true,
+            longTapEnabled = false,
+            keepScreenOn = true,
+            cropBorders = true,
+            pageTransitions = false,
+            showPageNumber = false,
+        )
+        val library = ChimahonLibrarySettings(
+            displayMode = ChimahonLibraryDisplayMode.List,
+            showCategoryTabs = false,
+            showUnreadBadges = false,
+            showContinueButtons = false,
+            sort = ChimahonLibrarySort.LastUpdate,
+            sortAscending = false,
+            downloadedFilter = ChimahonFilterMode.Include,
+            unreadFilter = ChimahonFilterMode.Exclude,
+            startedFilter = ChimahonFilterMode.Include,
+            bookmarkedFilter = ChimahonFilterMode.Exclude,
+            completedFilter = ChimahonFilterMode.Include,
+            autoUpdateIntervalHours = 12,
+            updateOnlyOnWifi = false,
+            showUpdateCount = false,
+            updateNotificationsEnabled = false,
+        )
+        val downloads = ChimahonDownloadPreferences(
+            wifiOnly = false,
+            saveAsCbz = false,
+            splitTallImages = false,
+            autoDownloadWhileReadingCount = 3,
+            removeAfterReadSlots = 2,
+            removeAfterMarkedRead = true,
+            removeBookmarkedChapters = true,
+            downloadNewChapters = true,
+            downloadNewUnreadOnly = true,
+            parallelSourceDownloads = 7,
+            parallelPageDownloads = 9,
+        )
+        val browse = ChimahonBrowseSettings(
+            showNsfwSources = false,
+            hideLibraryEntries = true,
+            autoLoadMore = false,
+            extensionUpdateNotificationsEnabled = false,
+        )
+        val security = ChimahonSecuritySettings(
+            secureScreenMode = ChimahonSecureScreenMode.Always,
+            hideNotificationContent = true,
+            requireAuthentication = true,
+            lockAfterMinutes = 15,
+            protectDownloads = true,
+        )
 
-        repository.saveReaderSettings(
-            ChimahonReaderSettings(
-                mode = ChimahonReaderMode.RightToLeft,
-                scale = ChimahonReaderScale.FitScreen,
-                canvas = ChimahonReaderCanvas.White,
-                showPageStrip = false,
-                keepControlsVisible = false,
-            ),
-        )
-        repository.saveLibrarySettings(
-            ChimahonLibrarySettings(
-                displayMode = ChimahonLibraryDisplayMode.List,
-                showCategoryTabs = false,
-                showUnreadBadges = false,
-                showContinueButtons = false,
-            ),
-        )
+        repository.saveReaderSettings(reader)
+        repository.saveLibrarySettings(library)
+        repository.saveDownloadSettings(downloads)
+        repository.saveBrowseSettings(browse)
+        repository.saveSecuritySettings(security)
         repository.setDownloadedOnly(true)
         repository.setIncognitoMode(true)
 
         val settings = ChimahonSettingsRepository(store).loadSettings()
 
-        assertEquals(ChimahonReaderMode.RightToLeft, settings.reader.mode)
-        assertEquals(ChimahonReaderScale.FitScreen, settings.reader.scale)
-        assertEquals(ChimahonReaderCanvas.White, settings.reader.canvas)
-        assertFalse(settings.reader.showPageStrip)
-        assertFalse(settings.reader.keepControlsVisible)
-        assertEquals(ChimahonLibraryDisplayMode.List, settings.library.displayMode)
-        assertFalse(settings.library.showCategoryTabs)
-        assertFalse(settings.library.showUnreadBadges)
-        assertFalse(settings.library.showContinueButtons)
+        assertEquals(reader, settings.reader)
+        assertEquals(library, settings.library)
+        assertEquals(downloads, settings.downloads)
+        assertEquals(browse, settings.browse)
+        assertEquals(security, settings.security)
         assertTrue(settings.appMode.downloadedOnly)
         assertTrue(settings.appMode.incognitoMode)
         assertTrue(repository.isIncognitoModeEnabled())
@@ -77,24 +110,26 @@ class ChimahonSettingsRepositoryTest {
                 "__APP_STATE_chimahon_reader_canvas" to "Sepia",
                 "__APP_STATE_chimahon_reader_page_strip" to "sometimes",
                 "__APP_STATE_chimahon_reader_controls" to "",
+                "__APP_STATE_chimahon_reader_invert_tap_zones" to "Diagonal",
+                "__APP_STATE_chimahon_reader_volume_keys" to "enabled",
                 "__APP_STATE_chimahon_library_display_mode" to "Shelf",
                 "__APP_STATE_chimahon_library_category_tabs" to "1",
                 "__APP_STATE_chimahon_library_unread_badges" to "TRUE",
                 "__APP_STATE_chimahon_library_continue_buttons" to "yes",
+                "__APP_STATE_chimahon_library_sort" to "Popularity",
+                "__APP_STATE_chimahon_library_filter_downloaded" to "Only",
+                "__APP_STATE_chimahon_library_update_interval" to "hourly",
+                "__APP_STATE_chimahon_download_remove_after_read" to "soon",
+                "__APP_STATE_chimahon_download_parallel_sources" to "many",
+                "__APP_STATE_chimahon_browse_show_nsfw" to "sometimes",
+                "__APP_STATE_chimahon_security_secure_screen" to "WhenLocked",
+                "__APP_STATE_chimahon_security_lock_after_minutes" to "later",
             ),
         )
         val repository = ChimahonSettingsRepository(store)
 
         val settings = repository.loadSettings()
 
-        assertEquals(ChimahonReaderMode.Webtoon, settings.reader.mode)
-        assertEquals(ChimahonReaderScale.FitWidth, settings.reader.scale)
-        assertEquals(ChimahonReaderCanvas.Black, settings.reader.canvas)
-        assertTrue(settings.reader.showPageStrip)
-        assertTrue(settings.reader.keepControlsVisible)
-        assertEquals(ChimahonLibraryDisplayMode.ComfortableGrid, settings.library.displayMode)
-        assertTrue(settings.library.showCategoryTabs)
-        assertTrue(settings.library.showUnreadBadges)
-        assertTrue(settings.library.showContinueButtons)
+        assertEquals(ChimahonSettings(), settings)
     }
 }
