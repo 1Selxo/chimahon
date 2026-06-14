@@ -155,6 +155,23 @@ jobs:
         env:
           BUILD_TOOLS_VERSION: '35.0.1'
 
+      - name: Verify signed APKs
+        if: steps.signing.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          signed=(app/build/outputs/apk/release/*-signed.apk)
+          if (( ${#signed[@]} == 0 )); then
+            echo "::error::Android signing was enabled, but no signed APKs were produced."
+            exit 1
+          fi
+
+          for apk in "${signed[@]}"; do
+            "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify --verbose "$apk"
+          done
+
       - name: Collect APK assets
         shell: bash
         run: |
@@ -242,25 +259,41 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Windows desktop distribution
+      - name: Build Windows desktop installer
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\gradlew.bat :desktop-app:installDist --no-daemon --console=plain --max-workers=2
+        run: |
+          .\gradlew.bat :desktop-app:packageExe `
+            '-PreleaseVersionName=${{ needs.metadata.outputs.version_name }}' `
+            --no-daemon --console=plain --max-workers=2
 
-      - name: Build Unix desktop distribution
+      - name: Build Unix desktop application image
         if: runner.os != 'Windows'
         shell: bash
-        run: ./gradlew :desktop-app:installDist --no-daemon --console=plain --max-workers=2
+        run: |
+          ./gradlew :desktop-app:createDistributable \
+            -PreleaseVersionName=${{ needs.metadata.outputs.version_name }} \
+            --no-daemon --console=plain --max-workers=2
 
-      - name: Package Windows desktop
+      - name: Collect Windows desktop installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          Compress-Archive `
-            -Path "desktop-app\build\install\chimahon-desktop-smoke" `
-            -DestinationPath "release-assets\chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.zip" `
-            -Force
+          $installers = @(
+            Get-ChildItem `
+              -Path "desktop-app\build\compose\binaries\main\exe" `
+              -Filter "*.exe" `
+              -File
+          )
+
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Windows EXE installer, found $($installers.Count)."
+          }
+
+          Copy-Item `
+            -LiteralPath $installers[0].FullName `
+            -Destination "release-assets\chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}-installer.exe"
 
       - name: Package Unix desktop
         if: runner.os != 'Windows'
@@ -268,7 +301,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          (cd desktop-app/build/install && zip -qry "../../../release-assets/chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.zip" chimahon-desktop-smoke)
+          (cd desktop-app/build/compose/binaries/main && zip -qry "../../../../../release-assets/chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.zip" app)
 
       - name: Upload desktop asset
         uses: actions/upload-artifact@v4
@@ -366,9 +399,9 @@ jobs:
             echo "Kotlin Multiplatform release assets are attached for:"
             echo
             echo "- Android APKs"
-            echo "- Windows desktop"
-            echo "- Linux desktop"
-            echo "- macOS desktop x64 and arm64"
+            echo "- Windows desktop EXE installer with bundled Java runtime"
+            echo "- Linux desktop application image with bundled Java runtime"
+            echo "- macOS desktop x64 and arm64 application images with bundled Java runtime"
             echo "- iOS device and simulator shared frameworks"
             echo
             echo "Android APKs are signed when repository signing secrets are configured. If signing secrets are missing, unsigned APKs are still published for testing."
@@ -379,6 +412,49 @@ jobs:
       - name: List release assets
         shell: bash
         run: find release-assets -maxdepth 2 -type f -print | sort
+
+      - name: Remove superseded release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          while IFS= read -r asset; do
+            if [[ -n "$asset" ]]; then
+              gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+            fi
+          done < <(
+            gh release view "$RELEASE_TAG" \
+              --json assets \
+              --jq '.assets[].name | select(startswith("chimahon-desktop-windows-") and endswith(".zip"))'
+          )
+
+          shopt -s nullglob
+          android_apks=(release-assets/chimahon-android-*.apk)
+          signed_apks=()
+          for apk in "${android_apks[@]}"; do
+            if [[ "$apk" != *-unsigned.apk ]]; then
+              signed_apks+=("$apk")
+            fi
+          done
+
+          if (( ${#signed_apks[@]} > 0 )); then
+            while IFS= read -r asset; do
+              if [[ -n "$asset" ]]; then
+                gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+              fi
+            done < <(
+              gh release view "$RELEASE_TAG" \
+                --json assets \
+                --jq '.assets[].name | select(endswith("-unsigned.apk"))'
+            )
+          fi
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2

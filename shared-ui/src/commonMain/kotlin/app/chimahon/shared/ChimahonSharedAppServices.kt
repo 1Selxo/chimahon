@@ -570,6 +570,12 @@ class ChimahonSharedAppServices private constructor(
         return repo
     }
 
+    suspend fun deleteExtensionRepo(baseUrl: String) {
+        platformServices.databaseHandler.await {
+            extension_reposQueries.delete(baseUrl)
+        }
+    }
+
     suspend fun loadExtensionRepoCatalog(
         repo: ChimahonExtensionRepoEntry,
     ): ChimahonExtensionRepoCatalog {
@@ -1023,6 +1029,12 @@ class ChimahonSharedAppServices private constructor(
 
     suspend fun loadSettings(): ChimahonSettings {
         return settingsRepository.loadSettings()
+    }
+
+    suspend fun saveAppearanceSettings(
+        settings: ChimahonAppearanceSettings,
+    ): ChimahonAppearanceSettings {
+        return settingsRepository.saveAppearanceSettings(settings)
     }
 
     suspend fun saveReaderSettings(settings: ChimahonReaderSettings): ChimahonReaderSettings {
