@@ -2,12 +2,17 @@ package app.chimahon.shared
 
 import tachiyomi.core.platform.settings.PlatformSettingsStore
 import tachiyomi.core.platform.settings.readBoolean
+import tachiyomi.core.platform.settings.readInt
 import tachiyomi.core.platform.settings.writeBoolean
+import tachiyomi.core.platform.settings.writeInt
 
 data class ChimahonSettings(
     val appearance: ChimahonAppearanceSettings = ChimahonAppearanceSettings(),
     val reader: ChimahonReaderSettings = ChimahonReaderSettings(),
     val library: ChimahonLibrarySettings = ChimahonLibrarySettings(),
+    val downloads: ChimahonDownloadPreferences = ChimahonDownloadPreferences(),
+    val browse: ChimahonBrowseSettings = ChimahonBrowseSettings(),
+    val security: ChimahonSecuritySettings = ChimahonSecuritySettings(),
     val appMode: ChimahonAppModeSettings = ChimahonAppModeSettings(),
 )
 
@@ -54,6 +59,16 @@ data class ChimahonReaderSettings(
     val canvas: ChimahonReaderCanvas = ChimahonReaderCanvas.Black,
     val showPageStrip: Boolean = true,
     val keepControlsVisible: Boolean = true,
+    val tapZonesEnabled: Boolean = true,
+    val smallerTapZones: Boolean = false,
+    val invertTapZones: ChimahonTapZoneInvert = ChimahonTapZoneInvert.None,
+    val volumeKeysEnabled: Boolean = false,
+    val volumeKeysInverted: Boolean = false,
+    val longTapEnabled: Boolean = true,
+    val keepScreenOn: Boolean = false,
+    val cropBorders: Boolean = false,
+    val pageTransitions: Boolean = true,
+    val showPageNumber: Boolean = true,
 )
 
 enum class ChimahonReaderMode {
@@ -75,17 +90,88 @@ enum class ChimahonReaderCanvas {
     White,
 }
 
+enum class ChimahonTapZoneInvert {
+    None,
+    Horizontal,
+    Vertical,
+    Both,
+}
+
 data class ChimahonLibrarySettings(
     val displayMode: ChimahonLibraryDisplayMode = ChimahonLibraryDisplayMode.ComfortableGrid,
     val showCategoryTabs: Boolean = true,
     val showUnreadBadges: Boolean = true,
     val showContinueButtons: Boolean = true,
+    val sort: ChimahonLibrarySort = ChimahonLibrarySort.Alphabetical,
+    val sortAscending: Boolean = true,
+    val downloadedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val unreadFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val startedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val bookmarkedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val completedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val autoUpdateIntervalHours: Int = 0,
+    val updateOnlyOnWifi: Boolean = true,
+    val showUpdateCount: Boolean = true,
+    val updateNotificationsEnabled: Boolean = true,
 )
 
 enum class ChimahonLibraryDisplayMode {
     ComfortableGrid,
     CompactGrid,
     List,
+}
+
+enum class ChimahonLibrarySort {
+    Alphabetical,
+    LastRead,
+    LastUpdate,
+    UnreadCount,
+    TotalChapters,
+    LatestChapter,
+    ChapterFetchDate,
+    DateAdded,
+    Random,
+}
+
+enum class ChimahonFilterMode {
+    Any,
+    Include,
+    Exclude,
+}
+
+data class ChimahonDownloadPreferences(
+    val wifiOnly: Boolean = true,
+    val saveAsCbz: Boolean = true,
+    val splitTallImages: Boolean = true,
+    val autoDownloadWhileReadingCount: Int = 0,
+    val removeAfterReadSlots: Int = -1,
+    val removeAfterMarkedRead: Boolean = false,
+    val removeBookmarkedChapters: Boolean = false,
+    val downloadNewChapters: Boolean = false,
+    val downloadNewUnreadOnly: Boolean = false,
+    val parallelSourceDownloads: Int = 5,
+    val parallelPageDownloads: Int = 5,
+)
+
+data class ChimahonBrowseSettings(
+    val showNsfwSources: Boolean = true,
+    val hideLibraryEntries: Boolean = false,
+    val autoLoadMore: Boolean = true,
+    val extensionUpdateNotificationsEnabled: Boolean = true,
+)
+
+data class ChimahonSecuritySettings(
+    val secureScreenMode: ChimahonSecureScreenMode = ChimahonSecureScreenMode.Incognito,
+    val hideNotificationContent: Boolean = false,
+    val requireAuthentication: Boolean = false,
+    val lockAfterMinutes: Int = 0,
+    val protectDownloads: Boolean = false,
+)
+
+enum class ChimahonSecureScreenMode {
+    Always,
+    Incognito,
+    Never,
 }
 
 data class ChimahonAppModeSettings(
@@ -102,6 +188,9 @@ internal class ChimahonSettingsRepository(
             appearance = loadAppearanceSettings(),
             reader = loadReaderSettings(),
             library = loadLibrarySettings(),
+            downloads = loadDownloadSettings(),
+            browse = loadBrowseSettings(),
+            security = loadSecuritySettings(),
             appMode = loadAppModeSettings(),
         )
     }
@@ -139,6 +228,16 @@ internal class ChimahonSettingsRepository(
             canvas = readEnum(READER_CANVAS_KEY, ChimahonReaderCanvas.Black),
             showPageStrip = settingsStore.readBoolean(READER_PAGE_STRIP_KEY, defaultValue = true),
             keepControlsVisible = settingsStore.readBoolean(READER_CONTROLS_KEY, defaultValue = true),
+            tapZonesEnabled = settingsStore.readBoolean(READER_TAP_ZONES_KEY, defaultValue = true),
+            smallerTapZones = settingsStore.readBoolean(READER_SMALLER_TAP_ZONES_KEY),
+            invertTapZones = readEnum(READER_INVERT_TAP_ZONES_KEY, ChimahonTapZoneInvert.None),
+            volumeKeysEnabled = settingsStore.readBoolean(READER_VOLUME_KEYS_KEY),
+            volumeKeysInverted = settingsStore.readBoolean(READER_VOLUME_KEYS_INVERTED_KEY),
+            longTapEnabled = settingsStore.readBoolean(READER_LONG_TAP_KEY, defaultValue = true),
+            keepScreenOn = settingsStore.readBoolean(READER_KEEP_SCREEN_ON_KEY),
+            cropBorders = settingsStore.readBoolean(READER_CROP_BORDERS_KEY),
+            pageTransitions = settingsStore.readBoolean(READER_PAGE_TRANSITIONS_KEY, defaultValue = true),
+            showPageNumber = settingsStore.readBoolean(READER_SHOW_PAGE_NUMBER_KEY, defaultValue = true),
         )
     }
 
@@ -148,6 +247,16 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(READER_CANVAS_KEY, settings.canvas.name)
         settingsStore.writeBoolean(READER_PAGE_STRIP_KEY, settings.showPageStrip)
         settingsStore.writeBoolean(READER_CONTROLS_KEY, settings.keepControlsVisible)
+        settingsStore.writeBoolean(READER_TAP_ZONES_KEY, settings.tapZonesEnabled)
+        settingsStore.writeBoolean(READER_SMALLER_TAP_ZONES_KEY, settings.smallerTapZones)
+        settingsStore.writeString(READER_INVERT_TAP_ZONES_KEY, settings.invertTapZones.name)
+        settingsStore.writeBoolean(READER_VOLUME_KEYS_KEY, settings.volumeKeysEnabled)
+        settingsStore.writeBoolean(READER_VOLUME_KEYS_INVERTED_KEY, settings.volumeKeysInverted)
+        settingsStore.writeBoolean(READER_LONG_TAP_KEY, settings.longTapEnabled)
+        settingsStore.writeBoolean(READER_KEEP_SCREEN_ON_KEY, settings.keepScreenOn)
+        settingsStore.writeBoolean(READER_CROP_BORDERS_KEY, settings.cropBorders)
+        settingsStore.writeBoolean(READER_PAGE_TRANSITIONS_KEY, settings.pageTransitions)
+        settingsStore.writeBoolean(READER_SHOW_PAGE_NUMBER_KEY, settings.showPageNumber)
         return settings
     }
 
@@ -169,6 +278,20 @@ internal class ChimahonSettingsRepository(
                 LIBRARY_CONTINUE_BUTTONS_KEY,
                 defaultValue = true,
             ),
+            sort = readEnum(LIBRARY_SORT_KEY, ChimahonLibrarySort.Alphabetical),
+            sortAscending = settingsStore.readBoolean(LIBRARY_SORT_ASCENDING_KEY, defaultValue = true),
+            downloadedFilter = readEnum(LIBRARY_FILTER_DOWNLOADED_KEY, ChimahonFilterMode.Any),
+            unreadFilter = readEnum(LIBRARY_FILTER_UNREAD_KEY, ChimahonFilterMode.Any),
+            startedFilter = readEnum(LIBRARY_FILTER_STARTED_KEY, ChimahonFilterMode.Any),
+            bookmarkedFilter = readEnum(LIBRARY_FILTER_BOOKMARKED_KEY, ChimahonFilterMode.Any),
+            completedFilter = readEnum(LIBRARY_FILTER_COMPLETED_KEY, ChimahonFilterMode.Any),
+            autoUpdateIntervalHours = settingsStore.readInt(LIBRARY_UPDATE_INTERVAL_KEY),
+            updateOnlyOnWifi = settingsStore.readBoolean(LIBRARY_UPDATE_WIFI_ONLY_KEY, defaultValue = true),
+            showUpdateCount = settingsStore.readBoolean(LIBRARY_SHOW_UPDATE_COUNT_KEY, defaultValue = true),
+            updateNotificationsEnabled = settingsStore.readBoolean(
+                LIBRARY_UPDATE_NOTIFICATIONS_KEY,
+                defaultValue = true,
+            ),
         )
     }
 
@@ -177,6 +300,101 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(LIBRARY_CATEGORY_TABS_KEY, settings.showCategoryTabs)
         settingsStore.writeBoolean(LIBRARY_UNREAD_BADGES_KEY, settings.showUnreadBadges)
         settingsStore.writeBoolean(LIBRARY_CONTINUE_BUTTONS_KEY, settings.showContinueButtons)
+        settingsStore.writeString(LIBRARY_SORT_KEY, settings.sort.name)
+        settingsStore.writeBoolean(LIBRARY_SORT_ASCENDING_KEY, settings.sortAscending)
+        settingsStore.writeString(LIBRARY_FILTER_DOWNLOADED_KEY, settings.downloadedFilter.name)
+        settingsStore.writeString(LIBRARY_FILTER_UNREAD_KEY, settings.unreadFilter.name)
+        settingsStore.writeString(LIBRARY_FILTER_STARTED_KEY, settings.startedFilter.name)
+        settingsStore.writeString(LIBRARY_FILTER_BOOKMARKED_KEY, settings.bookmarkedFilter.name)
+        settingsStore.writeString(LIBRARY_FILTER_COMPLETED_KEY, settings.completedFilter.name)
+        settingsStore.writeInt(LIBRARY_UPDATE_INTERVAL_KEY, settings.autoUpdateIntervalHours)
+        settingsStore.writeBoolean(LIBRARY_UPDATE_WIFI_ONLY_KEY, settings.updateOnlyOnWifi)
+        settingsStore.writeBoolean(LIBRARY_SHOW_UPDATE_COUNT_KEY, settings.showUpdateCount)
+        settingsStore.writeBoolean(LIBRARY_UPDATE_NOTIFICATIONS_KEY, settings.updateNotificationsEnabled)
+        return settings
+    }
+
+    suspend fun loadDownloadSettings(): ChimahonDownloadPreferences {
+        return ChimahonDownloadPreferences(
+            wifiOnly = settingsStore.readBoolean(DOWNLOAD_WIFI_ONLY_KEY, defaultValue = true),
+            saveAsCbz = settingsStore.readBoolean(DOWNLOAD_SAVE_AS_CBZ_KEY, defaultValue = true),
+            splitTallImages = settingsStore.readBoolean(DOWNLOAD_SPLIT_TALL_IMAGES_KEY, defaultValue = true),
+            autoDownloadWhileReadingCount = settingsStore.readInt(DOWNLOAD_WHILE_READING_KEY),
+            removeAfterReadSlots = settingsStore.readInt(DOWNLOAD_REMOVE_AFTER_READ_KEY, defaultValue = -1),
+            removeAfterMarkedRead = settingsStore.readBoolean(DOWNLOAD_REMOVE_AFTER_MARKED_READ_KEY),
+            removeBookmarkedChapters = settingsStore.readBoolean(DOWNLOAD_REMOVE_BOOKMARKED_KEY),
+            downloadNewChapters = settingsStore.readBoolean(DOWNLOAD_NEW_CHAPTERS_KEY),
+            downloadNewUnreadOnly = settingsStore.readBoolean(DOWNLOAD_NEW_UNREAD_ONLY_KEY),
+            parallelSourceDownloads = settingsStore.readInt(
+                DOWNLOAD_PARALLEL_SOURCES_KEY,
+                defaultValue = 5,
+            ),
+            parallelPageDownloads = settingsStore.readInt(
+                DOWNLOAD_PARALLEL_PAGES_KEY,
+                defaultValue = 5,
+            ),
+        )
+    }
+
+    suspend fun saveDownloadSettings(
+        settings: ChimahonDownloadPreferences,
+    ): ChimahonDownloadPreferences {
+        settingsStore.writeBoolean(DOWNLOAD_WIFI_ONLY_KEY, settings.wifiOnly)
+        settingsStore.writeBoolean(DOWNLOAD_SAVE_AS_CBZ_KEY, settings.saveAsCbz)
+        settingsStore.writeBoolean(DOWNLOAD_SPLIT_TALL_IMAGES_KEY, settings.splitTallImages)
+        settingsStore.writeInt(DOWNLOAD_WHILE_READING_KEY, settings.autoDownloadWhileReadingCount)
+        settingsStore.writeInt(DOWNLOAD_REMOVE_AFTER_READ_KEY, settings.removeAfterReadSlots)
+        settingsStore.writeBoolean(DOWNLOAD_REMOVE_AFTER_MARKED_READ_KEY, settings.removeAfterMarkedRead)
+        settingsStore.writeBoolean(DOWNLOAD_REMOVE_BOOKMARKED_KEY, settings.removeBookmarkedChapters)
+        settingsStore.writeBoolean(DOWNLOAD_NEW_CHAPTERS_KEY, settings.downloadNewChapters)
+        settingsStore.writeBoolean(DOWNLOAD_NEW_UNREAD_ONLY_KEY, settings.downloadNewUnreadOnly)
+        settingsStore.writeInt(DOWNLOAD_PARALLEL_SOURCES_KEY, settings.parallelSourceDownloads)
+        settingsStore.writeInt(DOWNLOAD_PARALLEL_PAGES_KEY, settings.parallelPageDownloads)
+        return settings
+    }
+
+    suspend fun loadBrowseSettings(): ChimahonBrowseSettings {
+        return ChimahonBrowseSettings(
+            showNsfwSources = settingsStore.readBoolean(BROWSE_SHOW_NSFW_KEY, defaultValue = true),
+            hideLibraryEntries = settingsStore.readBoolean(BROWSE_HIDE_LIBRARY_ENTRIES_KEY),
+            autoLoadMore = settingsStore.readBoolean(BROWSE_AUTO_LOAD_MORE_KEY, defaultValue = true),
+            extensionUpdateNotificationsEnabled = settingsStore.readBoolean(
+                BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY,
+                defaultValue = true,
+            ),
+        )
+    }
+
+    suspend fun saveBrowseSettings(settings: ChimahonBrowseSettings): ChimahonBrowseSettings {
+        settingsStore.writeBoolean(BROWSE_SHOW_NSFW_KEY, settings.showNsfwSources)
+        settingsStore.writeBoolean(BROWSE_HIDE_LIBRARY_ENTRIES_KEY, settings.hideLibraryEntries)
+        settingsStore.writeBoolean(BROWSE_AUTO_LOAD_MORE_KEY, settings.autoLoadMore)
+        settingsStore.writeBoolean(
+            BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY,
+            settings.extensionUpdateNotificationsEnabled,
+        )
+        return settings
+    }
+
+    suspend fun loadSecuritySettings(): ChimahonSecuritySettings {
+        return ChimahonSecuritySettings(
+            secureScreenMode = readEnum(SECURITY_SECURE_SCREEN_KEY, ChimahonSecureScreenMode.Incognito),
+            hideNotificationContent = settingsStore.readBoolean(SECURITY_HIDE_NOTIFICATION_CONTENT_KEY),
+            requireAuthentication = settingsStore.readBoolean(SECURITY_REQUIRE_AUTHENTICATION_KEY),
+            lockAfterMinutes = settingsStore.readInt(SECURITY_LOCK_AFTER_MINUTES_KEY),
+            protectDownloads = settingsStore.readBoolean(SECURITY_PROTECT_DOWNLOADS_KEY),
+        )
+    }
+
+    suspend fun saveSecuritySettings(settings: ChimahonSecuritySettings): ChimahonSecuritySettings {
+        settingsStore.writeString(SECURITY_SECURE_SCREEN_KEY, settings.secureScreenMode.name)
+        settingsStore.writeBoolean(
+            SECURITY_HIDE_NOTIFICATION_CONTENT_KEY,
+            settings.hideNotificationContent,
+        )
+        settingsStore.writeBoolean(SECURITY_REQUIRE_AUTHENTICATION_KEY, settings.requireAuthentication)
+        settingsStore.writeInt(SECURITY_LOCK_AFTER_MINUTES_KEY, settings.lockAfterMinutes)
+        settingsStore.writeBoolean(SECURITY_PROTECT_DOWNLOADS_KEY, settings.protectDownloads)
         return settings
     }
 
@@ -221,10 +439,54 @@ internal class ChimahonSettingsRepository(
         const val READER_CANVAS_KEY = "__APP_STATE_chimahon_reader_canvas"
         const val READER_PAGE_STRIP_KEY = "__APP_STATE_chimahon_reader_page_strip"
         const val READER_CONTROLS_KEY = "__APP_STATE_chimahon_reader_controls"
+        const val READER_TAP_ZONES_KEY = "__APP_STATE_chimahon_reader_tap_zones"
+        const val READER_SMALLER_TAP_ZONES_KEY = "__APP_STATE_chimahon_reader_smaller_tap_zones"
+        const val READER_INVERT_TAP_ZONES_KEY = "__APP_STATE_chimahon_reader_invert_tap_zones"
+        const val READER_VOLUME_KEYS_KEY = "__APP_STATE_chimahon_reader_volume_keys"
+        const val READER_VOLUME_KEYS_INVERTED_KEY = "__APP_STATE_chimahon_reader_volume_keys_inverted"
+        const val READER_LONG_TAP_KEY = "__APP_STATE_chimahon_reader_long_tap"
+        const val READER_KEEP_SCREEN_ON_KEY = "__APP_STATE_chimahon_reader_keep_screen_on"
+        const val READER_CROP_BORDERS_KEY = "__APP_STATE_chimahon_reader_crop_borders"
+        const val READER_PAGE_TRANSITIONS_KEY = "__APP_STATE_chimahon_reader_page_transitions"
+        const val READER_SHOW_PAGE_NUMBER_KEY = "__APP_STATE_chimahon_reader_show_page_number"
         const val LIBRARY_DISPLAY_MODE_KEY = "__APP_STATE_chimahon_library_display_mode"
         const val LIBRARY_CATEGORY_TABS_KEY = "__APP_STATE_chimahon_library_category_tabs"
         const val LIBRARY_UNREAD_BADGES_KEY = "__APP_STATE_chimahon_library_unread_badges"
         const val LIBRARY_CONTINUE_BUTTONS_KEY = "__APP_STATE_chimahon_library_continue_buttons"
+        const val LIBRARY_SORT_KEY = "__APP_STATE_chimahon_library_sort"
+        const val LIBRARY_SORT_ASCENDING_KEY = "__APP_STATE_chimahon_library_sort_ascending"
+        const val LIBRARY_FILTER_DOWNLOADED_KEY = "__APP_STATE_chimahon_library_filter_downloaded"
+        const val LIBRARY_FILTER_UNREAD_KEY = "__APP_STATE_chimahon_library_filter_unread"
+        const val LIBRARY_FILTER_STARTED_KEY = "__APP_STATE_chimahon_library_filter_started"
+        const val LIBRARY_FILTER_BOOKMARKED_KEY = "__APP_STATE_chimahon_library_filter_bookmarked"
+        const val LIBRARY_FILTER_COMPLETED_KEY = "__APP_STATE_chimahon_library_filter_completed"
+        const val LIBRARY_UPDATE_INTERVAL_KEY = "__APP_STATE_chimahon_library_update_interval"
+        const val LIBRARY_UPDATE_WIFI_ONLY_KEY = "__APP_STATE_chimahon_library_update_wifi_only"
+        const val LIBRARY_SHOW_UPDATE_COUNT_KEY = "__APP_STATE_chimahon_library_show_update_count"
+        const val LIBRARY_UPDATE_NOTIFICATIONS_KEY = "__APP_STATE_chimahon_library_update_notifications"
+        const val DOWNLOAD_WIFI_ONLY_KEY = "__APP_STATE_chimahon_download_wifi_only"
+        const val DOWNLOAD_SAVE_AS_CBZ_KEY = "__APP_STATE_chimahon_download_save_as_cbz"
+        const val DOWNLOAD_SPLIT_TALL_IMAGES_KEY = "__APP_STATE_chimahon_download_split_tall_images"
+        const val DOWNLOAD_WHILE_READING_KEY = "__APP_STATE_chimahon_download_while_reading"
+        const val DOWNLOAD_REMOVE_AFTER_READ_KEY = "__APP_STATE_chimahon_download_remove_after_read"
+        const val DOWNLOAD_REMOVE_AFTER_MARKED_READ_KEY = "__APP_STATE_chimahon_download_remove_after_marked_read"
+        const val DOWNLOAD_REMOVE_BOOKMARKED_KEY = "__APP_STATE_chimahon_download_remove_bookmarked"
+        const val DOWNLOAD_NEW_CHAPTERS_KEY = "__APP_STATE_chimahon_download_new_chapters"
+        const val DOWNLOAD_NEW_UNREAD_ONLY_KEY = "__APP_STATE_chimahon_download_new_unread_only"
+        const val DOWNLOAD_PARALLEL_SOURCES_KEY = "__APP_STATE_chimahon_download_parallel_sources"
+        const val DOWNLOAD_PARALLEL_PAGES_KEY = "__APP_STATE_chimahon_download_parallel_pages"
+        const val BROWSE_SHOW_NSFW_KEY = "__APP_STATE_chimahon_browse_show_nsfw"
+        const val BROWSE_HIDE_LIBRARY_ENTRIES_KEY = "__APP_STATE_chimahon_browse_hide_library_entries"
+        const val BROWSE_AUTO_LOAD_MORE_KEY = "__APP_STATE_chimahon_browse_auto_load_more"
+        const val BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY =
+            "__APP_STATE_chimahon_browse_extension_update_notifications"
+        const val SECURITY_SECURE_SCREEN_KEY = "__APP_STATE_chimahon_security_secure_screen"
+        const val SECURITY_HIDE_NOTIFICATION_CONTENT_KEY =
+            "__APP_STATE_chimahon_security_hide_notification_content"
+        const val SECURITY_REQUIRE_AUTHENTICATION_KEY =
+            "__APP_STATE_chimahon_security_require_authentication"
+        const val SECURITY_LOCK_AFTER_MINUTES_KEY = "__APP_STATE_chimahon_security_lock_after_minutes"
+        const val SECURITY_PROTECT_DOWNLOADS_KEY = "__APP_STATE_chimahon_security_protect_downloads"
         const val DOWNLOADED_ONLY_KEY = "__APP_STATE_pref_downloaded_only"
         const val INCOGNITO_MODE_KEY = "__APP_STATE_incognito_mode"
     }
