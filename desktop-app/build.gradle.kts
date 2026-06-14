@@ -1,9 +1,11 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.compose.desktop.DesktopExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     kotlin("jvm")
     id("org.jetbrains.kotlin.plugin.compose")
-    application
+    id("org.jetbrains.compose") version "1.11.1" apply false
 }
 
 dependencies {
@@ -22,9 +24,29 @@ kotlin {
     }
 }
 
-application {
-    applicationName = "chimahon-desktop-smoke"
-    mainClass.set("chimahon.desktop.MainKt")
+// The project already uses "compose" for its version catalog, so the packaging
+// extension must use a distinct name while retaining Compose Desktop's tasks.
+val composeDesktopPackaging = extensions.create<DesktopExtension>("composeDesktopPackaging")
+val releaseVersionName = providers.gradleProperty("releaseVersionName").orElse("1.0.0").get()
+
+composeDesktopPackaging.application {
+    mainClass = "chimahon.desktop.MainKt"
+
+    nativeDistributions {
+        targetFormats(TargetFormat.Exe)
+        packageName = "Chimahon"
+        packageVersion = releaseVersionName
+        includeAllModules = true
+        windows {
+            exePackageVersion = releaseVersionName
+        }
+    }
+}
+
+afterEvaluate {
+    Class.forName("org.jetbrains.compose.desktop.application.internal.ConfigureDesktopKt")
+        .getMethod("configureDesktop", Project::class.java, DesktopExtension::class.java)
+        .invoke(null, project, composeDesktopPackaging)
 }
 
 fun composeDesktopTarget(): String {

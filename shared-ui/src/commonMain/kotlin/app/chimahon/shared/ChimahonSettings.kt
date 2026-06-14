@@ -5,10 +5,48 @@ import tachiyomi.core.platform.settings.readBoolean
 import tachiyomi.core.platform.settings.writeBoolean
 
 data class ChimahonSettings(
+    val appearance: ChimahonAppearanceSettings = ChimahonAppearanceSettings(),
     val reader: ChimahonReaderSettings = ChimahonReaderSettings(),
     val library: ChimahonLibrarySettings = ChimahonLibrarySettings(),
     val appMode: ChimahonAppModeSettings = ChimahonAppModeSettings(),
 )
+
+data class ChimahonAppearanceSettings(
+    val themeMode: ChimahonThemeMode = ChimahonThemeMode.System,
+    val appTheme: ChimahonAppTheme = ChimahonAppTheme.Default,
+    val amoled: Boolean = false,
+    val compactNavigation: Boolean = false,
+    val relativeDates: Boolean = true,
+    val showDescriptionImages: Boolean = true,
+)
+
+enum class ChimahonThemeMode {
+    System,
+    Light,
+    Dark,
+}
+
+enum class ChimahonAppTheme(val title: String) {
+    Default("Default"),
+    Catppuccin("Catppuccin"),
+    Cloudflare("Cloudflare"),
+    CottonCandy("Cotton Candy"),
+    Doom("Doom"),
+    GreenApple("Green Apple"),
+    Lavender("Lavender"),
+    Matrix("Matrix"),
+    MidnightDusk("Midnight Dusk"),
+    Mocha("Mocha"),
+    Monochrome("Monochrome"),
+    Nord("Nord"),
+    Sapphire("Sapphire"),
+    StrawberryDaiquiri("Strawberry Daiquiri"),
+    Tako("Tako"),
+    TealTurquoise("Teal Turquoise"),
+    TidalWave("Tidal Wave"),
+    YinYang("Yin & Yang"),
+    Yotsuba("Yotsuba"),
+}
 
 data class ChimahonReaderSettings(
     val mode: ChimahonReaderMode = ChimahonReaderMode.Webtoon,
@@ -28,6 +66,7 @@ enum class ChimahonReaderMode {
 enum class ChimahonReaderScale {
     FitScreen,
     FitWidth,
+    FitHeight,
 }
 
 enum class ChimahonReaderCanvas {
@@ -60,10 +99,37 @@ internal class ChimahonSettingsRepository(
 
     suspend fun loadSettings(): ChimahonSettings {
         return ChimahonSettings(
+            appearance = loadAppearanceSettings(),
             reader = loadReaderSettings(),
             library = loadLibrarySettings(),
             appMode = loadAppModeSettings(),
         )
+    }
+
+    suspend fun loadAppearanceSettings(): ChimahonAppearanceSettings {
+        return ChimahonAppearanceSettings(
+            themeMode = readEnum(APPEARANCE_THEME_MODE_KEY, ChimahonThemeMode.System),
+            appTheme = readEnum(APPEARANCE_APP_THEME_KEY, ChimahonAppTheme.Default),
+            amoled = settingsStore.readBoolean(APPEARANCE_AMOLED_KEY),
+            compactNavigation = settingsStore.readBoolean(APPEARANCE_COMPACT_NAVIGATION_KEY),
+            relativeDates = settingsStore.readBoolean(APPEARANCE_RELATIVE_DATES_KEY, defaultValue = true),
+            showDescriptionImages = settingsStore.readBoolean(
+                APPEARANCE_DESCRIPTION_IMAGES_KEY,
+                defaultValue = true,
+            ),
+        )
+    }
+
+    suspend fun saveAppearanceSettings(
+        settings: ChimahonAppearanceSettings,
+    ): ChimahonAppearanceSettings {
+        settingsStore.writeString(APPEARANCE_THEME_MODE_KEY, settings.themeMode.name)
+        settingsStore.writeString(APPEARANCE_APP_THEME_KEY, settings.appTheme.name)
+        settingsStore.writeBoolean(APPEARANCE_AMOLED_KEY, settings.amoled)
+        settingsStore.writeBoolean(APPEARANCE_COMPACT_NAVIGATION_KEY, settings.compactNavigation)
+        settingsStore.writeBoolean(APPEARANCE_RELATIVE_DATES_KEY, settings.relativeDates)
+        settingsStore.writeBoolean(APPEARANCE_DESCRIPTION_IMAGES_KEY, settings.showDescriptionImages)
+        return settings
     }
 
     suspend fun loadReaderSettings(): ChimahonReaderSettings {
@@ -144,6 +210,12 @@ internal class ChimahonSettingsRepository(
     }
 
     private companion object {
+        const val APPEARANCE_THEME_MODE_KEY = "__APP_STATE_chimahon_theme_mode"
+        const val APPEARANCE_APP_THEME_KEY = "__APP_STATE_chimahon_app_theme"
+        const val APPEARANCE_AMOLED_KEY = "__APP_STATE_chimahon_theme_amoled"
+        const val APPEARANCE_COMPACT_NAVIGATION_KEY = "__APP_STATE_chimahon_compact_navigation"
+        const val APPEARANCE_RELATIVE_DATES_KEY = "__APP_STATE_chimahon_relative_dates"
+        const val APPEARANCE_DESCRIPTION_IMAGES_KEY = "__APP_STATE_chimahon_description_images"
         const val READER_MODE_KEY = "__APP_STATE_chimahon_reader_mode"
         const val READER_SCALE_KEY = "__APP_STATE_chimahon_reader_scale"
         const val READER_CANVAS_KEY = "__APP_STATE_chimahon_reader_canvas"
