@@ -7,7 +7,6 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
@@ -58,6 +57,9 @@ internal class ChimahonDownloadQueueRepository(
     suspend fun remove(chapterIds: Set<Long>): ChimahonDownloadQueueData {
         return mutex.withLock {
             persistEntriesUnlocked(loadEntriesUnlocked().filterNot { it.chapterId in chapterIds })
+            persistIndividuallyPausedChapterIdsUnlocked(
+                loadIndividuallyPausedChapterIdsUnlocked() - chapterIds,
+            )
             loadUnlocked()
         }
     }
@@ -70,6 +72,50 @@ internal class ChimahonDownloadQueueRepository(
                 emptyList()
             }
             persistEntriesUnlocked(remaining)
+            val remainingIds = remaining.mapTo(mutableSetOf(), ChimahonDownloadQueueEntry::chapterId)
+            persistIndividuallyPausedChapterIdsUnlocked(
+                loadIndividuallyPausedChapterIdsUnlocked().intersect(remainingIds),
+            )
+            loadUnlocked()
+        }
+    }
+
+    suspend fun reorder(chapterIds: List<Long>): ChimahonDownloadQueueData {
+        return mutex.withLock {
+            val entries = loadEntriesUnlocked()
+            val requestedIds = chapterIds.toSet()
+            val requestedEntries = chapterIds
+                .distinct()
+                .mapNotNull(entries.associateBy(ChimahonDownloadQueueEntry::chapterId)::get)
+                .iterator()
+            val reordered = entries.map { entry ->
+                if (entry.chapterId in requestedIds && requestedEntries.hasNext()) {
+                    requestedEntries.next()
+                } else {
+                    entry
+                }
+            }
+            persistEntriesUnlocked(reordered)
+            loadUnlocked()
+        }
+    }
+
+    suspend fun moveToTop(chapterId: Long): ChimahonDownloadQueueData {
+        return mutex.withLock {
+            val entries = loadEntriesUnlocked()
+            val entry = entries.firstOrNull { it.chapterId == chapterId }
+                ?: return@withLock loadUnlocked()
+            persistEntriesUnlocked(listOf(entry) + entries.filterNot { it.chapterId == chapterId })
+            loadUnlocked()
+        }
+    }
+
+    suspend fun moveToBottom(chapterId: Long): ChimahonDownloadQueueData {
+        return mutex.withLock {
+            val entries = loadEntriesUnlocked()
+            val entry = entries.firstOrNull { it.chapterId == chapterId }
+                ?: return@withLock loadUnlocked()
+            persistEntriesUnlocked(entries.filterNot { it.chapterId == chapterId } + entry)
             loadUnlocked()
         }
     }
@@ -77,15 +123,99 @@ internal class ChimahonDownloadQueueRepository(
     suspend fun setPaused(paused: Boolean): ChimahonDownloadQueueData {
         return mutex.withLock {
             settingsStore.writeBoolean(DOWNLOAD_QUEUE_PAUSED_KEY, paused)
+            val individuallyPaused = loadIndividuallyPausedChapterIdsUnlocked()
             val entries = loadEntriesUnlocked().map { entry ->
                 when {
                     paused && entry.status == ChimahonDownloadState.Queued -> {
                         entry.copy(status = ChimahonDownloadState.Paused)
                     }
-                    !paused && entry.status == ChimahonDownloadState.Paused -> {
+                    !paused &&
+                        entry.status == ChimahonDownloadState.Paused &&
+                        entry.chapterId !in individuallyPaused -> {
                         entry.copy(status = ChimahonDownloadState.Queued)
                     }
                     else -> entry
+                }
+            }
+            persistEntriesUnlocked(entries)
+            loadUnlocked()
+        }
+    }
+
+    suspend fun pause(chapterId: Long): ChimahonDownloadQueueData {
+        return mutex.withLock {
+            var pausedEntry = false
+            val entries = loadEntriesUnlocked().map { entry ->
+                if (
+                    entry.chapterId == chapterId &&
+                    entry.status != ChimahonDownloadState.Downloaded &&
+                    entry.status != ChimahonDownloadState.Error
+                ) {
+                    pausedEntry = true
+                    entry.copy(status = ChimahonDownloadState.Paused)
+                } else {
+                    entry
+                }
+            }
+            if (pausedEntry) {
+                persistIndividuallyPausedChapterIdsUnlocked(
+                    loadIndividuallyPausedChapterIdsUnlocked() + chapterId,
+                )
+            }
+            persistEntriesUnlocked(entries)
+            loadUnlocked()
+        }
+    }
+
+    suspend fun resume(chapterId: Long): ChimahonDownloadQueueData {
+        return mutex.withLock {
+            val queuePaused = settingsStore.readBoolean(DOWNLOAD_QUEUE_PAUSED_KEY)
+            persistIndividuallyPausedChapterIdsUnlocked(
+                loadIndividuallyPausedChapterIdsUnlocked() - chapterId,
+            )
+            val entries = loadEntriesUnlocked().map { entry ->
+                if (
+                    !queuePaused &&
+                    entry.chapterId == chapterId &&
+                    entry.status == ChimahonDownloadState.Paused
+                ) {
+                    entry.copy(
+                        status = ChimahonDownloadState.Queued,
+                        errorMessage = null,
+                    )
+                } else {
+                    entry
+                }
+            }
+            persistEntriesUnlocked(entries)
+            loadUnlocked()
+        }
+    }
+
+    suspend fun retry(chapterId: Long): ChimahonDownloadQueueData {
+        return mutex.withLock {
+            val retryState = if (settingsStore.readBoolean(DOWNLOAD_QUEUE_PAUSED_KEY)) {
+                ChimahonDownloadState.Paused
+            } else {
+                ChimahonDownloadState.Queued
+            }
+            persistIndividuallyPausedChapterIdsUnlocked(
+                loadIndividuallyPausedChapterIdsUnlocked() - chapterId,
+            )
+            val entries = loadEntriesUnlocked().map { entry ->
+                if (
+                    entry.chapterId == chapterId &&
+                    entry.status != ChimahonDownloadState.Downloaded
+                ) {
+                    entry.copy(
+                        status = retryState,
+                        progress = 0,
+                        downloadedBytes = 0L,
+                        totalBytes = null,
+                        errorMessage = null,
+                    )
+                } else {
+                    entry
                 }
             }
             persistEntriesUnlocked(entries)
@@ -146,6 +276,26 @@ internal class ChimahonDownloadQueueRepository(
             }
         }.toString()
         settingsStore.writeString(DOWNLOAD_QUEUE_KEY, payload)
+    }
+
+    private suspend fun loadIndividuallyPausedChapterIdsUnlocked(): Set<Long> {
+        val payload = settingsStore.readString(INDIVIDUALLY_PAUSED_DOWNLOADS_KEY)
+            ?: return emptySet()
+        val array = runCatching { json.parseToJsonElement(payload) as? JsonArray }
+            .getOrNull()
+            ?: return emptySet()
+        return array.mapNotNullTo(mutableSetOf()) { element ->
+            runCatching { element.jsonPrimitive.longOrNull }.getOrNull()
+        }
+    }
+
+    private suspend fun persistIndividuallyPausedChapterIdsUnlocked(chapterIds: Set<Long>) {
+        val payload = buildJsonArray {
+            chapterIds.sorted().forEach { chapterId ->
+                add(JsonPrimitive(chapterId))
+            }
+        }.toString()
+        settingsStore.writeString(INDIVIDUALLY_PAUSED_DOWNLOADS_KEY, payload)
     }
 
     private fun ChimahonDownloadQueueEntry.normalized(): ChimahonDownloadQueueEntry {
@@ -216,5 +366,7 @@ internal class ChimahonDownloadQueueRepository(
     private companion object {
         const val DOWNLOAD_QUEUE_KEY = "__APP_STATE_download_queue"
         const val DOWNLOAD_QUEUE_PAUSED_KEY = "__APP_STATE_download_queue_paused"
+        const val INDIVIDUALLY_PAUSED_DOWNLOADS_KEY =
+            "__APP_STATE_individually_paused_downloads"
     }
 }

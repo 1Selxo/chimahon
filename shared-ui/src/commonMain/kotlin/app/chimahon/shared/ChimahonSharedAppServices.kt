@@ -17,7 +17,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -85,6 +84,9 @@ class ChimahonSharedAppServices private constructor(
     private val readerProgressMarks = mutableMapOf<Long, TimeMark>()
     private val thumbnailCacheMutex = Mutex()
     private val thumbnailCache = mutableMapOf<String, ByteArray>()
+    private val extensionMutationMutex = Mutex()
+    private var knownScriptExtensions = emptyList<ChimahonInstalledExtensionEntry>()
+    private var knownApkExtensions = emptyList<ChimahonInstalledExtensionEntry>()
 
     suspend fun loadSnapshot(): ChimahonSnapshot {
         val extensionState = loadExtensions()
@@ -697,23 +699,104 @@ class ChimahonSharedAppServices private constructor(
 
     suspend fun installExtension(
         extension: ChimahonRepoExtensionEntry,
-    ): ChimahonInstalledExtensionEntry {
-        return when (extension.packageType) {
-            ChimahonExtensionPackageType.JavaScript -> {
-                val script = fetchText(extension.artifactUrl)
-                val installed = scriptExtensionManager.install(script)
-                require(installed.manifest.id == extension.id) {
-                    "Downloaded extension id ${installed.manifest.id} does not match ${extension.id}."
+    ): ChimahonInstalledExtensionEntry = extensionMutationMutex.withLock {
+        try {
+            val installed = when (extension.packageType) {
+                ChimahonExtensionPackageType.JavaScript -> {
+                    val script = fetchText(extension.artifactUrl)
+                    val candidate = scriptExtensionLoader.load(script)
+                    require(candidate.manifest.id == extension.id) {
+                        "Downloaded extension id ${candidate.manifest.id} does not match ${extension.id}."
+                    }
+                    scriptExtensionManager.install(script).toSharedInstalledExtensionEntry()
                 }
-                installed.toSharedInstalledExtensionEntry()
+                ChimahonExtensionPackageType.AndroidApk -> {
+                    platformServices.apkExtensionManager.install(
+                        extension = extension,
+                        apkBytes = fetchBytes(extension.artifactUrl),
+                    )
+                }
             }
-            ChimahonExtensionPackageType.AndroidApk -> {
-                platformServices.apkExtensionManager.install(
-                    extension = extension,
-                    apkBytes = fetchBytes(extension.artifactUrl),
-                )
-            }
+            rememberInstalledExtension(installed)
+            refreshExtensionsLocked().installedExtensions
+                .firstOrNull { it.id == installed.id && it.packageType == installed.packageType }
+                ?: installed
+        } catch (error: Throwable) {
+            refreshExtensionsLocked()
+            throw error
         }
+    }
+
+    suspend fun uninstallExtension(
+        packageId: String,
+        packageType: ChimahonExtensionPackageType,
+    ): ChimahonExtensionUninstallResult = extensionMutationMutex.withLock {
+        require(packageId.isNotBlank()) { "Extension package/id cannot be blank." }
+        val apkStatusBefore = platformServices.apkExtensionManager.status()
+        val supported = packageType != ChimahonExtensionPackageType.AndroidApk ||
+            apkStatusBefore.isSupported
+        val removed = try {
+            when (packageType) {
+                ChimahonExtensionPackageType.JavaScript -> scriptExtensionManager.uninstall(packageId)
+                ChimahonExtensionPackageType.AndroidApk -> {
+                    if (supported) {
+                        platformServices.apkExtensionManager.uninstall(packageId)
+                    } else {
+                        false
+                    }
+                }
+            }
+        } catch (error: Throwable) {
+            refreshExtensionsLocked()
+            throw error
+        }
+        if (removed) {
+            forgetInstalledExtension(packageId, packageType)
+        }
+        val refreshed = refreshExtensionsLocked()
+        val unsupportedError = if (supported) {
+            emptyList()
+        } else {
+            listOf("Android APK extension management is unavailable on this platform.")
+        }
+        ChimahonExtensionUninstallResult(
+            extensionId = packageId,
+            packageType = packageType,
+            supported = supported,
+            removed = removed,
+            installedExtensions = refreshed.installedExtensions,
+            errors = (refreshed.errors + unsupportedError).distinct(),
+        )
+    }
+
+    suspend fun refreshInstalledExtensions(): List<ChimahonInstalledExtensionEntry> {
+        return extensionMutationMutex.withLock {
+            refreshExtensionsLocked().installedExtensions
+        }
+    }
+
+    suspend fun loadExtensionManagementData(): ChimahonExtensionManagementData {
+        val extensionState = extensionMutationMutex.withLock {
+            refreshExtensionsLocked()
+        }
+        val repos = platformServices.databaseHandler.awaitList {
+            extension_reposQueries.findAll()
+        }.map(Extension_repos::toSharedExtensionRepoEntry)
+        val availableExtensions = mutableListOf<ChimahonRepoExtensionEntry>()
+        val catalogErrors = mutableListOf<String>()
+        repos.forEach { repo ->
+            runCatching { loadExtensionRepoCatalog(repo) }
+                .onSuccess { catalog -> availableExtensions += catalog.extensions }
+                .onFailure { error ->
+                    catalogErrors += "${repo.name}: ${error.message ?: "repository unavailable"}"
+                }
+        }
+        return buildExtensionManagementData(
+            installedExtensions = extensionState.installedExtensions,
+            availableExtensions = availableExtensions,
+            apkStatus = platformServices.apkExtensionManager.status(),
+            errors = extensionState.errors + catalogErrors,
+        )
     }
 
     private suspend fun fetchRepoMetadata(baseUrl: String): ChimahonExtensionRepoEntry {
@@ -973,6 +1056,26 @@ class ChimahonSharedAppServices private constructor(
         }
     }
 
+    suspend fun setMangasCategories(
+        mangaIds: Collection<Long>,
+        categoryIds: Collection<Long>,
+    ): ChimahonLibraryBulkActionResult {
+        val normalizedMangaIds = mangaIds.distinct()
+        val normalizedCategoryIds = categoryIds
+            .filter { it >= DEFAULT_LIBRARY_CATEGORY_ID }
+            .distinct()
+            .ifEmpty { listOf(DEFAULT_LIBRARY_CATEGORY_ID) }
+        updateMangasCategories(
+            databaseHandler = platformServices.databaseHandler,
+            mangaIds = normalizedMangaIds,
+            categoryIds = normalizedCategoryIds,
+        )
+        return ChimahonLibraryBulkActionResult(
+            mangaCount = normalizedMangaIds.size,
+            categoryCount = normalizedCategoryIds.size,
+        )
+    }
+
     suspend fun setMangaFavorite(
         mangaId: Long,
         favorite: Boolean,
@@ -983,6 +1086,20 @@ class ChimahonSharedAppServices private constructor(
             favorite = favorite,
             now = platformServices.currentTimeMillis(),
         )
+    }
+
+    suspend fun setMangasFavorite(
+        mangaIds: Collection<Long>,
+        favorite: Boolean,
+    ): ChimahonLibraryBulkActionResult {
+        val normalizedMangaIds = mangaIds.distinct()
+        updateMangasFavorite(
+            databaseHandler = platformServices.databaseHandler,
+            mangaIds = normalizedMangaIds,
+            favorite = favorite,
+            now = platformServices.currentTimeMillis(),
+        )
+        return ChimahonLibraryBulkActionResult(mangaCount = normalizedMangaIds.size)
     }
 
     suspend fun setMangaNotes(
@@ -1066,6 +1183,32 @@ class ChimahonSharedAppServices private constructor(
         )
     }
 
+    suspend fun setMangasChaptersRead(
+        mangaIds: Collection<Long>,
+        read: Boolean,
+    ): ChimahonLibraryBulkActionResult {
+        val normalizedMangaIds = mangaIds.distinct()
+        val chapterCount = normalizedMangaIds.sumOf { mangaId ->
+            platformServices.databaseHandler.awaitList {
+                chaptersQueries.getChaptersByMangaId(
+                    mangaId = mangaId,
+                    applyFilter = 0L,
+                    bookmarkUnmask = 0L,
+                    bookmarkMask = 0L,
+                )
+            }.size
+        }
+        updateMangasChaptersRead(
+            databaseHandler = platformServices.databaseHandler,
+            mangaIds = normalizedMangaIds,
+            read = read,
+        )
+        return ChimahonLibraryBulkActionResult(
+            mangaCount = normalizedMangaIds.size,
+            chapterCount = chapterCount,
+        )
+    }
+
     suspend fun setChapterRead(
         chapterId: Long,
         read: Boolean,
@@ -1085,6 +1228,22 @@ class ChimahonSharedAppServices private constructor(
             databaseHandler = platformServices.databaseHandler,
             chapterId = chapterId,
             bookmarked = bookmarked,
+        )
+    }
+
+    suspend fun setChaptersBookmark(
+        chapterIds: Collection<Long>,
+        bookmarked: Boolean,
+    ): ChimahonLibraryBulkActionResult {
+        val normalizedChapterIds = chapterIds.distinct()
+        updateChaptersBookmark(
+            databaseHandler = platformServices.databaseHandler,
+            chapterIds = normalizedChapterIds,
+            bookmarked = bookmarked,
+        )
+        return ChimahonLibraryBulkActionResult(
+            mangaCount = 0,
+            chapterCount = normalizedChapterIds.size,
         )
     }
 
@@ -1167,6 +1326,20 @@ class ChimahonSharedAppServices private constructor(
 
     suspend fun saveLibrarySettings(settings: ChimahonLibrarySettings): ChimahonLibrarySettings {
         return settingsRepository.saveLibrarySettings(settings)
+    }
+
+    suspend fun saveDownloadPreferences(
+        settings: ChimahonDownloadPreferences,
+    ): ChimahonDownloadPreferences {
+        return settingsRepository.saveDownloadSettings(settings)
+    }
+
+    suspend fun saveBrowseSettings(settings: ChimahonBrowseSettings): ChimahonBrowseSettings {
+        return settingsRepository.saveBrowseSettings(settings)
+    }
+
+    suspend fun saveSecuritySettings(settings: ChimahonSecuritySettings): ChimahonSecuritySettings {
+        return settingsRepository.saveSecuritySettings(settings)
     }
 
     suspend fun setDownloadedOnly(enabled: Boolean): ChimahonAppModeSettings {
@@ -1289,6 +1462,18 @@ class ChimahonSharedAppServices private constructor(
         return downloadQueueRepository.remove(chapterIds.toSet())
     }
 
+    suspend fun reorderDownloads(chapterIds: List<Long>): ChimahonDownloadQueueData {
+        return downloadQueueRepository.reorder(chapterIds)
+    }
+
+    suspend fun moveDownloadToTop(chapterId: Long): ChimahonDownloadQueueData {
+        return downloadQueueRepository.moveToTop(chapterId)
+    }
+
+    suspend fun moveDownloadToBottom(chapterId: Long): ChimahonDownloadQueueData {
+        return downloadQueueRepository.moveToBottom(chapterId)
+    }
+
     suspend fun clearDownloadQueue(): ChimahonDownloadQueueData {
         return downloadQueueRepository.clear(completedOnly = false)
     }
@@ -1309,21 +1494,20 @@ class ChimahonSharedAppServices private constructor(
         return setDownloadQueuePaused(false)
     }
 
+    suspend fun pauseDownload(chapterId: Long): ChimahonDownloadQueueData {
+        return downloadQueueRepository.pause(chapterId)
+    }
+
+    suspend fun resumeDownload(chapterId: Long): ChimahonDownloadQueueData {
+        return downloadQueueRepository.resume(chapterId)
+    }
+
     suspend fun claimNextDownload(): ChimahonDownloadQueueEntry? {
         return downloadQueueRepository.claimNext()
     }
 
     suspend fun retryDownload(chapterId: Long): ChimahonDownloadQueueData {
-        val paused = downloadQueueRepository.load().paused
-        return downloadQueueRepository.update(chapterId) { entry ->
-            entry.copy(
-                status = if (paused) ChimahonDownloadState.Paused else ChimahonDownloadState.Queued,
-                progress = 0,
-                downloadedBytes = 0L,
-                totalBytes = null,
-                errorMessage = null,
-            )
-        }
+        return downloadQueueRepository.retry(chapterId)
     }
 
     suspend fun updateDownloadProgress(
@@ -1521,25 +1705,70 @@ class ChimahonSharedAppServices private constructor(
     }
 
     private suspend fun loadExtensions(): ExtensionStartupState {
-        return runCatching {
-            val scriptExtensions = scriptExtensionManager.reload()
-            val apkExtensions = platformServices.apkExtensionManager.reload()
-            val sourceCount = platformServices.sourceRegistry.sources.value.size
-            ExtensionStartupState(
-                extensionCount = scriptExtensions.size + apkExtensions.size,
-                label = "$sourceCount catalogue sources",
-                installedExtensions = (
-                    scriptExtensions.map(LoadedScriptExtension::toSharedInstalledExtensionEntry) +
-                        apkExtensions
-                    )
-                    .sortedBy { it.name.lowercase() },
-            )
-        }.getOrElse { error ->
-            ExtensionStartupState(
-                extensionCount = 0,
-                label = "Extension reload failed: ${error.message ?: "unknown error"}",
-                installedExtensions = emptyList(),
-            )
+        return extensionMutationMutex.withLock {
+            refreshExtensionsLocked()
+        }
+    }
+
+    private suspend fun refreshExtensionsLocked(): ExtensionStartupState {
+        val errors = mutableListOf<String>()
+        runCatching {
+            scriptExtensionManager.reload()
+                .map(LoadedScriptExtension::toSharedInstalledExtensionEntry)
+        }
+            .onSuccess { knownScriptExtensions = it }
+            .onFailure { error ->
+                errors += "JavaScript extension reload failed: ${error.message ?: "unknown error"}"
+            }
+        runCatching {
+            platformServices.apkExtensionManager.reload()
+        }
+            .onSuccess { knownApkExtensions = it }
+            .onFailure { error ->
+                errors += "APK extension reload failed: ${error.message ?: "unknown error"}"
+            }
+        errors += platformServices.apkExtensionManager.status().errors
+        val installedExtensions = (knownScriptExtensions + knownApkExtensions)
+            .distinctBy { it.id to it.packageType }
+            .sortedBy { it.name.lowercase() }
+        val sourceCount = platformServices.sourceRegistry.sources.value.size
+        val label = if (errors.isEmpty()) {
+            "$sourceCount catalogue sources"
+        } else {
+            "$sourceCount catalogue sources; ${errors.size} extension issue(s)"
+        }
+        return ExtensionStartupState(
+            extensionCount = installedExtensions.size,
+            label = label,
+            installedExtensions = installedExtensions,
+            errors = errors.distinct(),
+        )
+    }
+
+    private fun rememberInstalledExtension(extension: ChimahonInstalledExtensionEntry) {
+        val current = when (extension.packageType) {
+            ChimahonExtensionPackageType.JavaScript -> knownScriptExtensions
+            ChimahonExtensionPackageType.AndroidApk -> knownApkExtensions
+        }
+        val updated = (current.filterNot { it.id == extension.id } + extension)
+            .sortedBy { it.name.lowercase() }
+        when (extension.packageType) {
+            ChimahonExtensionPackageType.JavaScript -> knownScriptExtensions = updated
+            ChimahonExtensionPackageType.AndroidApk -> knownApkExtensions = updated
+        }
+    }
+
+    private fun forgetInstalledExtension(
+        extensionId: String,
+        packageType: ChimahonExtensionPackageType,
+    ) {
+        when (packageType) {
+            ChimahonExtensionPackageType.JavaScript -> {
+                knownScriptExtensions = knownScriptExtensions.filterNot { it.id == extensionId }
+            }
+            ChimahonExtensionPackageType.AndroidApk -> {
+                knownApkExtensions = knownApkExtensions.filterNot { it.id == extensionId }
+            }
         }
     }
 
@@ -1547,6 +1776,7 @@ class ChimahonSharedAppServices private constructor(
         val extensionCount: Int,
         val label: String,
         val installedExtensions: List<ChimahonInstalledExtensionEntry>,
+        val errors: List<String>,
     )
 
     private data class ServiceDatabaseState(

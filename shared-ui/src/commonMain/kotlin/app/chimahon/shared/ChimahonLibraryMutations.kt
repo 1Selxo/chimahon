@@ -2,6 +2,27 @@ package app.chimahon.shared
 
 import tachiyomi.data.DatabaseHandler
 
+private const val DEFAULT_LIBRARY_CATEGORY_ID = 0L
+
+internal suspend fun updateMangasCategories(
+    databaseHandler: DatabaseHandler,
+    mangaIds: Collection<Long>,
+    categoryIds: Collection<Long>,
+) {
+    val selectedIds = categoryIds
+        .filter { it >= DEFAULT_LIBRARY_CATEGORY_ID }
+        .distinct()
+        .ifEmpty { listOf(DEFAULT_LIBRARY_CATEGORY_ID) }
+    databaseHandler.await(inTransaction = true) {
+        mangaIds.distinct().forEach { mangaId ->
+            mangas_categoriesQueries.deleteMangaCategoryByMangaId(mangaId)
+            selectedIds.forEach { categoryId ->
+                mangas_categoriesQueries.insert(mangaId, categoryId)
+            }
+        }
+    }
+}
+
 internal suspend fun updateMangaFavorite(
     databaseHandler: DatabaseHandler,
     mangaId: Long,
@@ -33,6 +54,22 @@ internal suspend fun updateMangaFavorite(
             isSyncing = 0L,
             notes = null,
             mangaId = mangaId,
+        )
+    }
+}
+
+internal suspend fun updateMangasFavorite(
+    databaseHandler: DatabaseHandler,
+    mangaIds: Collection<Long>,
+    favorite: Boolean,
+    now: Long,
+) {
+    mangaIds.distinct().forEach { mangaId ->
+        updateMangaFavorite(
+            databaseHandler = databaseHandler,
+            mangaId = mangaId,
+            favorite = favorite,
+            now = now,
         )
     }
 }
@@ -133,6 +170,20 @@ internal suspend fun updateMangaChaptersRead(
     }
 }
 
+internal suspend fun updateMangasChaptersRead(
+    databaseHandler: DatabaseHandler,
+    mangaIds: Collection<Long>,
+    read: Boolean,
+) {
+    mangaIds.distinct().forEach { mangaId ->
+        updateMangaChaptersRead(
+            databaseHandler = databaseHandler,
+            mangaId = mangaId,
+            read = read,
+        )
+    }
+}
+
 internal suspend fun updateChapterBookmark(
     databaseHandler: DatabaseHandler,
     chapterId: Long,
@@ -156,5 +207,33 @@ internal suspend fun updateChapterBookmark(
             ocrReady = null,
             chapterId = chapterId,
         )
+    }
+}
+
+internal suspend fun updateChaptersBookmark(
+    databaseHandler: DatabaseHandler,
+    chapterIds: Collection<Long>,
+    bookmarked: Boolean,
+) {
+    databaseHandler.await(inTransaction = true) {
+        chapterIds.distinct().forEach { chapterId ->
+            chaptersQueries.update(
+                mangaId = null,
+                url = null,
+                name = null,
+                scanlator = null,
+                read = null,
+                bookmark = bookmarked,
+                lastPageRead = null,
+                chapterNumber = null,
+                sourceOrder = null,
+                dateFetch = null,
+                dateUpload = null,
+                version = null,
+                isSyncing = 0L,
+                ocrReady = null,
+                chapterId = chapterId,
+            )
+        }
     }
 }

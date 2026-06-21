@@ -19,7 +19,9 @@ data class ChimahonSettings(
 data class ChimahonAppearanceSettings(
     val themeMode: ChimahonThemeMode = ChimahonThemeMode.System,
     val appTheme: ChimahonAppTheme = ChimahonAppTheme.Default,
+    val colorTheme: ChimahonColorTheme = ChimahonColorTheme.Default,
     val amoled: Boolean = false,
+    val fontScalePercent: Int = 100,
     val compactNavigation: Boolean = false,
     val relativeDates: Boolean = true,
     val showDescriptionImages: Boolean = true,
@@ -53,15 +55,37 @@ enum class ChimahonAppTheme(val title: String) {
     Yotsuba("Yotsuba"),
 }
 
+enum class ChimahonColorTheme(val title: String) {
+    Default("Default"),
+    Dynamic("Dynamic"),
+    Blue("Blue"),
+    Green("Green"),
+    Orange("Orange"),
+    Pink("Pink"),
+    Purple("Purple"),
+    Red("Red"),
+    Teal("Teal"),
+}
+
 data class ChimahonReaderSettings(
     val mode: ChimahonReaderMode = ChimahonReaderMode.Webtoon,
     val scale: ChimahonReaderScale = ChimahonReaderScale.FitWidth,
     val canvas: ChimahonReaderCanvas = ChimahonReaderCanvas.Black,
+    val orientation: ChimahonReaderOrientation = ChimahonReaderOrientation.Free,
+    val dualPageMode: ChimahonDualPageMode = ChimahonDualPageMode.Off,
+    val splitWidePages: Boolean = false,
+    val colorFilterEnabled: Boolean = false,
+    val grayscale: Boolean = false,
+    val invertColors: Boolean = false,
+    val brightness: Int = 0,
+    val navigationMode: ChimahonReaderNavigationMode = ChimahonReaderNavigationMode.Automatic,
     val showPageStrip: Boolean = true,
     val keepControlsVisible: Boolean = true,
     val tapZonesEnabled: Boolean = true,
     val smallerTapZones: Boolean = false,
     val invertTapZones: ChimahonTapZoneInvert = ChimahonTapZoneInvert.None,
+    val swipeNavigationEnabled: Boolean = true,
+    val doubleTapToZoom: Boolean = true,
     val volumeKeysEnabled: Boolean = false,
     val volumeKeysInverted: Boolean = false,
     val longTapEnabled: Boolean = true,
@@ -90,6 +114,27 @@ enum class ChimahonReaderCanvas {
     White,
 }
 
+enum class ChimahonReaderOrientation {
+    Free,
+    Portrait,
+    Landscape,
+    ReversePortrait,
+    ReverseLandscape,
+}
+
+enum class ChimahonDualPageMode {
+    Off,
+    Automatic,
+    Always,
+}
+
+enum class ChimahonReaderNavigationMode {
+    Automatic,
+    LeftToRight,
+    RightToLeft,
+    Vertical,
+}
+
 enum class ChimahonTapZoneInvert {
     None,
     Horizontal,
@@ -99,8 +144,13 @@ enum class ChimahonTapZoneInvert {
 
 data class ChimahonLibrarySettings(
     val displayMode: ChimahonLibraryDisplayMode = ChimahonLibraryDisplayMode.ComfortableGrid,
+    val gridColumnsPortrait: Int = 0,
+    val gridColumnsLandscape: Int = 0,
+    val coverAspectRatio: ChimahonLibraryCoverRatio = ChimahonLibraryCoverRatio.Automatic,
     val showCategoryTabs: Boolean = true,
     val showUnreadBadges: Boolean = true,
+    val showDownloadedBadges: Boolean = true,
+    val showLanguageBadges: Boolean = false,
     val showContinueButtons: Boolean = true,
     val sort: ChimahonLibrarySort = ChimahonLibrarySort.Alphabetical,
     val sortAscending: Boolean = true,
@@ -109,6 +159,7 @@ data class ChimahonLibrarySettings(
     val startedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
     val bookmarkedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
     val completedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val trackedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
     val autoUpdateIntervalHours: Int = 0,
     val updateOnlyOnWifi: Boolean = true,
     val showUpdateCount: Boolean = true,
@@ -119,6 +170,14 @@ enum class ChimahonLibraryDisplayMode {
     ComfortableGrid,
     CompactGrid,
     List,
+}
+
+enum class ChimahonLibraryCoverRatio {
+    Automatic,
+    Square,
+    ThreeToFour,
+    TwoToThree,
+    Original,
 }
 
 enum class ChimahonLibrarySort {
@@ -157,14 +216,26 @@ data class ChimahonBrowseSettings(
     val showNsfwSources: Boolean = true,
     val hideLibraryEntries: Boolean = false,
     val autoLoadMore: Boolean = true,
+    val enabledLanguages: List<String> = emptyList(),
+    val sourceDisplayMode: ChimahonBrowseSourceDisplayMode = ChimahonBrowseSourceDisplayMode.List,
+    val groupSourcesByLanguage: Boolean = true,
+    val showSourceLanguage: Boolean = true,
     val extensionUpdateNotificationsEnabled: Boolean = true,
 )
+
+enum class ChimahonBrowseSourceDisplayMode {
+    List,
+    CompactList,
+    Grid,
+}
 
 data class ChimahonSecuritySettings(
     val secureScreenMode: ChimahonSecureScreenMode = ChimahonSecureScreenMode.Incognito,
     val hideNotificationContent: Boolean = false,
     val requireAuthentication: Boolean = false,
     val lockAfterMinutes: Int = 0,
+    val lockOnAppExit: Boolean = false,
+    val incognitoModeByDefault: Boolean = false,
     val protectDownloads: Boolean = false,
 )
 
@@ -199,7 +270,12 @@ internal class ChimahonSettingsRepository(
         return ChimahonAppearanceSettings(
             themeMode = readEnum(APPEARANCE_THEME_MODE_KEY, ChimahonThemeMode.System),
             appTheme = readEnum(APPEARANCE_APP_THEME_KEY, ChimahonAppTheme.Default),
+            colorTheme = readEnum(APPEARANCE_COLOR_THEME_KEY, ChimahonColorTheme.Default),
             amoled = settingsStore.readBoolean(APPEARANCE_AMOLED_KEY),
+            fontScalePercent = settingsStore.readInt(
+                APPEARANCE_FONT_SCALE_PERCENT_KEY,
+                defaultValue = 100,
+            ),
             compactNavigation = settingsStore.readBoolean(APPEARANCE_COMPACT_NAVIGATION_KEY),
             relativeDates = settingsStore.readBoolean(APPEARANCE_RELATIVE_DATES_KEY, defaultValue = true),
             showDescriptionImages = settingsStore.readBoolean(
@@ -214,7 +290,9 @@ internal class ChimahonSettingsRepository(
     ): ChimahonAppearanceSettings {
         settingsStore.writeString(APPEARANCE_THEME_MODE_KEY, settings.themeMode.name)
         settingsStore.writeString(APPEARANCE_APP_THEME_KEY, settings.appTheme.name)
+        settingsStore.writeString(APPEARANCE_COLOR_THEME_KEY, settings.colorTheme.name)
         settingsStore.writeBoolean(APPEARANCE_AMOLED_KEY, settings.amoled)
+        settingsStore.writeInt(APPEARANCE_FONT_SCALE_PERCENT_KEY, settings.fontScalePercent)
         settingsStore.writeBoolean(APPEARANCE_COMPACT_NAVIGATION_KEY, settings.compactNavigation)
         settingsStore.writeBoolean(APPEARANCE_RELATIVE_DATES_KEY, settings.relativeDates)
         settingsStore.writeBoolean(APPEARANCE_DESCRIPTION_IMAGES_KEY, settings.showDescriptionImages)
@@ -226,11 +304,30 @@ internal class ChimahonSettingsRepository(
             mode = readEnum(READER_MODE_KEY, ChimahonReaderMode.Webtoon),
             scale = readEnum(READER_SCALE_KEY, ChimahonReaderScale.FitWidth),
             canvas = readEnum(READER_CANVAS_KEY, ChimahonReaderCanvas.Black),
+            orientation = readEnum(READER_ORIENTATION_KEY, ChimahonReaderOrientation.Free),
+            dualPageMode = readEnum(READER_DUAL_PAGE_MODE_KEY, ChimahonDualPageMode.Off),
+            splitWidePages = settingsStore.readBoolean(READER_SPLIT_WIDE_PAGES_KEY),
+            colorFilterEnabled = settingsStore.readBoolean(READER_COLOR_FILTER_ENABLED_KEY),
+            grayscale = settingsStore.readBoolean(READER_GRAYSCALE_KEY),
+            invertColors = settingsStore.readBoolean(READER_INVERT_COLORS_KEY),
+            brightness = settingsStore.readInt(READER_BRIGHTNESS_KEY),
+            navigationMode = readEnum(
+                READER_NAVIGATION_MODE_KEY,
+                ChimahonReaderNavigationMode.Automatic,
+            ),
             showPageStrip = settingsStore.readBoolean(READER_PAGE_STRIP_KEY, defaultValue = true),
             keepControlsVisible = settingsStore.readBoolean(READER_CONTROLS_KEY, defaultValue = true),
             tapZonesEnabled = settingsStore.readBoolean(READER_TAP_ZONES_KEY, defaultValue = true),
             smallerTapZones = settingsStore.readBoolean(READER_SMALLER_TAP_ZONES_KEY),
             invertTapZones = readEnum(READER_INVERT_TAP_ZONES_KEY, ChimahonTapZoneInvert.None),
+            swipeNavigationEnabled = settingsStore.readBoolean(
+                READER_SWIPE_NAVIGATION_KEY,
+                defaultValue = true,
+            ),
+            doubleTapToZoom = settingsStore.readBoolean(
+                READER_DOUBLE_TAP_ZOOM_KEY,
+                defaultValue = true,
+            ),
             volumeKeysEnabled = settingsStore.readBoolean(READER_VOLUME_KEYS_KEY),
             volumeKeysInverted = settingsStore.readBoolean(READER_VOLUME_KEYS_INVERTED_KEY),
             longTapEnabled = settingsStore.readBoolean(READER_LONG_TAP_KEY, defaultValue = true),
@@ -245,11 +342,21 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(READER_MODE_KEY, settings.mode.name)
         settingsStore.writeString(READER_SCALE_KEY, settings.scale.name)
         settingsStore.writeString(READER_CANVAS_KEY, settings.canvas.name)
+        settingsStore.writeString(READER_ORIENTATION_KEY, settings.orientation.name)
+        settingsStore.writeString(READER_DUAL_PAGE_MODE_KEY, settings.dualPageMode.name)
+        settingsStore.writeBoolean(READER_SPLIT_WIDE_PAGES_KEY, settings.splitWidePages)
+        settingsStore.writeBoolean(READER_COLOR_FILTER_ENABLED_KEY, settings.colorFilterEnabled)
+        settingsStore.writeBoolean(READER_GRAYSCALE_KEY, settings.grayscale)
+        settingsStore.writeBoolean(READER_INVERT_COLORS_KEY, settings.invertColors)
+        settingsStore.writeInt(READER_BRIGHTNESS_KEY, settings.brightness)
+        settingsStore.writeString(READER_NAVIGATION_MODE_KEY, settings.navigationMode.name)
         settingsStore.writeBoolean(READER_PAGE_STRIP_KEY, settings.showPageStrip)
         settingsStore.writeBoolean(READER_CONTROLS_KEY, settings.keepControlsVisible)
         settingsStore.writeBoolean(READER_TAP_ZONES_KEY, settings.tapZonesEnabled)
         settingsStore.writeBoolean(READER_SMALLER_TAP_ZONES_KEY, settings.smallerTapZones)
         settingsStore.writeString(READER_INVERT_TAP_ZONES_KEY, settings.invertTapZones.name)
+        settingsStore.writeBoolean(READER_SWIPE_NAVIGATION_KEY, settings.swipeNavigationEnabled)
+        settingsStore.writeBoolean(READER_DOUBLE_TAP_ZOOM_KEY, settings.doubleTapToZoom)
         settingsStore.writeBoolean(READER_VOLUME_KEYS_KEY, settings.volumeKeysEnabled)
         settingsStore.writeBoolean(READER_VOLUME_KEYS_INVERTED_KEY, settings.volumeKeysInverted)
         settingsStore.writeBoolean(READER_LONG_TAP_KEY, settings.longTapEnabled)
@@ -266,6 +373,12 @@ internal class ChimahonSettingsRepository(
                 LIBRARY_DISPLAY_MODE_KEY,
                 ChimahonLibraryDisplayMode.ComfortableGrid,
             ),
+            gridColumnsPortrait = settingsStore.readInt(LIBRARY_GRID_COLUMNS_PORTRAIT_KEY),
+            gridColumnsLandscape = settingsStore.readInt(LIBRARY_GRID_COLUMNS_LANDSCAPE_KEY),
+            coverAspectRatio = readEnum(
+                LIBRARY_COVER_ASPECT_RATIO_KEY,
+                ChimahonLibraryCoverRatio.Automatic,
+            ),
             showCategoryTabs = settingsStore.readBoolean(
                 LIBRARY_CATEGORY_TABS_KEY,
                 defaultValue = true,
@@ -274,6 +387,11 @@ internal class ChimahonSettingsRepository(
                 LIBRARY_UNREAD_BADGES_KEY,
                 defaultValue = true,
             ),
+            showDownloadedBadges = settingsStore.readBoolean(
+                LIBRARY_DOWNLOADED_BADGES_KEY,
+                defaultValue = true,
+            ),
+            showLanguageBadges = settingsStore.readBoolean(LIBRARY_LANGUAGE_BADGES_KEY),
             showContinueButtons = settingsStore.readBoolean(
                 LIBRARY_CONTINUE_BUTTONS_KEY,
                 defaultValue = true,
@@ -285,6 +403,7 @@ internal class ChimahonSettingsRepository(
             startedFilter = readEnum(LIBRARY_FILTER_STARTED_KEY, ChimahonFilterMode.Any),
             bookmarkedFilter = readEnum(LIBRARY_FILTER_BOOKMARKED_KEY, ChimahonFilterMode.Any),
             completedFilter = readEnum(LIBRARY_FILTER_COMPLETED_KEY, ChimahonFilterMode.Any),
+            trackedFilter = readEnum(LIBRARY_FILTER_TRACKED_KEY, ChimahonFilterMode.Any),
             autoUpdateIntervalHours = settingsStore.readInt(LIBRARY_UPDATE_INTERVAL_KEY),
             updateOnlyOnWifi = settingsStore.readBoolean(LIBRARY_UPDATE_WIFI_ONLY_KEY, defaultValue = true),
             showUpdateCount = settingsStore.readBoolean(LIBRARY_SHOW_UPDATE_COUNT_KEY, defaultValue = true),
@@ -297,8 +416,13 @@ internal class ChimahonSettingsRepository(
 
     suspend fun saveLibrarySettings(settings: ChimahonLibrarySettings): ChimahonLibrarySettings {
         settingsStore.writeString(LIBRARY_DISPLAY_MODE_KEY, settings.displayMode.name)
+        settingsStore.writeInt(LIBRARY_GRID_COLUMNS_PORTRAIT_KEY, settings.gridColumnsPortrait)
+        settingsStore.writeInt(LIBRARY_GRID_COLUMNS_LANDSCAPE_KEY, settings.gridColumnsLandscape)
+        settingsStore.writeString(LIBRARY_COVER_ASPECT_RATIO_KEY, settings.coverAspectRatio.name)
         settingsStore.writeBoolean(LIBRARY_CATEGORY_TABS_KEY, settings.showCategoryTabs)
         settingsStore.writeBoolean(LIBRARY_UNREAD_BADGES_KEY, settings.showUnreadBadges)
+        settingsStore.writeBoolean(LIBRARY_DOWNLOADED_BADGES_KEY, settings.showDownloadedBadges)
+        settingsStore.writeBoolean(LIBRARY_LANGUAGE_BADGES_KEY, settings.showLanguageBadges)
         settingsStore.writeBoolean(LIBRARY_CONTINUE_BUTTONS_KEY, settings.showContinueButtons)
         settingsStore.writeString(LIBRARY_SORT_KEY, settings.sort.name)
         settingsStore.writeBoolean(LIBRARY_SORT_ASCENDING_KEY, settings.sortAscending)
@@ -307,6 +431,7 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(LIBRARY_FILTER_STARTED_KEY, settings.startedFilter.name)
         settingsStore.writeString(LIBRARY_FILTER_BOOKMARKED_KEY, settings.bookmarkedFilter.name)
         settingsStore.writeString(LIBRARY_FILTER_COMPLETED_KEY, settings.completedFilter.name)
+        settingsStore.writeString(LIBRARY_FILTER_TRACKED_KEY, settings.trackedFilter.name)
         settingsStore.writeInt(LIBRARY_UPDATE_INTERVAL_KEY, settings.autoUpdateIntervalHours)
         settingsStore.writeBoolean(LIBRARY_UPDATE_WIFI_ONLY_KEY, settings.updateOnlyOnWifi)
         settingsStore.writeBoolean(LIBRARY_SHOW_UPDATE_COUNT_KEY, settings.showUpdateCount)
@@ -358,6 +483,23 @@ internal class ChimahonSettingsRepository(
             showNsfwSources = settingsStore.readBoolean(BROWSE_SHOW_NSFW_KEY, defaultValue = true),
             hideLibraryEntries = settingsStore.readBoolean(BROWSE_HIDE_LIBRARY_ENTRIES_KEY),
             autoLoadMore = settingsStore.readBoolean(BROWSE_AUTO_LOAD_MORE_KEY, defaultValue = true),
+            enabledLanguages = settingsStore.readString(BROWSE_ENABLED_LANGUAGES_KEY)
+                ?.split(',')
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                .orEmpty(),
+            sourceDisplayMode = readEnum(
+                BROWSE_SOURCE_DISPLAY_MODE_KEY,
+                ChimahonBrowseSourceDisplayMode.List,
+            ),
+            groupSourcesByLanguage = settingsStore.readBoolean(
+                BROWSE_GROUP_SOURCES_BY_LANGUAGE_KEY,
+                defaultValue = true,
+            ),
+            showSourceLanguage = settingsStore.readBoolean(
+                BROWSE_SHOW_SOURCE_LANGUAGE_KEY,
+                defaultValue = true,
+            ),
             extensionUpdateNotificationsEnabled = settingsStore.readBoolean(
                 BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY,
                 defaultValue = true,
@@ -369,6 +511,16 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(BROWSE_SHOW_NSFW_KEY, settings.showNsfwSources)
         settingsStore.writeBoolean(BROWSE_HIDE_LIBRARY_ENTRIES_KEY, settings.hideLibraryEntries)
         settingsStore.writeBoolean(BROWSE_AUTO_LOAD_MORE_KEY, settings.autoLoadMore)
+        settingsStore.writeString(
+            BROWSE_ENABLED_LANGUAGES_KEY,
+            settings.enabledLanguages.joinToString(","),
+        )
+        settingsStore.writeString(BROWSE_SOURCE_DISPLAY_MODE_KEY, settings.sourceDisplayMode.name)
+        settingsStore.writeBoolean(
+            BROWSE_GROUP_SOURCES_BY_LANGUAGE_KEY,
+            settings.groupSourcesByLanguage,
+        )
+        settingsStore.writeBoolean(BROWSE_SHOW_SOURCE_LANGUAGE_KEY, settings.showSourceLanguage)
         settingsStore.writeBoolean(
             BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY,
             settings.extensionUpdateNotificationsEnabled,
@@ -382,6 +534,10 @@ internal class ChimahonSettingsRepository(
             hideNotificationContent = settingsStore.readBoolean(SECURITY_HIDE_NOTIFICATION_CONTENT_KEY),
             requireAuthentication = settingsStore.readBoolean(SECURITY_REQUIRE_AUTHENTICATION_KEY),
             lockAfterMinutes = settingsStore.readInt(SECURITY_LOCK_AFTER_MINUTES_KEY),
+            lockOnAppExit = settingsStore.readBoolean(SECURITY_LOCK_ON_APP_EXIT_KEY),
+            incognitoModeByDefault = settingsStore.readBoolean(
+                SECURITY_INCOGNITO_BY_DEFAULT_KEY,
+            ),
             protectDownloads = settingsStore.readBoolean(SECURITY_PROTECT_DOWNLOADS_KEY),
         )
     }
@@ -394,6 +550,11 @@ internal class ChimahonSettingsRepository(
         )
         settingsStore.writeBoolean(SECURITY_REQUIRE_AUTHENTICATION_KEY, settings.requireAuthentication)
         settingsStore.writeInt(SECURITY_LOCK_AFTER_MINUTES_KEY, settings.lockAfterMinutes)
+        settingsStore.writeBoolean(SECURITY_LOCK_ON_APP_EXIT_KEY, settings.lockOnAppExit)
+        settingsStore.writeBoolean(
+            SECURITY_INCOGNITO_BY_DEFAULT_KEY,
+            settings.incognitoModeByDefault,
+        )
         settingsStore.writeBoolean(SECURITY_PROTECT_DOWNLOADS_KEY, settings.protectDownloads)
         return settings
     }
@@ -430,18 +591,31 @@ internal class ChimahonSettingsRepository(
     private companion object {
         const val APPEARANCE_THEME_MODE_KEY = "__APP_STATE_chimahon_theme_mode"
         const val APPEARANCE_APP_THEME_KEY = "__APP_STATE_chimahon_app_theme"
+        const val APPEARANCE_COLOR_THEME_KEY = "__APP_STATE_chimahon_color_theme"
         const val APPEARANCE_AMOLED_KEY = "__APP_STATE_chimahon_theme_amoled"
+        const val APPEARANCE_FONT_SCALE_PERCENT_KEY = "__APP_STATE_chimahon_font_scale_percent"
         const val APPEARANCE_COMPACT_NAVIGATION_KEY = "__APP_STATE_chimahon_compact_navigation"
         const val APPEARANCE_RELATIVE_DATES_KEY = "__APP_STATE_chimahon_relative_dates"
         const val APPEARANCE_DESCRIPTION_IMAGES_KEY = "__APP_STATE_chimahon_description_images"
         const val READER_MODE_KEY = "__APP_STATE_chimahon_reader_mode"
         const val READER_SCALE_KEY = "__APP_STATE_chimahon_reader_scale"
         const val READER_CANVAS_KEY = "__APP_STATE_chimahon_reader_canvas"
+        const val READER_ORIENTATION_KEY = "__APP_STATE_chimahon_reader_orientation"
+        const val READER_DUAL_PAGE_MODE_KEY = "__APP_STATE_chimahon_reader_dual_page_mode"
+        const val READER_SPLIT_WIDE_PAGES_KEY = "__APP_STATE_chimahon_reader_split_wide_pages"
+        const val READER_COLOR_FILTER_ENABLED_KEY =
+            "__APP_STATE_chimahon_reader_color_filter_enabled"
+        const val READER_GRAYSCALE_KEY = "__APP_STATE_chimahon_reader_grayscale"
+        const val READER_INVERT_COLORS_KEY = "__APP_STATE_chimahon_reader_invert_colors"
+        const val READER_BRIGHTNESS_KEY = "__APP_STATE_chimahon_reader_brightness"
+        const val READER_NAVIGATION_MODE_KEY = "__APP_STATE_chimahon_reader_navigation_mode"
         const val READER_PAGE_STRIP_KEY = "__APP_STATE_chimahon_reader_page_strip"
         const val READER_CONTROLS_KEY = "__APP_STATE_chimahon_reader_controls"
         const val READER_TAP_ZONES_KEY = "__APP_STATE_chimahon_reader_tap_zones"
         const val READER_SMALLER_TAP_ZONES_KEY = "__APP_STATE_chimahon_reader_smaller_tap_zones"
         const val READER_INVERT_TAP_ZONES_KEY = "__APP_STATE_chimahon_reader_invert_tap_zones"
+        const val READER_SWIPE_NAVIGATION_KEY = "__APP_STATE_chimahon_reader_swipe_navigation"
+        const val READER_DOUBLE_TAP_ZOOM_KEY = "__APP_STATE_chimahon_reader_double_tap_zoom"
         const val READER_VOLUME_KEYS_KEY = "__APP_STATE_chimahon_reader_volume_keys"
         const val READER_VOLUME_KEYS_INVERTED_KEY = "__APP_STATE_chimahon_reader_volume_keys_inverted"
         const val READER_LONG_TAP_KEY = "__APP_STATE_chimahon_reader_long_tap"
@@ -450,8 +624,16 @@ internal class ChimahonSettingsRepository(
         const val READER_PAGE_TRANSITIONS_KEY = "__APP_STATE_chimahon_reader_page_transitions"
         const val READER_SHOW_PAGE_NUMBER_KEY = "__APP_STATE_chimahon_reader_show_page_number"
         const val LIBRARY_DISPLAY_MODE_KEY = "__APP_STATE_chimahon_library_display_mode"
+        const val LIBRARY_GRID_COLUMNS_PORTRAIT_KEY =
+            "__APP_STATE_chimahon_library_grid_columns_portrait"
+        const val LIBRARY_GRID_COLUMNS_LANDSCAPE_KEY =
+            "__APP_STATE_chimahon_library_grid_columns_landscape"
+        const val LIBRARY_COVER_ASPECT_RATIO_KEY =
+            "__APP_STATE_chimahon_library_cover_aspect_ratio"
         const val LIBRARY_CATEGORY_TABS_KEY = "__APP_STATE_chimahon_library_category_tabs"
         const val LIBRARY_UNREAD_BADGES_KEY = "__APP_STATE_chimahon_library_unread_badges"
+        const val LIBRARY_DOWNLOADED_BADGES_KEY = "__APP_STATE_chimahon_library_downloaded_badges"
+        const val LIBRARY_LANGUAGE_BADGES_KEY = "__APP_STATE_chimahon_library_language_badges"
         const val LIBRARY_CONTINUE_BUTTONS_KEY = "__APP_STATE_chimahon_library_continue_buttons"
         const val LIBRARY_SORT_KEY = "__APP_STATE_chimahon_library_sort"
         const val LIBRARY_SORT_ASCENDING_KEY = "__APP_STATE_chimahon_library_sort_ascending"
@@ -460,6 +642,7 @@ internal class ChimahonSettingsRepository(
         const val LIBRARY_FILTER_STARTED_KEY = "__APP_STATE_chimahon_library_filter_started"
         const val LIBRARY_FILTER_BOOKMARKED_KEY = "__APP_STATE_chimahon_library_filter_bookmarked"
         const val LIBRARY_FILTER_COMPLETED_KEY = "__APP_STATE_chimahon_library_filter_completed"
+        const val LIBRARY_FILTER_TRACKED_KEY = "__APP_STATE_chimahon_library_filter_tracked"
         const val LIBRARY_UPDATE_INTERVAL_KEY = "__APP_STATE_chimahon_library_update_interval"
         const val LIBRARY_UPDATE_WIFI_ONLY_KEY = "__APP_STATE_chimahon_library_update_wifi_only"
         const val LIBRARY_SHOW_UPDATE_COUNT_KEY = "__APP_STATE_chimahon_library_show_update_count"
@@ -478,6 +661,13 @@ internal class ChimahonSettingsRepository(
         const val BROWSE_SHOW_NSFW_KEY = "__APP_STATE_chimahon_browse_show_nsfw"
         const val BROWSE_HIDE_LIBRARY_ENTRIES_KEY = "__APP_STATE_chimahon_browse_hide_library_entries"
         const val BROWSE_AUTO_LOAD_MORE_KEY = "__APP_STATE_chimahon_browse_auto_load_more"
+        const val BROWSE_ENABLED_LANGUAGES_KEY = "__APP_STATE_chimahon_browse_enabled_languages"
+        const val BROWSE_SOURCE_DISPLAY_MODE_KEY =
+            "__APP_STATE_chimahon_browse_source_display_mode"
+        const val BROWSE_GROUP_SOURCES_BY_LANGUAGE_KEY =
+            "__APP_STATE_chimahon_browse_group_sources_by_language"
+        const val BROWSE_SHOW_SOURCE_LANGUAGE_KEY =
+            "__APP_STATE_chimahon_browse_show_source_language"
         const val BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY =
             "__APP_STATE_chimahon_browse_extension_update_notifications"
         const val SECURITY_SECURE_SCREEN_KEY = "__APP_STATE_chimahon_security_secure_screen"
@@ -486,6 +676,9 @@ internal class ChimahonSettingsRepository(
         const val SECURITY_REQUIRE_AUTHENTICATION_KEY =
             "__APP_STATE_chimahon_security_require_authentication"
         const val SECURITY_LOCK_AFTER_MINUTES_KEY = "__APP_STATE_chimahon_security_lock_after_minutes"
+        const val SECURITY_LOCK_ON_APP_EXIT_KEY = "__APP_STATE_chimahon_security_lock_on_app_exit"
+        const val SECURITY_INCOGNITO_BY_DEFAULT_KEY =
+            "__APP_STATE_chimahon_security_incognito_by_default"
         const val SECURITY_PROTECT_DOWNLOADS_KEY = "__APP_STATE_chimahon_security_protect_downloads"
         const val DOWNLOADED_ONLY_KEY = "__APP_STATE_pref_downloaded_only"
         const val INCOGNITO_MODE_KEY = "__APP_STATE_incognito_mode"
