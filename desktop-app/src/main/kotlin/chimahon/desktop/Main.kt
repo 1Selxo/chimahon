@@ -33,12 +33,17 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
+import java.awt.AWTEvent
 import java.awt.Toolkit
+import java.awt.event.AWTEventListener
+import java.awt.event.InputEvent
 import java.awt.event.KeyEvent as AwtKeyEvent
+import java.awt.event.MouseEvent as AwtMouseEvent
 import javax.swing.JMenu
 import javax.swing.JMenuBar
 import javax.swing.JMenuItem
 import javax.swing.KeyStroke
+import javax.swing.SwingUtilities
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -66,11 +71,16 @@ fun main() {
         ) {
             DisposableEffect(window) {
                 DesktopPlatformAffordances.configureWindow(window)
+                val inputBridge = installDesktopInputBridge(
+                    window = window,
+                    onCommand = dispatchDesktopCommand,
+                )
                 window.jMenuBar = createDesktopMenuBar(
                     onCommand = dispatchDesktopCommand,
                     onQuit = closeApplication,
                 )
                 onDispose {
+                    inputBridge.close()
                     window.jMenuBar = null
                 }
             }
@@ -132,8 +142,17 @@ private fun createDesktopMenuBar(
     onCommand: (ChimahonDesktopCommand) -> Unit,
     onQuit: () -> Unit,
 ): JMenuBar {
-    fun appShortcut(keyCode: Int): KeyStroke =
-        KeyStroke.getKeyStroke(keyCode, Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx)
+    val menuShortcutMask = Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx
+
+    fun shortcut(
+        keyCode: Int,
+        modifiers: Int = 0,
+    ): KeyStroke = KeyStroke.getKeyStroke(keyCode, modifiers)
+
+    fun appShortcut(
+        keyCode: Int,
+        modifiers: Int = 0,
+    ): KeyStroke = shortcut(keyCode, menuShortcutMask or modifiers)
 
     fun item(
         title: String,
@@ -159,19 +178,31 @@ private fun createDesktopMenuBar(
             add(item("Quit", appShortcut(AwtKeyEvent.VK_Q), onQuit))
         })
         add(menu("Navigate", AwtKeyEvent.VK_N) {
-            add(item("Back") { onCommand(ChimahonDesktopCommand.Back) })
+            add(item("Back", shortcut(AwtKeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.Back)
+            })
             addSeparator()
             add(item("Library", appShortcut(AwtKeyEvent.VK_L)) { onCommand(ChimahonDesktopCommand.Library) })
             add(item("Updates", appShortcut(AwtKeyEvent.VK_U)) { onCommand(ChimahonDesktopCommand.Updates) })
             add(item("History", appShortcut(AwtKeyEvent.VK_H)) { onCommand(ChimahonDesktopCommand.History) })
-            add(item("Browse Sources", appShortcut(AwtKeyEvent.VK_B)) { onCommand(ChimahonDesktopCommand.BrowseSources) })
-            add(item("Browse Extensions", appShortcut(AwtKeyEvent.VK_E)) { onCommand(ChimahonDesktopCommand.BrowseExtensions) })
-            add(item("Browse Feed") { onCommand(ChimahonDesktopCommand.BrowseFeed) })
-            add(item("Migrate") { onCommand(ChimahonDesktopCommand.BrowseMigrate) })
+            add(item("Browse Sources", appShortcut(AwtKeyEvent.VK_B)) {
+                onCommand(ChimahonDesktopCommand.BrowseSources)
+            })
+            add(item("Browse Extensions", appShortcut(AwtKeyEvent.VK_E)) {
+                onCommand(ChimahonDesktopCommand.BrowseExtensions)
+            })
+            add(item("Browse Feed", appShortcut(AwtKeyEvent.VK_B, InputEvent.SHIFT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.BrowseFeed)
+            })
+            add(item("Migrate", appShortcut(AwtKeyEvent.VK_M, InputEvent.SHIFT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.BrowseMigrate)
+            })
             add(item("More", appShortcut(AwtKeyEvent.VK_M)) { onCommand(ChimahonDesktopCommand.More) })
             addSeparator()
             add(item("Settings", appShortcut(AwtKeyEvent.VK_S)) { onCommand(ChimahonDesktopCommand.Settings) })
-            add(item("Download Queue", appShortcut(AwtKeyEvent.VK_D)) { onCommand(ChimahonDesktopCommand.DownloadQueue) })
+            add(item("Download Queue", appShortcut(AwtKeyEvent.VK_D)) {
+                onCommand(ChimahonDesktopCommand.DownloadQueue)
+            })
         })
         add(menu("Edit", AwtKeyEvent.VK_E) {
             add(item("Search", appShortcut(AwtKeyEvent.VK_F)) { onCommand(ChimahonDesktopCommand.Search) })
@@ -180,43 +211,119 @@ private fun createDesktopMenuBar(
                     "Toggle Filters",
                     KeyStroke.getKeyStroke(
                         AwtKeyEvent.VK_F,
-                        Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx or java.awt.event.InputEvent.SHIFT_DOWN_MASK,
+                        menuShortcutMask or InputEvent.SHIFT_DOWN_MASK,
                     ),
                 ) { onCommand(ChimahonDesktopCommand.ToggleFilters) },
             )
             add(item("Refresh", appShortcut(AwtKeyEvent.VK_R)) { onCommand(ChimahonDesktopCommand.Refresh) })
-            add(item("Refresh (F5)", KeyStroke.getKeyStroke(AwtKeyEvent.VK_F5, 0)) {
+            add(item("Refresh (F5)", shortcut(AwtKeyEvent.VK_F5)) {
                 onCommand(ChimahonDesktopCommand.Refresh)
             })
             addSeparator()
-            add(item("Copy Downloads Path") { DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Downloads) })
+            add(item("Copy Downloads Path") {
+                DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Downloads)
+            })
             add(item("Copy Data Path") { DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Files) })
             add(item("Copy Cache Path") { DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Cache) })
         })
         add(menu("Reader", AwtKeyEvent.VK_R) {
-            add(item("Previous Page") { onCommand(ChimahonDesktopCommand.ReaderPreviousPage) })
-            add(item("Next Page") { onCommand(ChimahonDesktopCommand.ReaderNextPage) })
-            add(item("First Page") { onCommand(ChimahonDesktopCommand.ReaderFirstPage) })
-            add(item("Last Page") { onCommand(ChimahonDesktopCommand.ReaderLastPage) })
+            add(item("Previous Page", appShortcut(AwtKeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderPreviousPage)
+            })
+            add(item("Next Page", appShortcut(AwtKeyEvent.VK_RIGHT, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderNextPage)
+            })
+            add(item("First Page", appShortcut(AwtKeyEvent.VK_HOME, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderFirstPage)
+            })
+            add(item("Last Page", appShortcut(AwtKeyEvent.VK_END, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderLastPage)
+            })
             addSeparator()
-            add(item("Previous Chapter") { onCommand(ChimahonDesktopCommand.ReaderPreviousChapter) })
-            add(item("Next Chapter") { onCommand(ChimahonDesktopCommand.ReaderNextChapter) })
+            add(
+                item(
+                    "Previous Chapter",
+                    appShortcut(AwtKeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
+                ) {
+                    onCommand(ChimahonDesktopCommand.ReaderPreviousChapter)
+                },
+            )
+            add(
+                item(
+                    "Next Chapter",
+                    appShortcut(AwtKeyEvent.VK_RIGHT, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
+                ) {
+                    onCommand(ChimahonDesktopCommand.ReaderNextChapter)
+                },
+            )
             addSeparator()
-            add(item("Toggle Controls") { onCommand(ChimahonDesktopCommand.ReaderToggleControls) })
-            add(item("Back / Close Reader Panel") { onCommand(ChimahonDesktopCommand.Back) })
+            add(item("Toggle Controls", appShortcut(AwtKeyEvent.VK_ENTER, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderToggleControls)
+            })
+            add(item("Back / Close Reader Panel", shortcut(AwtKeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.Back)
+            })
             addSeparator()
-            add(item("Cycle Page/Webtoon Mode") { onCommand(ChimahonDesktopCommand.ReaderCycleMode) })
-            add(item("Open Reader Settings") { onCommand(ChimahonDesktopCommand.ReaderOpenSettings) })
-            add(item("Open Chapter List") { onCommand(ChimahonDesktopCommand.ReaderOpenChapters) })
-            add(item("Toggle Reader Stats") { onCommand(ChimahonDesktopCommand.ReaderToggleStats) })
-            add(item("Toggle Crop Borders") { onCommand(ChimahonDesktopCommand.ReaderToggleCrop) })
+            add(item("Cycle Page/Webtoon Mode", appShortcut(AwtKeyEvent.VK_M, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderCycleMode)
+            })
+            add(item("Open Reader Settings", appShortcut(AwtKeyEvent.VK_COMMA, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderOpenSettings)
+            })
+            add(item("Open Chapter List", appShortcut(AwtKeyEvent.VK_C, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderOpenChapters)
+            })
+            add(item("Toggle Reader Stats", appShortcut(AwtKeyEvent.VK_I, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderToggleStats)
+            })
+            add(item("Toggle Crop Borders", appShortcut(AwtKeyEvent.VK_F, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderToggleCrop)
+            })
             addSeparator()
-            add(item("Bookmark Chapter") { onCommand(ChimahonDesktopCommand.ReaderBookmarkChapter) })
-            add(item("Download Chapter") { onCommand(ChimahonDesktopCommand.ReaderDownloadChapter) })
-            add(item("Mark Chapter Read") { onCommand(ChimahonDesktopCommand.ReaderMarkChapterRead) })
-            add(item("Open Chapter URL") { onCommand(ChimahonDesktopCommand.ReaderOpenChapterUrl) })
+            add(item("Bookmark Chapter", appShortcut(AwtKeyEvent.VK_B, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderBookmarkChapter)
+            })
+            add(item("Download Chapter", appShortcut(AwtKeyEvent.VK_D, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderDownloadChapter)
+            })
+            add(item("Mark Chapter Read", appShortcut(AwtKeyEvent.VK_R, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderMarkChapterRead)
+            })
+            add(item("Open Chapter URL", appShortcut(AwtKeyEvent.VK_O, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderOpenChapterUrl)
+            })
         })
     }
+}
+
+private fun installDesktopInputBridge(
+    window: java.awt.Window,
+    onCommand: (ChimahonDesktopCommand) -> Unit,
+): AutoCloseable {
+    val mouseListener = AWTEventListener { event ->
+        val mouseEvent = event as? AwtMouseEvent ?: return@AWTEventListener
+        if (mouseEvent.id != AwtMouseEvent.MOUSE_PRESSED) return@AWTEventListener
+        if (!mouseEvent.belongsTo(window)) return@AWTEventListener
+
+        val command = when (mouseEvent.button) {
+            4 -> ChimahonDesktopCommand.ReaderPreviousPage
+            5 -> ChimahonDesktopCommand.ReaderNextPage
+            else -> null
+        } ?: return@AWTEventListener
+
+        onCommand(command)
+        mouseEvent.consume()
+    }
+
+    Toolkit.getDefaultToolkit().addAWTEventListener(mouseListener, AWTEvent.MOUSE_EVENT_MASK)
+    return AutoCloseable {
+        Toolkit.getDefaultToolkit().removeAWTEventListener(mouseListener)
+    }
+}
+
+private fun AwtMouseEvent.belongsTo(window: java.awt.Window): Boolean {
+    val eventComponent = component ?: return false
+    return eventComponent == window || SwingUtilities.getWindowAncestor(eventComponent) == window
 }
 
 @Composable

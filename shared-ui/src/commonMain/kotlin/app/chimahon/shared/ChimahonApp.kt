@@ -8840,6 +8840,29 @@ private fun ReaderScaffold(
             )
         }
 
+        if (!controlsVisible && readerWidth >= 840.dp && pageCount > 0) {
+            val leftAction = if (mode.rightToLeft) onNextPage else onPreviousPage
+            val rightAction = if (mode.rightToLeft) onPreviousPage else onNextPage
+            ReaderDesktopEdgePageButton(
+                icon = if (mode.rightToLeft) UiIcon.Forward else UiIcon.Back,
+                contentDescription = if (mode.rightToLeft) "Next page" else "Previous page",
+                canvas = canvas,
+                onClick = leftAction,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 18.dp),
+            )
+            ReaderDesktopEdgePageButton(
+                icon = if (mode.rightToLeft) UiIcon.Back else UiIcon.Forward,
+                contentDescription = if (mode.rightToLeft) "Previous page" else "Next page",
+                canvas = canvas,
+                onClick = rightAction,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 18.dp),
+            )
+        }
+
         if ((!controlsVisible || readerSettings.alwaysShowChapterTransition) && pageCount > 0) {
             ReaderChapterEdgeHint(
                 request = request,
@@ -9009,6 +9032,19 @@ private fun ReaderScaffold(
                             .padding(bottom = 6.dp),
                     )
                 }
+                ReaderChapterNavigator(
+                    request = request,
+                    previousChapter = previousChapter,
+                    nextChapter = nextChapter,
+                    canvas = canvas,
+                    onPreviousChapter = onPreviousChapter,
+                    onNextChapter = onNextChapter,
+                    onOpenChapters = onToggleChapters,
+                    modifier = Modifier
+                        .fillMaxWidth(0.98f)
+                        .widthIn(max = 720.dp)
+                        .padding(bottom = 6.dp),
+                )
                 if (showPageStrip && !useVerticalPageStrip) {
                     ReaderPageStrip(
                         currentPage = currentPage,
@@ -9029,6 +9065,7 @@ private fun ReaderScaffold(
                     chaptersVisible = chaptersVisible,
                     statsVisible = statsVisible,
                     showPageStrip = showPageStrip,
+                    wideLayout = readerWidth >= 720.dp,
                     bottomButtons = readerSettings.bottomButtons,
                     cropActive = readerSettings.cropBorders,
                     showPercentage = readerSettings.showPercentage,
@@ -9043,6 +9080,7 @@ private fun ReaderScaffold(
                     onToggleCrop = onToggleCrop,
                     onPreviousPage = onPreviousPage,
                     onNextPage = onNextPage,
+                    onPageSelected = onPageSelected,
                 )
             }
         }
@@ -9545,6 +9583,33 @@ private fun ReaderPageIndicator(
     )
 }
 
+@Composable
+private fun ReaderDesktopEdgePageButton(
+    icon: UiIcon,
+    contentDescription: String,
+    canvas: ReaderCanvas,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(readerHudBackground(canvas).copy(alpha = 0.70f))
+            .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f), CircleShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = contentDescription,
+            tint = readerHudContent(canvas).copy(alpha = 0.84f),
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
 private fun readerFlashOverlayColor(
     flashColor: ChimahonReaderFlashColor,
     pulse: Int,
@@ -9558,6 +9623,112 @@ private fun readerFlashOverlayAlpha(flashColor: ChimahonReaderFlashColor): Float
     ChimahonReaderFlashColor.Black -> 0.28f
     ChimahonReaderFlashColor.White -> 0.34f
     ChimahonReaderFlashColor.WhiteBlack -> 0.32f
+}
+
+@Composable
+private fun ReaderChapterNavigator(
+    request: ChimahonReaderRequest,
+    previousChapter: ChimahonReaderChapterRef?,
+    nextChapter: ChimahonReaderChapterRef?,
+    canvas: ReaderCanvas,
+    onPreviousChapter: (() -> Unit)?,
+    onNextChapter: (() -> Unit)?,
+    onOpenChapters: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val chapterPosition = request.readerQueueProgressLabel()
+    Row(
+        modifier = modifier
+            .height(54.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(readerHudBackground(canvas).copy(alpha = 0.96f))
+            .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 6.dp, vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ReaderNavigatorChapterAction(
+            icon = UiIcon.SkipPrevious,
+            contentDescription = "Previous chapter",
+            canvas = canvas,
+            onClick = onPreviousChapter,
+        )
+        ReaderCurrentChapterButton(
+            request = request,
+            chapterPosition = chapterPosition,
+            canvas = canvas,
+            onClick = onOpenChapters,
+            modifier = Modifier.weight(1f),
+        )
+        ReaderNavigatorChapterAction(
+            icon = UiIcon.SkipNext,
+            contentDescription = "Next chapter",
+            canvas = canvas,
+            onClick = onNextChapter,
+        )
+    }
+}
+
+@Composable
+private fun ReaderCurrentChapterButton(
+    request: ChimahonReaderRequest,
+    chapterPosition: String?,
+    canvas: ReaderCanvas,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(12.dp))
+            .background(readerHudContent(canvas).copy(alpha = 0.08f))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(46.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(8.dp))
+                .background(ReaderPalette.selectedControl.copy(alpha = 0.58f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Label(
+                text = request.readerChapterMarker().removePrefix("Ch. "),
+                color = Color.White,
+                size = 10,
+                weight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Label(
+                text = request.chapterName,
+                color = readerHudContent(canvas),
+                size = 12,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Label(
+                text = listOfNotNull(chapterPosition, request.scanlator?.takeIf { it.isNotBlank() })
+                    .joinToString(" - ")
+                    .ifBlank { "Open chapter drawer" },
+                color = readerHudContent(canvas).copy(alpha = 0.60f),
+                size = 9,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        IconGlyph(
+            icon = UiIcon.Chapters,
+            contentDescription = "Open chapters",
+            tint = readerHudContent(canvas).copy(alpha = 0.70f),
+            modifier = Modifier.size(18.dp),
+        )
+    }
 }
 
 @Composable
@@ -10572,6 +10743,14 @@ private fun ChimahonReaderChapterRef.readerChapterMarker(): String {
     return if (chapterNumber > 0.0) "Ch. ${chapterNumber.toDisplayChapter()}" else "Chapter"
 }
 
+private fun ChimahonReaderRequest.readerQueueProgressLabel(): String? {
+    return if (chapterQueue.isNotEmpty() && chapterIndex in chapterQueue.indices) {
+        "Chapter ${chapterIndex + 1} / ${chapterQueue.size}"
+    } else {
+        null
+    }
+}
+
 private suspend fun Iterable<Int>.preloadReaderPages(
     maxConcurrency: Int,
     preloadReaderPage: suspend (Int) -> Unit,
@@ -10902,6 +11081,15 @@ private fun Int.toPercentTitle(): String = "$this%"
 
 private fun String.toPercentInt(defaultValue: Int): Int {
     return removeSuffix("%").toIntOrNull()?.coerceIn(0, 300) ?: defaultValue
+}
+
+private fun Int.toMillisTitle(): String = if (this <= 1) "Off" else "$this ms"
+
+private fun String.toMillisValue(defaultValue: Int): Int {
+    return when (this) {
+        "Off" -> 1
+        else -> removeSuffix(" ms").toIntOrNull()?.coerceAtLeast(1) ?: defaultValue
+    }
 }
 
 private fun Int.toDownloadCacheTitle(): String = when (this) {
@@ -12002,6 +12190,77 @@ private fun ReaderStatisticRow(
 }
 
 @Composable
+private fun ReaderPageStepControls(
+    currentPage: Int,
+    pageCount: Int,
+    canvas: ReaderCanvas,
+    showPercentage: Boolean,
+    showFirstLast: Boolean,
+    onPreviousPage: () -> Unit,
+    onNextPage: () -> Unit,
+    onPageSelected: (Int) -> Unit,
+) {
+    val pageLabel = if (showPercentage) {
+        "$currentPage / $pageCount - ${readerProgressText(currentPage, pageCount)}"
+    } else {
+        "$currentPage / $pageCount"
+    }
+    Row(
+        modifier = Modifier
+            .height(44.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(readerHudContent(canvas).copy(alpha = 0.08f))
+            .border(1.dp, readerHudContent(canvas).copy(alpha = 0.06f), RoundedCornerShape(22.dp))
+            .padding(horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        if (showFirstLast) {
+            ReaderAction(
+                icon = UiIcon.SkipPrevious,
+                contentDescription = "First page",
+                enabled = currentPage > 1,
+                tint = readerHudContent(canvas),
+                onClick = { onPageSelected(0) },
+            )
+        }
+        ReaderAction(
+            icon = UiIcon.Back,
+            contentDescription = "Previous page",
+            tint = readerHudContent(canvas),
+            onClick = onPreviousPage,
+        )
+        Box(
+            modifier = Modifier.widthIn(min = if (showFirstLast) 94.dp else 58.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Label(
+                text = pageLabel,
+                color = readerHudContent(canvas).copy(alpha = 0.76f),
+                size = 11,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
+        ReaderAction(
+            icon = UiIcon.Forward,
+            contentDescription = "Next page",
+            tint = readerHudContent(canvas),
+            onClick = onNextPage,
+        )
+        if (showFirstLast) {
+            ReaderAction(
+                icon = UiIcon.SkipNext,
+                contentDescription = "Last page",
+                enabled = currentPage < pageCount,
+                tint = readerHudContent(canvas),
+                onClick = { onPageSelected(pageCount - 1) },
+            )
+        }
+    }
+}
+
+@Composable
 private fun ReaderControlBar(
     mode: ReaderMode,
     canvas: ReaderCanvas,
@@ -12011,6 +12270,7 @@ private fun ReaderControlBar(
     chaptersVisible: Boolean,
     statsVisible: Boolean,
     showPageStrip: Boolean,
+    wideLayout: Boolean,
     bottomButtons: List<String>,
     cropActive: Boolean,
     showPercentage: Boolean,
@@ -12022,9 +12282,10 @@ private fun ReaderControlBar(
     onToggleCrop: () -> Unit,
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
+    onPageSelected: (Int) -> Unit,
 ) {
     val actionTint = readerHudContent(canvas)
-    val showInlinePageControls = !showPageStrip && pageCount > 0
+    val showInlinePageControls = pageCount > 0 && (!showPageStrip || wideLayout)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -12036,37 +12297,16 @@ private fun ReaderControlBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (showInlinePageControls) {
-            Row(
-                modifier = Modifier
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(readerHudContent(canvas).copy(alpha = 0.08f))
-                    .border(1.dp, readerHudContent(canvas).copy(alpha = 0.06f), RoundedCornerShape(22.dp))
-                    .padding(horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                ReaderAction(
-                    icon = UiIcon.Back,
-                    contentDescription = "Previous page",
-                    tint = actionTint,
-                    onClick = onPreviousPage,
-                )
-                Label(
-                    text = if (showPercentage) readerProgressText(currentPage, pageCount) else "$currentPage / $pageCount",
-                    color = readerHudContent(canvas).copy(alpha = 0.74f),
-                    size = 11,
-                    weight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    modifier = Modifier.widthIn(min = 56.dp),
-                )
-                ReaderAction(
-                    icon = UiIcon.Forward,
-                    contentDescription = "Next page",
-                    tint = actionTint,
-                    onClick = onNextPage,
-                )
-            }
+            ReaderPageStepControls(
+                currentPage = currentPage,
+                pageCount = pageCount,
+                canvas = canvas,
+                showPercentage = showPercentage,
+                showFirstLast = wideLayout,
+                onPreviousPage = onPreviousPage,
+                onNextPage = onNextPage,
+                onPageSelected = onPageSelected,
+            )
         }
         Row(
             modifier = Modifier
@@ -13116,12 +13356,12 @@ private fun ExtensionsSection(
                                 catalogState = ExtensionRepoCatalogUiState.Idle
                                 installMessage = null
                                 repoDeleteMessage = null
-                                repoActionMessage = "Deleted ${repo.name}"
+                                repoActionMessage = "Removed ${repo.name}"
                                 repoPendingDeletion = null
                                 onRepoSaved()
                             }
                             .onFailure { error ->
-                                repoDeleteMessage = error.message ?: "Could not delete repository"
+                                repoDeleteMessage = error.message ?: "Could not remove repository"
                                 repoPendingDeletion = null
                             }
                         deletingRepoUrl = null
@@ -13227,12 +13467,12 @@ private fun ExtensionsSection(
                     InstalledExtensionListItem(
                         extension = extension,
                         availableUpdate = availableUpdate,
-                        uninstalling = uninstallingExtensionId == extension.id,
-                        updating = installingExtensionId == extension.id,
+                        uninstalling = uninstallingExtensionKey == extension.installKey(),
+                        updating = availableUpdate?.let { installingExtensionKey == it.installKey() } == true,
                         onUpdate = {
                             val update = availableUpdate
-                            if (update != null && installingExtensionId == null) {
-                                installingExtensionId = update.id
+                            if (update != null && installingExtensionKey == null) {
+                                installingExtensionKey = update.installKey()
                                 installMessage = null
                                 scope.launch {
                                     runCatching { onInstallExtension(update) }
@@ -13243,13 +13483,13 @@ private fun ExtensionsSection(
                                         .onFailure { error ->
                                             installMessage = error.message ?: "Could not update extension"
                                         }
-                                    installingExtensionId = null
+                                    installingExtensionKey = null
                                 }
                             }
                         },
                         onUninstall = {
-                            if (uninstallingExtensionId == null) {
-                                uninstallingExtensionId = extension.id
+                            if (uninstallingExtensionKey == null) {
+                                uninstallingExtensionKey = extension.installKey()
                                 uninstallMessage = null
                                 scope.launch {
                                     runCatching { onUninstallExtension(extension.id, extension.packageType) }
@@ -13264,18 +13504,10 @@ private fun ExtensionsSection(
                                         .onFailure { error ->
                                             uninstallMessage = error.message ?: "Could not uninstall extension"
                                         }
-                                    uninstallingExtensionId = null
+                                    uninstallingExtensionKey = null
                                 }
                             }
                         },
-                    )
-                }
-            }
-            uninstallMessage?.let { message ->
-                item {
-                    ExtensionManagerMessageRow(
-                        message = message,
-                        error = message.startsWith("Could not"),
                     )
                 }
             }
@@ -13333,9 +13565,25 @@ private fun ExtensionsSection(
             item {
                 ExtensionManagerStatusRow(
                     icon = UiIcon.Info,
-                    title = "Could not delete repository",
+                    title = "Could not remove repository",
                     subtitle = message,
                     error = true,
+                )
+            }
+        }
+        installMessage?.let { message ->
+            item {
+                ExtensionManagerMessageRow(
+                    message = message,
+                    error = message.startsWith("Could not"),
+                )
+            }
+        }
+        uninstallMessage?.let { message ->
+            item {
+                ExtensionManagerMessageRow(
+                    message = message,
+                    error = message.startsWith("Could not"),
                 )
             }
         }
@@ -13410,10 +13658,10 @@ private fun ExtensionsSection(
                                         showLanguage = browseSettings.showSourceLanguage,
                                         installed = installed != null,
                                         updateAvailable = updateAvailable,
-                                        installing = installingExtensionId == extension.id,
+                                        installing = installingExtensionKey == extension.installKey(),
                                         onInstall = {
-                                            if (installingExtensionId == null) {
-                                                installingExtensionId = extension.id
+                                            if (installingExtensionKey == null) {
+                                                installingExtensionKey = extension.installKey()
                                                 installMessage = null
                                                 scope.launch {
                                                     runCatching { onInstallExtension(extension) }
@@ -13428,7 +13676,7 @@ private fun ExtensionsSection(
                                                         .onFailure { error ->
                                                             installMessage = error.message ?: "Could not install extension"
                                                         }
-                                                    installingExtensionId = null
+                                                    installingExtensionKey = null
                                                 }
                                             }
                                         },
@@ -13441,20 +13689,12 @@ private fun ExtensionsSection(
                             ExtensionAutoLoadFooter(
                                 visibleCount = visibleExtensionCount,
                                 totalCount = filteredExtensions.size,
-                                autoLoadMore = browseSettings.autoLoadMore,
+                                autoLoadMore = extensionAutoLoadMore,
                                 onLoadMore = {
                                     visibleExtensionCount =
                                         (visibleExtensionCount + EXTENSION_CATALOG_PAGE_SIZE)
                                             .coerceAtMost(filteredExtensions.size)
                                 },
-                            )
-                        }
-                    }
-                    installMessage?.let { message ->
-                        item {
-                            ExtensionManagerMessageRow(
-                                message = message,
-                                error = message.startsWith("Could not"),
                             )
                         }
                     }
@@ -14171,20 +14411,67 @@ private fun ExtensionRepoListItem(
                     }
                 }
             }
-            ChapterQuickAction(
-                icon = UiIcon.Link,
-                contentDescription = "Open ${repo.name} repository",
-                active = false,
-                onClick = onOpen,
-            )
-            ChapterQuickAction(
-                icon = UiIcon.Delete,
-                contentDescription = "Delete ${repo.name} repository",
-                active = false,
-                onClick = onDelete,
-            )
+            Column(
+                modifier = Modifier.widthIn(min = 86.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                ExtensionRepoListAction(
+                    icon = UiIcon.Link,
+                    label = "Open",
+                    contentDescription = "Open ${repo.name} repository",
+                    onClick = onOpen,
+                )
+                ExtensionRepoListAction(
+                    icon = UiIcon.Delete,
+                    label = "Remove",
+                    contentDescription = "Remove ${repo.name} repository",
+                    destructive = true,
+                    onClick = onDelete,
+                )
+            }
         }
         BrowseRowDivider(start = 72.dp)
+    }
+}
+
+@Composable
+private fun ExtensionRepoListAction(
+    icon: UiIcon,
+    label: String,
+    contentDescription: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val color = if (destructive) ChimahonPalette.error else ChimahonPalette.primary
+    val background = if (destructive) {
+        ChimahonPalette.error.copy(alpha = 0.10f)
+    } else {
+        ChimahonPalette.surfaceVariant
+    }
+    Row(
+        modifier = Modifier
+            .height(31.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .background(background)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = contentDescription,
+            tint = color,
+            modifier = Modifier.size(15.dp),
+        )
+        Label(
+            label,
+            color,
+            11,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 5.dp),
+        )
     }
 }
 
@@ -14205,14 +14492,14 @@ private fun ExtensionRepoDeleteDialog(
                 .padding(20.dp),
         ) {
             Label(
-                "Delete repository?",
+                "Remove repository?",
                 ChimahonPalette.onSurface,
                 18,
                 weight = FontWeight.SemiBold,
                 maxLines = 1,
             )
             Label(
-                "Remove ${repo.name} from extension repositories?\n${repo.baseUrl}",
+                "Remove ${repo.name} from extension repositories? Installed extensions stay installed.\n${repo.baseUrl}",
                 ChimahonPalette.secondaryText,
                 13,
                 lineHeight = 19,
@@ -14233,7 +14520,7 @@ private fun ExtensionRepoDeleteDialog(
                     onClick = onDismiss,
                 )
                 ExtensionRepoDialogAction(
-                    text = if (deleting) "Deleting" else "Delete",
+                    text = if (deleting) "Removing" else "Remove",
                     color = ChimahonPalette.error,
                     enabled = !deleting,
                     onClick = onDelete,
@@ -17312,6 +17599,7 @@ private fun MoreHome(
             onOpenExternalUrl = onOpenExternalUrl,
             onDownloadedOnlyModeChange = onDownloadedOnlyModeChange,
             onIncognitoModeChange = onIncognitoModeChange,
+            onOpenBrowseSection = onOpenBrowseSection,
             onOpenPage = openPage,
             onBack = {
                 pageStack = if (pageStack.size > 1) pageStack.dropLast(1) else listOf(MorePage.Main)
@@ -17517,6 +17805,7 @@ private fun MoreDetailPage(
     onOpenExternalUrl: (String) -> Boolean,
     onDownloadedOnlyModeChange: (Boolean) -> Unit,
     onIncognitoModeChange: (Boolean) -> Unit,
+    onOpenBrowseSection: (BrowseSection) -> Unit,
     onOpenPage: (MorePage) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -19183,6 +19472,53 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item { ListGroupHeader("Paged viewer") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Zoom start position",
+                            options = ChimahonReaderZoomStart.entries.map { it.title },
+                            selected = settings.reader.pagedZoomStart.title,
+                            onSelect = { selected ->
+                                ChimahonReaderZoomStart.entries.firstOrNull { it.title == selected }?.let {
+                                    onReaderSettingsChange(settings.reader.copy(pagedZoomStart = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Landscape zoom",
+                            "Zoom wide images in paged readers",
+                            UiIcon.Search,
+                            checked = settings.reader.landscapeZoom,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(landscapeZoom = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Wide image zoom mode",
+                            options = ChimahonReaderLandscapeZoomType.entries.map { it.title },
+                            selected = settings.reader.landscapeZoomType.title,
+                            onSelect = { selected ->
+                                ChimahonReaderLandscapeZoomType.entries.firstOrNull { it.title == selected }?.let {
+                                    onReaderSettingsChange(settings.reader.copy(landscapeZoomType = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Disable zoom in",
+                            "Prevent double-tap zooming past the initial paged scale",
+                            UiIcon.VisibilityOff,
+                            checked = settings.reader.pagedDisableZoomIn,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(pagedDisableZoomIn = it))
+                            },
+                        )
+                    }
                     item { ListGroupHeader("Color filter") }
                     item {
                         PreferenceSwitchRow(
@@ -19354,6 +19690,17 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceSwitchRow(
+                            "E-ink swipe",
+                            "Lower reader swipe thresholds for e-ink displays",
+                            UiIcon.VisibilityOff,
+                            checked = settings.reader.eInkSwipeSensitivity,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(eInkSwipeSensitivity = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
                             "Flash on page change",
                             "Briefly flash the page when moving through the reader",
                             UiIcon.VisibilityOff,
@@ -19421,6 +19768,20 @@ private fun MoreDetailPage(
                             checked = settings.reader.doubleTapToZoom,
                             onCheckedChange = {
                                 onReaderSettingsChange(settings.reader.copy(doubleTapToZoom = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Double tap animation",
+                            options = listOf("Off", "250 ms", "500 ms"),
+                            selected = settings.reader.doubleTapAnimationSpeedMillis.toMillisTitle(),
+                            onSelect = { selected ->
+                                onReaderSettingsChange(
+                                    settings.reader.copy(
+                                        doubleTapAnimationSpeedMillis = selected.toMillisValue(500),
+                                    ),
+                                )
                             },
                         )
                     }
@@ -19559,6 +19920,17 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item {
+                        PreferenceSwitchRow(
+                            "OCR on download",
+                            "Queue OCR sidecar generation when pages are downloaded",
+                            UiIcon.Search,
+                            checked = settings.reader.ocrAutoOnDownload,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(ocrAutoOnDownload = it))
+                            },
+                        )
+                    }
                     item { ListGroupHeader("Chapter transition") }
                     item {
                         PreferenceSwitchRow(
@@ -19623,6 +19995,91 @@ private fun MoreDetailPage(
                             checked = settings.reader.useAutoWebtoon,
                             onCheckedChange = {
                                 onReaderSettingsChange(settings.reader.copy(useAutoWebtoon = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Webtoon viewer") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Smart scale",
+                            options = ChimahonWebtoonScaleType.entries.map { it.title },
+                            selected = settings.reader.webtoonScaleType.title,
+                            onSelect = { selected ->
+                                ChimahonWebtoonScaleType.entries.firstOrNull { it.title == selected }?.let {
+                                    onReaderSettingsChange(settings.reader.copy(webtoonScaleType = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Smart long-strip gaps",
+                            "Scale long strip gap pages more gently on wide screens",
+                            UiIcon.Crop,
+                            checked = settings.reader.smartLongStripGapScale,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(smartLongStripGapScale = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Side padding",
+                            options = listOf("0%", "5%", "10%", "15%", "20%", "25%"),
+                            selected = settings.reader.webtoonSidePaddingPercent.toPercentTitle(),
+                            onSelect = { selected ->
+                                onReaderSettingsChange(
+                                    settings.reader.copy(
+                                        webtoonSidePaddingPercent = selected.toPercentInt(0).coerceIn(0, 25),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Hide threshold",
+                            options = ChimahonReaderHideThreshold.entries.map { it.title },
+                            selected = settings.reader.webtoonReaderHideThreshold.title,
+                            onSelect = { selected ->
+                                ChimahonReaderHideThreshold.entries.firstOrNull { it.title == selected }?.let {
+                                    onReaderSettingsChange(settings.reader.copy(webtoonReaderHideThreshold = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Pinch to zoom",
+                            "Allow pinch gestures in the webtoon reader",
+                            UiIcon.Search,
+                            checked = settings.reader.webtoonPinchToZoom,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(webtoonPinchToZoom = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Disable zoom out",
+                            "Prevent webtoon pages from shrinking below their fit scale",
+                            UiIcon.VisibilityOff,
+                            checked = settings.reader.webtoonDisableZoomOut,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(webtoonDisableZoomOut = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Tap scrolls by page",
+                            "Make vertical reader taps move one page-height at a time",
+                            UiIcon.Play,
+                            checked = settings.reader.continuousVerticalTappingByPage,
+                            onCheckedChange = {
+                                onReaderSettingsChange(
+                                    settings.reader.copy(continuousVerticalTappingByPage = it),
+                                )
                             },
                         )
                     }
@@ -20506,6 +20963,41 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceSwitchRow(
+                            "Source category filtering",
+                            "Filter the Sources tab using source categories",
+                            UiIcon.Filter,
+                            checked = settings.browse.sourceCategoriesFilter,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(sourceCategoriesFilter = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "New source navigation",
+                            "Open sources through the source feed flow when available",
+                            UiIcon.Browse,
+                            checked = settings.browse.useNewSourceNavigation,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(useNewSourceNavigation = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Hidden local folders",
+                            "Allow local source folders whose names start with a dot",
+                            UiIcon.Storage,
+                            checked = settings.browse.allowLocalSourceHiddenFolders,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(
+                                    settings.browse.copy(allowLocalSourceHiddenFolders = it),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
                             "Hide library entries",
                             "Dim or hide titles already in your library",
                             UiIcon.Library,
@@ -20523,6 +21015,85 @@ private fun MoreDetailPage(
                             checked = settings.browse.autoLoadMore,
                             onCheckedChange = {
                                 onBrowseSettingsChange(settings.browse.copy(autoLoadMore = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Related manga") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Related manga",
+                            "Show source-provided recommendations on manga pages",
+                            UiIcon.Library,
+                            checked = settings.browse.relatedMangaRecommendations,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(relatedMangaRecommendations = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Expand related manga",
+                            "Open related manga sections expanded by default",
+                            UiIcon.Reorder,
+                            checked = settings.browse.expandRelatedMangaSections,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(expandRelatedMangaSections = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Related manga in overflow",
+                            "Move recommendations into manga overflow actions",
+                            UiIcon.More,
+                            checked = settings.browse.relatedMangaInOverflow,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(relatedMangaInOverflow = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show Home in related manga",
+                            "Include a Home shortcut on related manga surfaces",
+                            UiIcon.Browse,
+                            checked = settings.browse.showHomeInRelatedManga,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(showHomeInRelatedManga = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Feed") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Hide feed tab",
+                            "Remove the Feed section from Browse navigation",
+                            UiIcon.VisibilityOff,
+                            checked = settings.browse.hideFeedTab,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(hideFeedTab = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Feed tab first",
+                            "Place Feed before Sources when it is visible",
+                            UiIcon.Swap,
+                            checked = settings.browse.feedTabInFront,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(feedTabInFront = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Hide library feed entries",
+                            "Filter titles already in your library from feed rows",
+                            UiIcon.Library,
+                            checked = settings.browse.hideLibraryFeedEntries,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(hideLibraryFeedEntries = it))
                             },
                         )
                     }
@@ -20573,6 +21144,15 @@ private fun MoreDetailPage(
                             subtitle = "Catalogues used for extension discovery and updates",
                             icon = UiIcon.Link,
                             value = snapshot.extensionRepos.size.toString(),
+                            onClick = { onOpenBrowseSection(BrowseSection.Extensions) },
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Manage repositories",
+                            subtitle = "Open Browse > Extensions to add, inspect, or refresh repositories.",
+                            action = "Open",
+                            onAction = { onOpenBrowseSection(BrowseSection.Extensions) },
                         )
                     }
                     if (snapshot.extensionRepos.isEmpty()) {
@@ -20977,6 +21557,17 @@ private fun MoreDetailPage(
                             detail = "All notices",
                             onCheckedChange = {
                                 onSecuritySettingsChange(settings.security.copy(hideNotificationContent = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Crash reports",
+                            "Share crash diagnostics when telemetry support is present",
+                            UiIcon.Info,
+                            checked = settings.security.crashReportsEnabled,
+                            onCheckedChange = {
+                                onSecuritySettingsChange(settings.security.copy(crashReportsEnabled = it))
                             },
                         )
                     }
@@ -24631,6 +25222,14 @@ private fun chimahonThemeColors(
         ChimahonAppTheme.Default -> ChimahonThemeSeed(
             Color(0xFF0058CA), Color(0xFFFEFBFF), Color(0xFFFEFBFF), Color(0xFFF3EDF7), Color(0xFF1B1B1F),
             Color(0xFFB0C6FF), Color(0xFF1B1B1F), Color(0xFF1B1B1F), Color(0xFF211F26), Color(0xFFE3E2E6),
+        )
+        ChimahonAppTheme.Monet -> ChimahonThemeSeed(
+            Color(0xFF6750A4), Color(0xFFFFFBFE), Color(0xFFFFFBFE), Color(0xFFE7E0EC), Color(0xFF1C1B1F),
+            Color(0xFFD0BCFF), Color(0xFF1C1B1F), Color(0xFF1C1B1F), Color(0xFF2B2930), Color(0xFFE6E1E5),
+        )
+        ChimahonAppTheme.Custom -> ChimahonThemeSeed(
+            Color(0xFFDF0090), Color(0xFFFFF7FB), Color(0xFFFFF7FB), Color(0xFFF5DCEB), Color(0xFF211A1F),
+            Color(0xFFFFAED7), Color(0xFF20151C), Color(0xFF20151C), Color(0xFF372532), Color(0xFFF2DFE8),
         )
         ChimahonAppTheme.Catppuccin -> ChimahonThemeSeed(
             Color(0xFF8839EF), Color(0xFFE6E9EF), Color(0xFFE6E9EF), Color(0xFFEFF1F5), Color(0xFF4C4F69),
