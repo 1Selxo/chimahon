@@ -5,7 +5,7 @@ import eu.kanade.tachiyomi.source.SourceRegistry
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ScriptHttpSource
 import okio.FileSystem
-import platform.Foundation.NSDate
+import platform.posix.time
 import tachiyomi.core.database.NativeDatabaseDriverFactory
 import tachiyomi.core.platform.javascript.IosJavaScriptRuntimeFactory
 import tachiyomi.core.platform.javascript.JavaScriptRuntimeFactory
@@ -39,7 +39,7 @@ internal actual class ChimahonPlatformServices actual constructor() {
     actual val javaScriptRuntimeFactory: JavaScriptRuntimeFactory = IosJavaScriptRuntimeFactory
 
     actual fun currentTimeMillis(): Long {
-        return (NSDate().timeIntervalSince1970() * 1_000.0).toLong()
+        return time(null) * 1_000L
     }
 
     actual fun resolveExternalMangaUrl(source: CatalogueSource, manga: SManga): String? {
