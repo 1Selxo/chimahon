@@ -587,6 +587,9 @@ fun ChimahonServiceApp(
         onSaveLibrarySettings = services::saveLibrarySettings,
         onSaveDownloadPreferences = services::saveDownloadPreferences,
         onSaveBrowseSettings = services::saveBrowseSettings,
+        onSaveTrackingSettings = services::saveTrackingSettings,
+        onSaveConnectionSettings = services::saveConnectionSettings,
+        onSaveDictionarySettings = services::saveDictionarySettings,
         onSaveSecuritySettings = services::saveSecuritySettings,
         onSetDownloadedOnly = services::setDownloadedOnly,
         onSetIncognitoMode = services::setIncognitoMode,
@@ -599,6 +602,7 @@ fun ChimahonServiceApp(
         onDeleteCategory = services::deleteCategory,
         onSetMangaCategories = services::setMangaCategories,
         onSetMangaFavorite = services::setMangaFavorite,
+        onSetMangasFavorite = services::setMangasFavorite,
         onSetMangaNotes = services::setMangaNotes,
         onResetHistoryEntry = services::resetHistoryEntry,
         onResetHistoryForManga = services::resetHistoryForManga,
@@ -610,6 +614,7 @@ fun ChimahonServiceApp(
         onClearCacheData = services::clearCacheData,
         onRunDatabaseMaintenance = services::runDatabaseMaintenance,
         onSetMangaChaptersRead = services::setMangaChaptersRead,
+        onSetMangasChaptersRead = services::setMangasChaptersRead,
         onSetChapterRead = services::setChapterRead,
         onSetChapterBookmark = services::setChapterBookmark,
         onLoadDownloadQueue = services::loadDownloadQueue,
@@ -680,6 +685,9 @@ fun ChimahonApp(
     onSaveLibrarySettings: suspend (ChimahonLibrarySettings) -> ChimahonLibrarySettings = { it },
     onSaveDownloadPreferences: suspend (ChimahonDownloadPreferences) -> ChimahonDownloadPreferences = { it },
     onSaveBrowseSettings: suspend (ChimahonBrowseSettings) -> ChimahonBrowseSettings = { it },
+    onSaveTrackingSettings: suspend (ChimahonTrackingSettings) -> ChimahonTrackingSettings = { it },
+    onSaveConnectionSettings: suspend (ChimahonConnectionSettings) -> ChimahonConnectionSettings = { it },
+    onSaveDictionarySettings: suspend (ChimahonDictionarySettings) -> ChimahonDictionarySettings = { it },
     onSaveSecuritySettings: suspend (ChimahonSecuritySettings) -> ChimahonSecuritySettings = { it },
     onSetDownloadedOnly: suspend (Boolean) -> ChimahonAppModeSettings = {
         ChimahonAppModeSettings(downloadedOnly = it)
@@ -698,6 +706,9 @@ fun ChimahonApp(
     onDeleteCategory: suspend (Long) -> Unit = {},
     onSetMangaCategories: suspend (Long, Set<Long>) -> Unit = { _, _ -> },
     onSetMangaFavorite: suspend (Long, Boolean) -> Unit = { _, _ -> },
+    onSetMangasFavorite: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult = { mangaIds, _ ->
+        ChimahonLibraryBulkActionResult(mangaCount = mangaIds.size)
+    },
     onSetMangaNotes: suspend (Long, String) -> Unit = { _, _ -> },
     onResetHistoryEntry: suspend (Long) -> Unit = {},
     onResetHistoryForManga: suspend (Long) -> Unit = {},
@@ -709,6 +720,9 @@ fun ChimahonApp(
     onClearCacheData: suspend () -> ChimahonCacheClearResult = { previewCacheClearResult(ChimahonCacheClearTarget.ApplicationCache) },
     onRunDatabaseMaintenance: suspend () -> ChimahonDatabaseMaintenanceResult = { previewDatabaseMaintenanceResult() },
     onSetMangaChaptersRead: suspend (Long, Boolean) -> Unit = { _, _ -> },
+    onSetMangasChaptersRead: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult = { mangaIds, _ ->
+        ChimahonLibraryBulkActionResult(mangaCount = mangaIds.size)
+    },
     onSetChapterRead: suspend (Long, Boolean) -> Unit = { _, _ -> },
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit = { _, _ -> },
     onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData = {
@@ -1084,6 +1098,7 @@ fun ChimahonApp(
                                         sourceId = detailSourceId,
                                         initialMode = selectedSourceInitialMode,
                                         searchKey = sourceSearchKey,
+                                        browseSettings = persistedSettings.browse,
                                         onRefresh = onRefresh,
                                         onLoadSourcePreview = onLoadSourcePreview,
                                         onOpenRemoteManga = { selectedRemoteManga = it },
@@ -1125,6 +1140,7 @@ fun ChimahonApp(
                                         },
                                         onAddRemoteMangaToLibrary = onAddRemoteMangaToLibrary,
                                         onSetMangaFavorite = onSetMangaFavorite,
+                                        onSetMangasFavorite = onSetMangasFavorite,
                                         onCreateCategory = onCreateCategory,
                                         onDeleteCategory = onDeleteCategory,
                                         onSetMangaCategories = onSetMangaCategories,
@@ -1139,6 +1155,7 @@ fun ChimahonApp(
                                         onRunDatabaseMaintenance = onRunDatabaseMaintenance,
                                         onSetChapterRead = onSetChapterRead,
                                         onSetChapterBookmark = onSetChapterBookmark,
+                                        onSetMangasChaptersRead = onSetMangasChaptersRead,
                                         onLoadDownloadQueue = onLoadDownloadQueue,
                                         onPauseDownloadQueue = onPauseDownloadQueue,
                                         onResumeDownloadQueue = onResumeDownloadQueue,
@@ -1186,6 +1203,24 @@ fun ChimahonApp(
                                             persistedSettings = persistedSettings.copy(browse = settings)
                                             appScope.launch {
                                                 runCatching { onSaveBrowseSettings(settings) }
+                                            }
+                                        },
+                                        onTrackingSettingsChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(tracking = settings)
+                                            appScope.launch {
+                                                runCatching { onSaveTrackingSettings(settings) }
+                                            }
+                                        },
+                                        onConnectionSettingsChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(connections = settings)
+                                            appScope.launch {
+                                                runCatching { onSaveConnectionSettings(settings) }
+                                            }
+                                        },
+                                        onDictionarySettingsChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(dictionary = settings)
+                                            appScope.launch {
+                                                runCatching { onSaveDictionarySettings(settings) }
                                             }
                                         },
                                         onSecuritySettingsChange = { settings ->
@@ -1685,6 +1720,7 @@ private fun HomeContent(
     onOpenSource: (Long, ChimahonSourceBrowseMode) -> Unit,
     onAddRemoteMangaToLibrary: suspend (ChimahonRemoteMangaDetail) -> Long,
     onSetMangaFavorite: suspend (Long, Boolean) -> Unit,
+    onSetMangasFavorite: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
     onCreateCategory: suspend (String) -> Long,
     onDeleteCategory: suspend (Long) -> Unit,
     onSetMangaCategories: suspend (Long, Set<Long>) -> Unit,
@@ -1699,6 +1735,7 @@ private fun HomeContent(
     onRunDatabaseMaintenance: suspend () -> ChimahonDatabaseMaintenanceResult,
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
+    onSetMangasChaptersRead: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
     onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData,
@@ -1723,6 +1760,9 @@ private fun HomeContent(
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
     onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
     onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onTrackingSettingsChange: (ChimahonTrackingSettings) -> Unit,
+    onConnectionSettingsChange: (ChimahonConnectionSettings) -> Unit,
+    onDictionarySettingsChange: (ChimahonDictionarySettings) -> Unit,
     onSecuritySettingsChange: (ChimahonSecuritySettings) -> Unit,
     onOpenExternalUrl: (String) -> Boolean,
     onDownloadedOnlyModeChange: (Boolean) -> Unit,
@@ -1736,6 +1776,9 @@ private fun HomeContent(
             onBrowseClick = { onSelectTab(HomeTab.Browse) },
             onOpenManga = onOpenManga,
             onOpenReader = onOpenReader,
+            onSetMangasFavorite = onSetMangasFavorite,
+            onSetMangasChaptersRead = onSetMangasChaptersRead,
+            onRefresh = onRepoSaved,
             settings = settings.library,
             onSettingsChange = onLibrarySettingsChange,
         )
@@ -1777,6 +1820,7 @@ private fun HomeContent(
             onOpenSource = onOpenSource,
             onAddRemoteMangaToLibrary = onAddRemoteMangaToLibrary,
             onSetMangaFavorite = onSetMangaFavorite,
+            browseSettings = settings.browse,
             onAddExtensionRepo = onAddExtensionRepo,
             onDeleteExtensionRepo = onDeleteExtensionRepo,
             onLoadExtensionRepoCatalog = onLoadExtensionRepoCatalog,
@@ -1812,6 +1856,9 @@ private fun HomeContent(
             onReaderSettingsChange = onReaderSettingsChange,
             onDownloadPreferencesChange = onDownloadPreferencesChange,
             onBrowseSettingsChange = onBrowseSettingsChange,
+            onTrackingSettingsChange = onTrackingSettingsChange,
+            onConnectionSettingsChange = onConnectionSettingsChange,
+            onDictionarySettingsChange = onDictionarySettingsChange,
             onSecuritySettingsChange = onSecuritySettingsChange,
             onOpenExternalUrl = onOpenExternalUrl,
             onDownloadedOnlyModeChange = onDownloadedOnlyModeChange,
@@ -1832,6 +1879,9 @@ private fun LibraryHome(
     onBrowseClick: () -> Unit,
     onOpenManga: (Long) -> Unit,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
+    onSetMangasFavorite: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
+    onSetMangasChaptersRead: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
+    onRefresh: () -> Unit,
     settings: ChimahonLibrarySettings,
     onSettingsChange: (ChimahonLibrarySettings) -> Unit,
 ) {
@@ -1865,6 +1915,9 @@ private fun LibraryHome(
     var displayMode by remember(settings.displayMode) {
         mutableStateOf(settings.displayMode.toUiLibraryDisplayMode())
     }
+    val selectedMangaIds = remember { mutableStateMapOf<Long, Boolean>() }
+    var bulkMessage by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId } ?: categories.first()
     val categoryLibrary = snapshot.libraryForCategory(selectedCategory.id)
     val selectedLibrary = categoryLibrary
@@ -1903,6 +1956,11 @@ private fun LibraryHome(
         }
     val categoryCounts = categories.associate { category ->
         category.id to snapshot.libraryForCategory(category.id).size
+    }
+    LaunchedEffect(selectedLibrary.map { it.id }.joinToString()) {
+        selectedMangaIds.keys
+            .filterNot { mangaId -> selectedLibrary.any { it.id == mangaId } }
+            .forEach(selectedMangaIds::remove)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -1973,6 +2031,81 @@ private fun LibraryHome(
                 )
             }
         }
+        if (selectedLibrary.isNotEmpty()) {
+            MultiSelectionBar(
+                selectedCount = selectedMangaIds.count { it.value },
+                totalCount = selectedLibrary.size,
+                onSelectAll = {
+                    selectedLibrary.forEach { selectedMangaIds[it.id] = true }
+                },
+                onInvert = {
+                    selectedLibrary.forEach { manga ->
+                        selectedMangaIds[manga.id] = selectedMangaIds[manga.id] != true
+                    }
+                },
+                onClear = {
+                    selectedMangaIds.clear()
+                    bulkMessage = null
+                },
+                actions = listOf(
+                    SelectionAction("Favorite", UiIcon.Favorite) {
+                        val selected = selectedMangaIds.filterValues { it }.keys
+                        if (selected.isNotEmpty()) {
+                            scope.launch {
+                                runCatching { onSetMangasFavorite(selected, true) }
+                                    .onSuccess { bulkMessage = it.libraryBulkSummary("favorited") }
+                                    .onFailure { bulkMessage = it.message ?: "Could not update favorites" }
+                                selectedMangaIds.clear()
+                                onRefresh()
+                            }
+                        }
+                    },
+                    SelectionAction("Unfavorite", UiIcon.FavoriteBorder) {
+                        val selected = selectedMangaIds.filterValues { it }.keys
+                        if (selected.isNotEmpty()) {
+                            scope.launch {
+                                runCatching { onSetMangasFavorite(selected, false) }
+                                    .onSuccess { bulkMessage = it.libraryBulkSummary("unfavorited") }
+                                    .onFailure { bulkMessage = it.message ?: "Could not update favorites" }
+                                selectedMangaIds.clear()
+                                onRefresh()
+                            }
+                        }
+                    },
+                    SelectionAction("Read", UiIcon.DoneAll) {
+                        val selected = selectedMangaIds.filterValues { it }.keys
+                        if (selected.isNotEmpty()) {
+                            scope.launch {
+                                runCatching { onSetMangasChaptersRead(selected, true) }
+                                    .onSuccess { bulkMessage = it.libraryBulkSummary("marked read") }
+                                    .onFailure { bulkMessage = it.message ?: "Could not mark chapters read" }
+                                selectedMangaIds.clear()
+                                onRefresh()
+                            }
+                        }
+                    },
+                    SelectionAction("Unread", UiIcon.Circle) {
+                        val selected = selectedMangaIds.filterValues { it }.keys
+                        if (selected.isNotEmpty()) {
+                            scope.launch {
+                                runCatching { onSetMangasChaptersRead(selected, false) }
+                                    .onSuccess { bulkMessage = it.libraryBulkSummary("marked unread") }
+                                    .onFailure { bulkMessage = it.message ?: "Could not mark chapters unread" }
+                                selectedMangaIds.clear()
+                                onRefresh()
+                            }
+                        }
+                    },
+                ),
+            )
+        }
+        bulkMessage?.let { message ->
+            ExtensionStatusRow(
+                title = if (message.startsWith("Could not")) "Library action failed" else "Library action complete",
+                subtitle = message,
+                error = message.startsWith("Could not"),
+            )
+        }
         if (selectedLibrary.isEmpty()) {
             EmptyListPanel(
                 marker = "L",
@@ -1991,7 +2124,18 @@ private fun LibraryHome(
                         entry = entry,
                         chapterCount = chapters.size,
                         unreadCount = chapters.count { !it.read }.takeIf { settings.showUnreadBadges } ?: 0,
-                        onClick = { onOpenManga(entry.id) },
+                        selected = selectedMangaIds[entry.id] == true,
+                        onToggleSelected = {
+                            selectedMangaIds[entry.id] = selectedMangaIds[entry.id] != true
+                            bulkMessage = null
+                        },
+                        onClick = {
+                            if (selectedMangaIds.any { it.value }) {
+                                selectedMangaIds[entry.id] = selectedMangaIds[entry.id] != true
+                            } else {
+                                onOpenManga(entry.id)
+                            }
+                        },
                         onContinue = continueChapter?.takeIf { settings.showContinueButtons }?.let { chapter ->
                             { onOpenReader(chapter.toReaderRequest(entry, chapters)) }
                         },
@@ -2019,7 +2163,18 @@ private fun LibraryHome(
                         entry = entry,
                         chapterCount = chapters.size,
                         unreadCount = chapters.count { !it.read }.takeIf { settings.showUnreadBadges } ?: 0,
-                        onClick = { onOpenManga(entry.id) },
+                        selected = selectedMangaIds[entry.id] == true,
+                        onToggleSelected = {
+                            selectedMangaIds[entry.id] = selectedMangaIds[entry.id] != true
+                            bulkMessage = null
+                        },
+                        onClick = {
+                            if (selectedMangaIds.any { it.value }) {
+                                selectedMangaIds[entry.id] = selectedMangaIds[entry.id] != true
+                            } else {
+                                onOpenManga(entry.id)
+                            }
+                        },
                         onContinue = continueChapter?.takeIf { settings.showContinueButtons }?.let { chapter ->
                             { onOpenReader(chapter.toReaderRequest(entry, chapters)) }
                         },
@@ -2035,6 +2190,8 @@ private fun LibraryMangaListItem(
     entry: ChimahonMangaEntry,
     chapterCount: Int,
     unreadCount: Int,
+    selected: Boolean,
+    onToggleSelected: () -> Unit,
     onClick: () -> Unit,
     onContinue: (() -> Unit)?,
 ) {
@@ -2092,6 +2249,12 @@ private fun LibraryMangaListItem(
                 )
             }
         }
+        ChapterQuickAction(
+            icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+            contentDescription = if (selected) "Deselect manga" else "Select manga",
+            active = selected,
+            onClick = onToggleSelected,
+        )
         onContinue?.let {
             ChapterQuickAction(
                 icon = UiIcon.Play,
@@ -2238,6 +2401,8 @@ private fun LibraryMangaCard(
     entry: ChimahonMangaEntry,
     chapterCount: Int,
     unreadCount: Int,
+    selected: Boolean,
+    onToggleSelected: () -> Unit,
     onClick: () -> Unit,
     onContinue: (() -> Unit)?,
 ) {
@@ -2250,20 +2415,31 @@ private fun LibraryMangaCard(
             manga = entry,
             topStartLabel = unreadCount.takeIf { it > 0 }?.let { "$it unread" },
             showStatus = false,
-            showLibraryBadge = false,
+            showLibraryBadge = selected,
             bottomEndAction = onContinue,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.68f),
         )
-        Label(
-            text = entry.title,
-            color = ChimahonPalette.onSurface,
-            size = 13,
-            weight = FontWeight.SemiBold,
-            maxLines = 2,
+        Row(
             modifier = Modifier.padding(top = 7.dp),
-        )
+            verticalAlignment = Alignment.Top,
+        ) {
+            Label(
+                text = entry.title,
+                color = ChimahonPalette.onSurface,
+                size = 13,
+                weight = FontWeight.SemiBold,
+                maxLines = 2,
+                modifier = Modifier.weight(1f),
+            )
+            ChapterQuickAction(
+                icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+                contentDescription = if (selected) "Deselect manga" else "Select manga",
+                active = selected,
+                onClick = onToggleSelected,
+            )
+        }
         Label(
             text = if (chapterCount > 0) "$chapterCount chapters" else entry.author ?: "Unknown author",
             color = ChimahonPalette.secondaryText,
@@ -2961,6 +3137,7 @@ private fun BrowseHome(
     onOpenSource: (Long, ChimahonSourceBrowseMode) -> Unit,
     onAddRemoteMangaToLibrary: suspend (ChimahonRemoteMangaDetail) -> Long,
     onSetMangaFavorite: suspend (Long, Boolean) -> Unit,
+    browseSettings: ChimahonBrowseSettings,
     onAddExtensionRepo: suspend (String) -> ChimahonExtensionRepoEntry,
     onDeleteExtensionRepo: suspend (String) -> Unit,
     onLoadExtensionRepoCatalog: suspend (ChimahonExtensionRepoEntry) -> ChimahonExtensionRepoCatalog,
@@ -2977,6 +3154,7 @@ private fun BrowseHome(
             BrowseSection.Sources -> SourcesSection(
                 sources = snapshot.sources,
                 query = query,
+                settings = browseSettings,
                 onOpenSource = onOpenSource,
                 onInstallExtension = { onSectionChange(BrowseSection.Extensions) },
             )
@@ -2991,6 +3169,7 @@ private fun BrowseHome(
                 snapshot = snapshot,
                 query = query,
                 filtersVisible = filtersVisible,
+                browseSettings = browseSettings,
                 repoInputRequestKey = extensionRepoRequestKey,
                 onAddExtensionRepo = onAddExtensionRepo,
                 onDeleteExtensionRepo = onDeleteExtensionRepo,
@@ -3059,13 +3238,17 @@ private fun BrowseTabs(
 private fun SourcesSection(
     sources: List<ChimahonSourceEntry>,
     query: String,
+    settings: ChimahonBrowseSettings,
     onOpenSource: (Long, ChimahonSourceBrowseMode) -> Unit,
     onInstallExtension: () -> Unit,
 ) {
     val filteredSources = sources.filter {
-        query.isBlank() ||
-            it.name.contains(query, ignoreCase = true) ||
-            it.language.contains(query, ignoreCase = true)
+        (settings.enabledLanguages.isEmpty() || it.language.sourceLanguageCode() in settings.enabledLanguages) &&
+            (
+                query.isBlank() ||
+                    it.name.contains(query, ignoreCase = true) ||
+                    it.language.contains(query, ignoreCase = true)
+                )
     }
     if (sources.isEmpty()) {
         EmptyMobileState(
@@ -3086,30 +3269,49 @@ private fun SourcesSection(
         )
         return
     }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 4.dp),
-    ) {
-        filteredSources.groupBy { it.language.ifBlank { "multi" }.uppercase() }.forEach { (language, group) ->
-            item {
-                Label(
-                    text = language,
-                    color = ChimahonPalette.secondaryText,
-                    size = 12,
-                    weight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(ChimahonPalette.background)
-                        .padding(horizontal = 16.dp, vertical = 9.dp),
-                )
+    val sourceGroups = filteredSources.sourceGroups(settings.groupSourcesByLanguage)
+    if (settings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.Grid) {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(150.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            sourceGroups.forEach { (language, group) ->
+                if (language != null) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        ListGroupHeader(language)
+                    }
+                }
+                items(group, key = { it.id }) { source ->
+                    SourceGridCard(
+                        source = source,
+                        showLanguage = settings.showSourceLanguage,
+                        onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
+                        onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
+                    )
+                }
             }
-            items(group, key = { it.id }) { source ->
-                SourceListItem(
-                    source = source,
-                    onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
-                    onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
-                )
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 4.dp),
+        ) {
+            sourceGroups.forEach { (language, group) ->
+                if (language != null) {
+                    item { ListGroupHeader(language) }
+                }
+                items(group, key = { it.id }) { source ->
+                    SourceListItem(
+                        source = source,
+                        compact = settings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.CompactList,
+                        showLanguage = settings.showSourceLanguage,
+                        onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
+                        onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
+                    )
+                }
             }
         }
     }
@@ -3118,6 +3320,8 @@ private fun SourcesSection(
 @Composable
 private fun SourceListItem(
     source: ChimahonSourceEntry,
+    compact: Boolean,
+    showLanguage: Boolean,
     onClick: () -> Unit,
     onClickLatest: () -> Unit,
 ) {
@@ -3126,12 +3330,17 @@ private fun SourceListItem(
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
             .clickable(onClick = onClick)
-            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            .padding(
+                start = 16.dp,
+                end = 8.dp,
+                top = if (compact) 7.dp else 10.dp,
+                bottom = if (compact) 7.dp else 10.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
+                .size(if (compact) 34.dp else 42.dp)
                 .clip(CircleShape)
                 .background(coverColor(source.id, source.name).copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center,
@@ -3139,7 +3348,7 @@ private fun SourceListItem(
             Label(
                 source.name.firstOrNull()?.uppercase() ?: "S",
                 coverColor(source.id, source.name),
-                15,
+                if (compact) 12 else 15,
                 weight = FontWeight.Bold,
                 maxLines = 1,
             )
@@ -3150,13 +3359,15 @@ private fun SourceListItem(
                 .padding(horizontal = 14.dp),
         ) {
             Label(source.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
-            Label(
-                source.language.ifBlank { "multi" }.uppercase(),
-                ChimahonPalette.secondaryText,
-                11,
-                maxLines = 1,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            if (showLanguage || !compact) {
+                Label(
+                    source.language.ifBlank { "multi" }.uppercase(),
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
         if (source.supportsLatest) {
             Box(
@@ -3172,11 +3383,76 @@ private fun SourceListItem(
 }
 
 @Composable
+private fun SourceGridCard(
+    source: ChimahonSourceEntry,
+    showLanguage: Boolean,
+    onClick: () -> Unit,
+    onClickLatest: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(coverColor(source.id, source.name).copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Label(
+                    source.name.firstOrNull()?.uppercase() ?: "S",
+                    coverColor(source.id, source.name),
+                    14,
+                    weight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+            }
+            if (source.supportsLatest) {
+                Box(
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(ChimahonPalette.primaryContainer)
+                        .clickable(onClick = onClickLatest)
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                ) {
+                    Label("Latest", ChimahonPalette.primary, 10, weight = FontWeight.SemiBold, maxLines = 1)
+                }
+            }
+        }
+        Label(
+            source.name,
+            ChimahonPalette.onSurface,
+            13,
+            weight = FontWeight.SemiBold,
+            maxLines = 2,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+        if (showLanguage) {
+            Label(
+                source.language.ifBlank { "multi" }.uppercase(),
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun SourceDetailHome(
     snapshot: ChimahonSnapshot,
     sourceId: Long,
     initialMode: ChimahonSourceBrowseMode,
     searchKey: Int,
+    browseSettings: ChimahonBrowseSettings,
     onRefresh: () -> Unit,
     onLoadSourcePreview: suspend (Long, ChimahonSourceBrowseMode, String, Int) -> ChimahonSourcePreview,
     onOpenRemoteManga: (ChimahonRemoteMangaEntry) -> Unit,
@@ -3309,10 +3585,12 @@ private fun SourceDetailHome(
                             gridState,
                             preview.preview.entries.size,
                             preview.preview.hasNextPage,
+                            browseSettings.autoLoadMore,
                             loadingMore,
                             loadMoreError,
                         ) {
                             if (
+                                !browseSettings.autoLoadMore ||
                                 !preview.preview.hasNextPage ||
                                 loadingMore ||
                                 loadMoreError != null
@@ -3354,7 +3632,7 @@ private fun SourceDetailHome(
                             }
                             if (
                                 preview.preview.hasNextPage &&
-                                (loadingMore || loadMoreError != null)
+                                (!browseSettings.autoLoadMore || loadingMore || loadMoreError != null)
                             ) {
                                 item(span = { GridItemSpan(maxLineSpan) }) {
                                     Box(
@@ -3372,11 +3650,15 @@ private fun SourceDetailHome(
                                             )
                                         } else {
                                             TextButtonLike(
-                                                text = "Retry",
+                                                text = if (loadMoreError == null) "Load more" else "Retry",
                                                 onClick = {
-                                                    loadMoreError = null
-                                                    loadingMore = true
-                                                    pageRequestKey++
+                                                    if (loadMoreError == null) {
+                                                        pageNumber++
+                                                    } else {
+                                                        loadMoreError = null
+                                                        loadingMore = true
+                                                        pageRequestKey++
+                                                    }
                                                 },
                                             )
                                         }
@@ -5523,6 +5805,12 @@ private fun ChimahonBrowseSourceDisplayMode.browseTitle(): String = when (this) 
     ChimahonBrowseSourceDisplayMode.Grid -> "Grid"
 }
 
+private fun ChimahonConnectionOpeningPreference.connectionTitle(): String = when (this) {
+    ChimahonConnectionOpeningPreference.InApp -> "In app"
+    ChimahonConnectionOpeningPreference.ExternalBrowser -> "External browser"
+    ChimahonConnectionOpeningPreference.AskEveryTime -> "Ask every time"
+}
+
 private fun ChimahonSecureScreenMode.securityTitle(): String = when (this) {
     ChimahonSecureScreenMode.Always -> "Always"
     ChimahonSecureScreenMode.Incognito -> "Incognito"
@@ -5545,6 +5833,91 @@ private fun String.toLockAfterMinutes(): Int = when (this) {
     "15 minutes" -> 15
     "30 minutes" -> 30
     else -> removeSuffix(" minutes").toIntOrNull()?.coerceAtLeast(0) ?: 0
+}
+
+private fun Int.toTrackingIntervalTitle(): String = when (this) {
+    0 -> "Off"
+    6 -> "6 hours"
+    12 -> "12 hours"
+    24 -> "24 hours"
+    48 -> "48 hours"
+    else -> "$this hours"
+}
+
+private fun String.toTrackingIntervalHours(): Int = when (this) {
+    "Off" -> 0
+    "6 hours" -> 6
+    "12 hours" -> 12
+    "24 hours" -> 24
+    "48 hours" -> 48
+    else -> removeSuffix(" hours").toIntOrNull()?.coerceAtLeast(0) ?: 24
+}
+
+private fun commonReaderLanguages(): List<String> {
+    return listOf("English", "Japanese", "Korean", "Chinese", "Spanish", "French", "German", "Arabic")
+}
+
+private fun String.sourceLanguageCode(): String = ifBlank { "multi" }.uppercase()
+
+private fun ChimahonSnapshot.sourceLanguageOptions(): List<String> {
+    val sourceLanguages = sources.map { it.language.sourceLanguageCode() }
+    val installedLanguages = installedExtensions
+        .mapNotNull { extension ->
+            extension.id
+                .substringAfterLast('.', missingDelimiterValue = "")
+                .takeIf { it.length in 2..5 }
+                ?.uppercase()
+        }
+    return (sourceLanguages + installedLanguages + listOf("EN", "JA", "KO", "ZH", "ES", "FR", "DE", "AR", "MULTI"))
+        .distinct()
+        .sorted()
+}
+
+private fun List<String>.toggled(value: String): List<String> {
+    return if (value in this) {
+        filterNot { it == value }
+    } else {
+        (this + value).distinct()
+    }
+}
+
+private fun List<ChimahonSourceEntry>.sourceGroups(
+    groupByLanguage: Boolean,
+): List<Pair<String?, List<ChimahonSourceEntry>>> {
+    val sorted = sortedWith(
+        compareBy<ChimahonSourceEntry> { it.language.ifBlank { "multi" }.lowercase() }
+            .thenBy { it.name.lowercase() },
+    )
+    if (!groupByLanguage) return listOf(null to sorted)
+    return sorted
+        .groupBy { it.language.ifBlank { "multi" }.uppercase() }
+        .map { (language, entries) -> language to entries }
+}
+
+private fun List<ChimahonRepoExtensionEntry>.extensionGroups(
+    groupByLanguage: Boolean,
+): List<Pair<String?, List<ChimahonRepoExtensionEntry>>> {
+    val sorted = sortedWith(
+        compareBy<ChimahonRepoExtensionEntry> { it.language.ifBlank { "multi" }.lowercase() }
+            .thenBy { it.name.lowercase() },
+    )
+    if (!groupByLanguage) return listOf(null to sorted)
+    return sorted
+        .groupBy { it.language.ifBlank { "multi" }.uppercase() }
+        .map { (language, entries) -> language to entries }
+}
+
+private fun ChimahonLibraryBulkActionResult.libraryBulkSummary(action: String): String {
+    return buildString {
+        append(mangaCount).append(" manga ")
+        append(action)
+        if (chapterCount > 0) {
+            append(" with ").append(chapterCount).append(" chapter(s) updated")
+        }
+        if (categoryCount > 0) {
+            append(" across ").append(categoryCount).append(" categorization change(s)")
+        }
+    }
 }
 
 @Composable
@@ -6205,6 +6578,7 @@ private fun ExtensionsSection(
     snapshot: ChimahonSnapshot,
     query: String,
     filtersVisible: Boolean,
+    browseSettings: ChimahonBrowseSettings,
     repoInputRequestKey: Int,
     onAddExtensionRepo: suspend (String) -> ChimahonExtensionRepoEntry,
     onDeleteExtensionRepo: suspend (String) -> Unit,
@@ -6467,6 +6841,11 @@ private fun ExtensionsSection(
                             extension.id.contains(query, ignoreCase = true) ||
                             extension.language.contains(query, ignoreCase = true)
                         ) &&
+                        (
+                            browseSettings.enabledLanguages.isEmpty() ||
+                                extension.language.sourceLanguageCode() in browseSettings.enabledLanguages
+                            ) &&
+                        (browseSettings.showNsfwSources || !extension.isNsfw) &&
                         when (selectedFilter) {
                             ExtensionFilter.All,
                             ExtensionFilter.Available,
@@ -6496,14 +6875,17 @@ private fun ExtensionsSection(
                             }
                         }
                         filteredExtensions
-                            .groupBy { it.language.ifBlank { "multi" }.uppercase() }
+                            .extensionGroups(browseSettings.groupSourcesByLanguage)
                             .forEach { (language, extensions) ->
-                                item {
-                                    ListGroupHeader(language)
+                                if (language != null) {
+                                    item {
+                                        ListGroupHeader(language)
+                                    }
                                 }
                                 items(extensions, key = { it.id }) { extension ->
                                     RepoExtensionListItem(
                                         extension = extension,
+                                        showLanguage = browseSettings.showSourceLanguage,
                                         installed = extension.id in installedExtensionIds,
                                         installing = installingExtensionId == extension.id,
                                         onInstall = {
@@ -6899,6 +7281,7 @@ private fun InstalledExtensionListItem(
 @Composable
 private fun RepoExtensionListItem(
     extension: ChimahonRepoExtensionEntry,
+    showLanguage: Boolean,
     installed: Boolean,
     installing: Boolean,
     onInstall: () -> Unit,
@@ -6907,8 +7290,10 @@ private fun RepoExtensionListItem(
         marker = extension.packageType.marker,
         title = extension.name,
         subtitle = buildString {
-            append(extension.language.ifBlank { "multi" }.uppercase())
-            append("  \u00b7  ")
+            if (showLanguage) {
+                append(extension.language.ifBlank { "multi" }.uppercase())
+                append("  \u00b7  ")
+            }
             append(extension.version)
             append("  \u00b7  ")
             append(extension.sourceCount)
@@ -8623,6 +9008,9 @@ private fun MoreHome(
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
     onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
     onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onTrackingSettingsChange: (ChimahonTrackingSettings) -> Unit,
+    onConnectionSettingsChange: (ChimahonConnectionSettings) -> Unit,
+    onDictionarySettingsChange: (ChimahonDictionarySettings) -> Unit,
     onSecuritySettingsChange: (ChimahonSecuritySettings) -> Unit,
     onOpenExternalUrl: (String) -> Boolean,
     onDownloadedOnlyModeChange: (Boolean) -> Unit,
@@ -8663,6 +9051,9 @@ private fun MoreHome(
             onReaderSettingsChange = onReaderSettingsChange,
             onDownloadPreferencesChange = onDownloadPreferencesChange,
             onBrowseSettingsChange = onBrowseSettingsChange,
+            onTrackingSettingsChange = onTrackingSettingsChange,
+            onConnectionSettingsChange = onConnectionSettingsChange,
+            onDictionarySettingsChange = onDictionarySettingsChange,
             onSecuritySettingsChange = onSecuritySettingsChange,
             onOpenExternalUrl = onOpenExternalUrl,
             onDownloadedOnlyModeChange = onDownloadedOnlyModeChange,
@@ -8846,6 +9237,9 @@ private fun MoreDetailPage(
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
     onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
     onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onTrackingSettingsChange: (ChimahonTrackingSettings) -> Unit,
+    onConnectionSettingsChange: (ChimahonConnectionSettings) -> Unit,
+    onDictionarySettingsChange: (ChimahonDictionarySettings) -> Unit,
     onSecuritySettingsChange: (ChimahonSecuritySettings) -> Unit,
     onOpenExternalUrl: (String) -> Boolean,
     onDownloadedOnlyModeChange: (Boolean) -> Unit,
@@ -9633,6 +10027,54 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item { ListGroupHeader("Global update") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Update interval",
+                            options = listOf("Off", "6 hours", "12 hours", "24 hours", "48 hours"),
+                            selected = settings.library.autoUpdateIntervalHours.toTrackingIntervalTitle(),
+                            onSelect = { selected ->
+                                onLibrarySettingsChange(
+                                    settings.library.copy(
+                                        autoUpdateIntervalHours = selected.toTrackingIntervalHours(),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Update only on Wi-Fi",
+                            "Run automatic library updates only on unmetered networks",
+                            UiIcon.Web,
+                            checked = settings.library.updateOnlyOnWifi,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(updateOnlyOnWifi = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show update count",
+                            "Show pending chapter counts in library and update surfaces",
+                            UiIcon.Updates,
+                            checked = settings.library.showUpdateCount,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(showUpdateCount = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Update notifications",
+                            "Notify when automatic library updates find new chapters",
+                            UiIcon.Updates,
+                            checked = settings.library.updateNotificationsEnabled,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(updateNotificationsEnabled = it))
+                            },
+                        )
+                    }
                 }
                 MorePage.ReaderSettings -> {
                     item { ListGroupHeader("Reading") }
@@ -10091,25 +10533,58 @@ private fun MoreDetailPage(
                 MorePage.TrackingSettings -> {
                     item { ListGroupHeader("Reading progress") }
                     item {
-                        ExtensionStatusRow(
-                            title = "Local history",
-                            subtitle = if (incognitoMode) {
-                                "Paused while Incognito mode is enabled."
-                            } else {
-                                "Reader progress and chapter history are saved in the shared database."
+                        PreferenceSwitchRow(
+                            "Auto-sync tracking",
+                            "Queue tracking sync work when reader progress changes",
+                            UiIcon.Refresh,
+                            checked = settings.tracking.autoSyncEnabled,
+                            onCheckedChange = {
+                                onTrackingSettingsChange(settings.tracking.copy(autoSyncEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Update interval",
+                            options = listOf("Off", "6 hours", "12 hours", "24 hours", "48 hours"),
+                            selected = settings.tracking.updateIntervalHours.toTrackingIntervalTitle(),
+                            onSelect = { selected ->
+                                onTrackingSettingsChange(
+                                    settings.tracking.copy(updateIntervalHours = selected.toTrackingIntervalHours()),
+                                )
                             },
                         )
                     }
                     item { ListGroupHeader("Services") }
                     item {
                         ExtensionStatusRow(
-                            title = "Tracking accounts",
-                            subtitle = "Account authentication is still platform-specific; shared tracking adapters are the next backend step.",
+                            title = if (incognitoMode) "Tracking paused" else "Local tracking data",
+                            subtitle = if (incognitoMode) {
+                                "Incognito mode is enabled, so reader progress is not written."
+                            } else {
+                                "${snapshot.history.size} history item(s) and ${snapshot.chaptersByMangaId.values.sumOf { chapters -> chapters.count { it.read } }} read chapter(s) in the shared database."
+                            },
                         )
                     }
                 }
                 MorePage.ConnectionsSettings -> {
                     item { ListGroupHeader("External services") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Open links",
+                            options = ChimahonConnectionOpeningPreference.entries.map { it.connectionTitle() },
+                            selected = settings.connections.openingPreference.connectionTitle(),
+                            onSelect = { selected ->
+                                ChimahonConnectionOpeningPreference.entries
+                                    .firstOrNull { it.connectionTitle() == selected }
+                                    ?.let {
+                                        onConnectionSettingsChange(
+                                            settings.connections.copy(openingPreference = it),
+                                        )
+                                    }
+                            },
+                        )
+                    }
                     item {
                         ExtensionStatusRow(
                             title = "Source connections",
@@ -10118,8 +10593,8 @@ private fun MoreDetailPage(
                     }
                     item {
                         ExtensionStatusRow(
-                            title = "Account connections",
-                            subtitle = "OAuth sign-in requires platform callbacks and is not configured on ${snapshot.runtime.platformName}.",
+                            title = "External opening preference",
+                            subtitle = "Current mode: ${settings.connections.openingPreference.connectionTitle()} on ${snapshot.runtime.platformName}.",
                         )
                     }
                 }
@@ -10174,6 +10649,21 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        SettingsMultiChoiceRow(
+                            title = "Source languages",
+                            options = snapshot.sourceLanguageOptions(),
+                            selected = settings.browse.enabledLanguages,
+                            emptyLabel = "All languages",
+                            onToggle = { language ->
+                                onBrowseSettingsChange(
+                                    settings.browse.copy(
+                                        enabledLanguages = settings.browse.enabledLanguages.toggled(language),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             "Group by language",
                             "Group extension sources by language",
@@ -10218,15 +10708,40 @@ private fun MoreDetailPage(
                 MorePage.DictionarySettings -> {
                     item { ListGroupHeader("Reader tools") }
                     item {
-                        ExtensionStatusRow(
+                        PreferenceSwitchRow(
                             title = "Dictionary lookup",
-                            subtitle = "The shared reader UI is ready for selection actions; dictionary packages and lookup engines remain to be ported.",
+                            subtitle = "Enable shared reader lookup actions where a dictionary engine is present",
+                            icon = UiIcon.Search,
+                            checked = settings.dictionary.enabled,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(enabled = it))
+                            },
                         )
                     }
                     item {
-                        ExtensionStatusRow(
+                        SettingsMultiChoiceRow(
+                            title = "Lookup languages",
+                            options = commonReaderLanguages(),
+                            selected = settings.dictionary.enabledLanguages,
+                            emptyLabel = "All languages",
+                            onToggle = { language ->
+                                onDictionarySettingsChange(
+                                    settings.dictionary.copy(
+                                        enabledLanguages = settings.dictionary.enabledLanguages.toggled(language),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
                             title = "OCR",
-                            subtitle = "OCR is optional on Android and needs native desktop/iOS engines before it can be enabled here.",
+                            subtitle = "Allow image text extraction on platforms with native OCR engines",
+                            icon = UiIcon.Search,
+                            checked = settings.dictionary.ocrEnabled,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(ocrEnabled = it))
+                            },
                         )
                     }
                 }
@@ -10839,6 +11354,57 @@ private fun SettingsChoiceRow(
             onSelect = onSelect,
             modifier = Modifier.padding(top = 8.dp),
         )
+    }
+}
+
+@Composable
+private fun SettingsMultiChoiceRow(
+    title: String,
+    options: List<String>,
+    selected: List<String>,
+    emptyLabel: String,
+    onToggle: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Label(
+            title,
+            ChimahonPalette.onSurface,
+            14,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        Label(
+            if (selected.isEmpty()) emptyLabel else selected.joinToString(),
+            ChimahonPalette.secondaryText,
+            11,
+            maxLines = 2,
+            modifier = Modifier.padding(top = 3.dp),
+        )
+        LazyRow(
+            modifier = Modifier.padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            items(options, key = { it }) { option ->
+                val active = option in selected
+                Label(
+                    text = option,
+                    color = if (active) Color.White else ChimahonPalette.secondaryText,
+                    size = 11,
+                    weight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (active) ChimahonPalette.primary else ChimahonPalette.surfaceVariant)
+                        .clickable { onToggle(option) }
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                )
+            }
+        }
     }
 }
 
