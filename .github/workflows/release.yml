@@ -392,20 +392,35 @@ jobs:
             throw "Windows app image did not contain a Chimahon.exe launcher."
           }
 
-          $runtimeJava = Get-ChildItem `
+          $runtimeDir = Get-ChildItem `
             -Path $appImageRoot `
-            -Filter "java.exe" `
-            -File `
+            -Directory `
             -Recurse |
-            Where-Object { $_.FullName -match '\\runtime\\bin\\java\.exe$' } |
+            Where-Object { $_.Name -eq "runtime" } |
             Select-Object -First 1
 
-          if (-not $runtimeJava) {
-            throw "Windows app image did not contain a bundled Java runtime."
+          if (-not $runtimeDir) {
+            throw "Windows app image did not contain a bundled runtime directory."
+          }
+
+          $runtimeMarker = Get-ChildItem `
+            -Path $runtimeDir.FullName `
+            -File `
+            -Recurse |
+            Where-Object {
+              $_.Name -eq "release" -or
+              $_.FullName -match '\\bin\\server\\jvm\.dll$' -or
+              $_.FullName -match '\\bin\\jvm\.dll$'
+            } |
+            Select-Object -First 1
+
+          if (-not $runtimeMarker) {
+            throw "Windows bundled runtime did not contain expected JVM metadata or binaries."
           }
 
           Write-Host "Found Windows launcher: $($launcher.FullName)"
-          Write-Host "Found bundled runtime: $($runtimeJava.FullName)"
+          Write-Host "Found bundled runtime: $($runtimeDir.FullName)"
+          Write-Host "Found runtime marker: $($runtimeMarker.FullName)"
 
       - name: Install Linux packaging tools
         if: runner.os == 'Linux'
