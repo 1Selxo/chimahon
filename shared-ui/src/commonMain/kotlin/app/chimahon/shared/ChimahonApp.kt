@@ -1185,6 +1185,7 @@ fun ChimahonApp(
                                         onSetChapterRead = onSetChapterRead,
                                         onSetChapterBookmark = onSetChapterBookmark,
                                         onSetMangasChaptersRead = onSetMangasChaptersRead,
+                                        onLoadDownloadSnapshot = onLoadDownloadSnapshot,
                                         onLoadDownloadQueue = onLoadDownloadQueue,
                                         onPauseDownloadQueue = onPauseDownloadQueue,
                                         onResumeDownloadQueue = onResumeDownloadQueue,
@@ -1804,6 +1805,7 @@ private fun HomeContent(
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
     onSetMangasChaptersRead: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
+    onLoadDownloadSnapshot: suspend () -> ChimahonDownloadSnapshot,
     onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData,
@@ -1847,6 +1849,7 @@ private fun HomeContent(
             onOpenReader = onOpenReader,
             onSetMangasFavorite = onSetMangasFavorite,
             onSetMangasChaptersRead = onSetMangasChaptersRead,
+            onLoadDownloadSnapshot = onLoadDownloadSnapshot,
             onRefresh = onRepoSaved,
             settings = settings.library,
             onSettingsChange = onLibrarySettingsChange,
@@ -1951,6 +1954,7 @@ private fun LibraryHome(
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onSetMangasFavorite: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
     onSetMangasChaptersRead: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
+    onLoadDownloadSnapshot: suspend () -> ChimahonDownloadSnapshot,
     onRefresh: () -> Unit,
     settings: ChimahonLibrarySettings,
     onSettingsChange: (ChimahonLibrarySettings) -> Unit,
@@ -1986,6 +1990,7 @@ private fun LibraryHome(
         mutableStateOf(settings.displayMode.toUiLibraryDisplayMode())
     }
     val selectedMangaIds = remember { mutableStateMapOf<Long, Boolean>() }
+    var downloadSnapshot by remember { mutableStateOf<ChimahonDownloadSnapshot?>(null) }
     var bulkMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId } ?: categories.first()
@@ -2031,6 +2036,9 @@ private fun LibraryHome(
         selectedMangaIds.keys
             .filterNot { mangaId -> selectedLibrary.any { it.id == mangaId } }
             .forEach(selectedMangaIds::remove)
+    }
+    LaunchedEffect(library.map { it.id }.joinToString()) {
+        downloadSnapshot = runCatching { onLoadDownloadSnapshot() }.getOrNull()
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -2190,10 +2198,16 @@ private fun LibraryHome(
                 items(selectedLibrary, key = { it.id }) { entry ->
                     val chapters = snapshot.chaptersByMangaId[entry.id].orEmpty()
                     val continueChapter = chapters.nextReadableChapter()
+                    val downloadedCount = chapters.count { chapter ->
+                        downloadSnapshot?.statusForChapter(chapter.id)?.status == ChimahonDownloadState.Downloaded
+                    }
                     LibraryMangaListItem(
                         entry = entry,
                         chapterCount = chapters.size,
                         unreadCount = chapters.count { !it.read }.takeIf { settings.showUnreadBadges } ?: 0,
+                        downloadedCount = downloadedCount.takeIf { settings.showDownloadedBadges } ?: 0,
+                        sourceLanguage = snapshot.sourceLanguage(entry.sourceId)
+                            .takeIf { settings.showLanguageBadges },
                         selected = selectedMangaIds[entry.id] == true,
                         onToggleSelected = {
                             selectedMangaIds[entry.id] = selectedMangaIds[entry.id] != true
@@ -2229,10 +2243,16 @@ private fun LibraryHome(
                 items(selectedLibrary, key = { it.id }) { entry ->
                     val chapters = snapshot.chaptersByMangaId[entry.id].orEmpty()
                     val continueChapter = chapters.nextReadableChapter()
+                    val downloadedCount = chapters.count { chapter ->
+                        downloadSnapshot?.statusForChapter(chapter.id)?.status == ChimahonDownloadState.Downloaded
+                    }
                     LibraryMangaCard(
                         entry = entry,
                         chapterCount = chapters.size,
                         unreadCount = chapters.count { !it.read }.takeIf { settings.showUnreadBadges } ?: 0,
+                        downloadedCount = downloadedCount.takeIf { settings.showDownloadedBadges } ?: 0,
+                        sourceLanguage = snapshot.sourceLanguage(entry.sourceId)
+                            .takeIf { settings.showLanguageBadges },
                         selected = selectedMangaIds[entry.id] == true,
                         onToggleSelected = {
                             selectedMangaIds[entry.id] = selectedMangaIds[entry.id] != true
@@ -2260,6 +2280,8 @@ private fun LibraryMangaListItem(
     entry: ChimahonMangaEntry,
     chapterCount: Int,
     unreadCount: Int,
+    downloadedCount: Int,
+    sourceLanguage: String?,
     selected: Boolean,
     onToggleSelected: () -> Unit,
     onClick: () -> Unit,
@@ -2302,6 +2324,20 @@ private fun LibraryMangaListItem(
                 maxLines = 1,
                 modifier = Modifier.padding(top = 2.dp),
             )
+            if (downloadedCount > 0 || !sourceLanguage.isNullOrBlank()) {
+                Row(
+                    modifier = Modifier.padding(top = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (downloadedCount > 0) {
+                        LibraryInlineBadge("$downloadedCount downloaded", UiIcon.Download)
+                    }
+                    sourceLanguage?.takeIf { it.isNotBlank() }?.let {
+                        LibraryInlineBadge(it, UiIcon.Web)
+                    }
+                }
+            }
         }
         if (unreadCount > 0) {
             Box(
@@ -2362,6 +2398,29 @@ private fun LibrarySummaryRow(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun LibraryInlineBadge(
+    label: String,
+    icon: UiIcon,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(ChimahonPalette.surfaceVariant)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = label,
+            tint = ChimahonPalette.primary,
+            modifier = Modifier.size(12.dp),
+        )
+        Label(label, ChimahonPalette.secondaryText, 9, weight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
@@ -2471,6 +2530,8 @@ private fun LibraryMangaCard(
     entry: ChimahonMangaEntry,
     chapterCount: Int,
     unreadCount: Int,
+    downloadedCount: Int,
+    sourceLanguage: String?,
     selected: Boolean,
     onToggleSelected: () -> Unit,
     onClick: () -> Unit,
@@ -2483,7 +2544,11 @@ private fun LibraryMangaCard(
     ) {
         MangaCoverTile(
             manga = entry,
-            topStartLabel = unreadCount.takeIf { it > 0 }?.let { "$it unread" },
+            topStartLabels = listOfNotNull(
+                unreadCount.takeIf { it > 0 }?.let { "$it unread" },
+                downloadedCount.takeIf { it > 0 }?.let { "$it down" },
+                sourceLanguage?.takeIf { it.isNotBlank() },
+            ),
             showStatus = false,
             showLibraryBadge = selected,
             bottomEndAction = onContinue,
@@ -9509,10 +9574,16 @@ private fun MangaCoverTile(
     manga: ChimahonMangaEntry,
     modifier: Modifier = Modifier,
     topStartLabel: String? = null,
+    topStartLabels: List<String> = emptyList(),
     showStatus: Boolean = true,
     showLibraryBadge: Boolean = true,
     bottomEndAction: (() -> Unit)? = null,
 ) {
+    val coverLabels = if (topStartLabels.isNotEmpty()) {
+        topStartLabels
+    } else {
+        topStartLabel?.let(::listOf).orEmpty()
+    }
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
@@ -9524,16 +9595,23 @@ private fun MangaCoverTile(
             fallbackColor = coverColor(manga.id, manga.title),
             modifier = Modifier.fillMaxSize(),
         )
-        if (topStartLabel != null) {
-            Box(
+        if (coverLabels.isNotEmpty()) {
+            Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.Black.copy(alpha = 0.44f))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Label(topStartLabel, Color.White, 10, weight = FontWeight.SemiBold, maxLines = 1)
+                coverLabels.forEach { label ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.Black.copy(alpha = 0.48f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Label(label, Color.White, 10, weight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                }
             }
         }
         if (manga.favorite && showLibraryBadge) {
@@ -13796,6 +13874,10 @@ private fun ChimahonSnapshot.detailTitle(mangaId: Long?): String {
 
 private fun ChimahonSnapshot.sourceName(sourceId: Long): String {
     return sources.firstOrNull { it.id == sourceId }?.name ?: "Source $sourceId"
+}
+
+private fun ChimahonSnapshot.sourceLanguage(sourceId: Long): String {
+    return sources.firstOrNull { it.id == sourceId }?.language?.sourceLanguageCode() ?: "MULTI"
 }
 
 private fun ChimahonSnapshot.libraryCategoryTabs(): List<ChimahonLibraryCategory> {
