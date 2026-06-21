@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.KeyShortcut
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
@@ -31,11 +30,15 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.LocalWindow
-import androidx.compose.ui.window.MenuBar
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
+import java.awt.Toolkit
+import java.awt.event.KeyEvent as AwtKeyEvent
+import javax.swing.JMenu
+import javax.swing.JMenuBar
+import javax.swing.JMenuItem
+import javax.swing.KeyStroke
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -61,16 +64,16 @@ fun main() {
             state = WindowState(width = 1180.dp, height = 740.dp),
             title = "Chimahon",
         ) {
-            val window = LocalWindow.current
             DisposableEffect(window) {
                 DesktopPlatformAffordances.configureWindow(window)
-                onDispose {}
+                window.jMenuBar = createDesktopMenuBar(
+                    onCommand = dispatchDesktopCommand,
+                    onQuit = closeApplication,
+                )
+                onDispose {
+                    window.jMenuBar = null
+                }
             }
-
-            DesktopMenuBar(
-                onCommand = dispatchDesktopCommand,
-                onQuit = closeApplication,
-            )
 
             LaunchedEffect(Unit) {
                 runCatching {
@@ -125,143 +128,94 @@ fun main() {
     }
 }
 
-@Composable
-private fun DesktopMenuBar(
+private fun createDesktopMenuBar(
     onCommand: (ChimahonDesktopCommand) -> Unit,
     onQuit: () -> Unit,
-) {
-    val usesMeta = DesktopPlatformAffordances.menuShortcutUsesMeta
-    fun appShortcut(key: Key): KeyShortcut = KeyShortcut(key, ctrl = !usesMeta, meta = usesMeta)
+): JMenuBar {
+    fun appShortcut(keyCode: Int): KeyStroke =
+        KeyStroke.getKeyStroke(keyCode, Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx)
 
-    MenuBar {
-        Menu("File", mnemonic = 'F') {
-            Item("Open Downloads Folder", onClick = {
-                DesktopPlatformAffordances.openDirectory(DesktopDirectory.Downloads)
-            })
-            Item("Open Data Folder", onClick = {
-                DesktopPlatformAffordances.openDirectory(DesktopDirectory.Files)
-            })
-            Item("Open Cache Folder", onClick = {
-                DesktopPlatformAffordances.openDirectory(DesktopDirectory.Cache)
-            })
-            Separator()
-            Item(
-                "Quit",
-                shortcut = KeyShortcut(Key.Q, ctrl = !usesMeta, meta = usesMeta),
-                onClick = onQuit,
-            )
+    fun item(
+        title: String,
+        shortcut: KeyStroke? = null,
+        action: () -> Unit,
+    ): JMenuItem = JMenuItem(title).apply {
+        accelerator = shortcut
+        addActionListener { action() }
+    }
+
+    fun menu(title: String, mnemonic: Int, build: JMenu.() -> Unit): JMenu =
+        JMenu(title).apply {
+            setMnemonic(mnemonic)
+            build()
         }
-        Menu("Navigate", mnemonic = 'N') {
-            Item(
-                "Back (Esc)",
-                onClick = { onCommand(ChimahonDesktopCommand.Back) },
+
+    return JMenuBar().apply {
+        add(menu("File", AwtKeyEvent.VK_F) {
+            add(item("Open Downloads Folder") { DesktopPlatformAffordances.openDirectory(DesktopDirectory.Downloads) })
+            add(item("Open Data Folder") { DesktopPlatformAffordances.openDirectory(DesktopDirectory.Files) })
+            add(item("Open Cache Folder") { DesktopPlatformAffordances.openDirectory(DesktopDirectory.Cache) })
+            addSeparator()
+            add(item("Quit", appShortcut(AwtKeyEvent.VK_Q), onQuit))
+        })
+        add(menu("Navigate", AwtKeyEvent.VK_N) {
+            add(item("Back") { onCommand(ChimahonDesktopCommand.Back) })
+            addSeparator()
+            add(item("Library", appShortcut(AwtKeyEvent.VK_L)) { onCommand(ChimahonDesktopCommand.Library) })
+            add(item("Updates", appShortcut(AwtKeyEvent.VK_U)) { onCommand(ChimahonDesktopCommand.Updates) })
+            add(item("History", appShortcut(AwtKeyEvent.VK_H)) { onCommand(ChimahonDesktopCommand.History) })
+            add(item("Browse Sources", appShortcut(AwtKeyEvent.VK_B)) { onCommand(ChimahonDesktopCommand.BrowseSources) })
+            add(item("Browse Extensions", appShortcut(AwtKeyEvent.VK_E)) { onCommand(ChimahonDesktopCommand.BrowseExtensions) })
+            add(item("Browse Feed") { onCommand(ChimahonDesktopCommand.BrowseFeed) })
+            add(item("Migrate") { onCommand(ChimahonDesktopCommand.BrowseMigrate) })
+            add(item("More", appShortcut(AwtKeyEvent.VK_M)) { onCommand(ChimahonDesktopCommand.More) })
+            addSeparator()
+            add(item("Settings", appShortcut(AwtKeyEvent.VK_S)) { onCommand(ChimahonDesktopCommand.Settings) })
+            add(item("Download Queue", appShortcut(AwtKeyEvent.VK_D)) { onCommand(ChimahonDesktopCommand.DownloadQueue) })
+        })
+        add(menu("Edit", AwtKeyEvent.VK_E) {
+            add(item("Search", appShortcut(AwtKeyEvent.VK_F)) { onCommand(ChimahonDesktopCommand.Search) })
+            add(
+                item(
+                    "Toggle Filters",
+                    KeyStroke.getKeyStroke(
+                        AwtKeyEvent.VK_F,
+                        Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx or java.awt.event.InputEvent.SHIFT_DOWN_MASK,
+                    ),
+                ) { onCommand(ChimahonDesktopCommand.ToggleFilters) },
             )
-            Separator()
-            Item(
-                "Library",
-                shortcut = appShortcut(Key.L),
-                onClick = { onCommand(ChimahonDesktopCommand.Library) },
-            )
-            Item(
-                "Updates",
-                shortcut = appShortcut(Key.U),
-                onClick = { onCommand(ChimahonDesktopCommand.Updates) },
-            )
-            Item(
-                "History",
-                shortcut = appShortcut(Key.H),
-                onClick = { onCommand(ChimahonDesktopCommand.History) },
-            )
-            Item(
-                "Browse Sources",
-                shortcut = appShortcut(Key.B),
-                onClick = { onCommand(ChimahonDesktopCommand.BrowseSources) },
-            )
-            Item(
-                "Browse Extensions",
-                shortcut = appShortcut(Key.E),
-                onClick = { onCommand(ChimahonDesktopCommand.BrowseExtensions) },
-            )
-            Item(
-                "Browse Feed",
-                onClick = { onCommand(ChimahonDesktopCommand.BrowseFeed) },
-            )
-            Item(
-                "Migrate",
-                onClick = { onCommand(ChimahonDesktopCommand.BrowseMigrate) },
-            )
-            Item(
-                "More",
-                shortcut = appShortcut(Key.M),
-                onClick = { onCommand(ChimahonDesktopCommand.More) },
-            )
-            Separator()
-            Item(
-                "Settings",
-                shortcut = appShortcut(Key.S),
-                onClick = { onCommand(ChimahonDesktopCommand.Settings) },
-            )
-            Item(
-                "Download Queue",
-                shortcut = appShortcut(Key.D),
-                onClick = { onCommand(ChimahonDesktopCommand.DownloadQueue) },
-            )
-        }
-        Menu("Edit", mnemonic = 'E') {
-            Item(
-                "Search",
-                shortcut = appShortcut(Key.F),
-                onClick = { onCommand(ChimahonDesktopCommand.Search) },
-            )
-            Item(
-                "Toggle Filters",
-                shortcut = KeyShortcut(Key.F, ctrl = !usesMeta, meta = usesMeta, shift = true),
-                onClick = { onCommand(ChimahonDesktopCommand.ToggleFilters) },
-            )
-            Item(
-                "Refresh",
-                shortcut = appShortcut(Key.R),
-                onClick = { onCommand(ChimahonDesktopCommand.Refresh) },
-            )
-            Item(
-                "Refresh (F5)",
-                shortcut = KeyShortcut(Key.F5),
-                onClick = { onCommand(ChimahonDesktopCommand.Refresh) },
-            )
-            Separator()
-            Item("Copy Downloads Path", onClick = {
-                DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Downloads)
+            add(item("Refresh", appShortcut(AwtKeyEvent.VK_R)) { onCommand(ChimahonDesktopCommand.Refresh) })
+            add(item("Refresh (F5)", KeyStroke.getKeyStroke(AwtKeyEvent.VK_F5, 0)) {
+                onCommand(ChimahonDesktopCommand.Refresh)
             })
-            Item("Copy Data Path", onClick = {
-                DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Files)
-            })
-            Item("Copy Cache Path", onClick = {
-                DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Cache)
-            })
-        }
-        Menu("Reader", mnemonic = 'R') {
-            Item("Previous Page", onClick = { onCommand(ChimahonDesktopCommand.ReaderPreviousPage) })
-            Item("Next Page", onClick = { onCommand(ChimahonDesktopCommand.ReaderNextPage) })
-            Item("First Page", onClick = { onCommand(ChimahonDesktopCommand.ReaderFirstPage) })
-            Item("Last Page", onClick = { onCommand(ChimahonDesktopCommand.ReaderLastPage) })
-            Separator()
-            Item("Previous Chapter", onClick = { onCommand(ChimahonDesktopCommand.ReaderPreviousChapter) })
-            Item("Next Chapter", onClick = { onCommand(ChimahonDesktopCommand.ReaderNextChapter) })
-            Separator()
-            Item("Toggle Controls", onClick = { onCommand(ChimahonDesktopCommand.ReaderToggleControls) })
-            Item("Back / Close Reader Panel", onClick = { onCommand(ChimahonDesktopCommand.Back) })
-            Separator()
-            Item("Cycle Page/Webtoon Mode", onClick = { onCommand(ChimahonDesktopCommand.ReaderCycleMode) })
-            Item("Open Reader Settings", onClick = { onCommand(ChimahonDesktopCommand.ReaderOpenSettings) })
-            Item("Open Chapter List", onClick = { onCommand(ChimahonDesktopCommand.ReaderOpenChapters) })
-            Item("Toggle Reader Stats", onClick = { onCommand(ChimahonDesktopCommand.ReaderToggleStats) })
-            Item("Toggle Crop Borders", onClick = { onCommand(ChimahonDesktopCommand.ReaderToggleCrop) })
-            Separator()
-            Item("Bookmark Chapter", onClick = { onCommand(ChimahonDesktopCommand.ReaderBookmarkChapter) })
-            Item("Download Chapter", onClick = { onCommand(ChimahonDesktopCommand.ReaderDownloadChapter) })
-            Item("Mark Chapter Read", onClick = { onCommand(ChimahonDesktopCommand.ReaderMarkChapterRead) })
-            Item("Open Chapter URL", onClick = { onCommand(ChimahonDesktopCommand.ReaderOpenChapterUrl) })
-        }
+            addSeparator()
+            add(item("Copy Downloads Path") { DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Downloads) })
+            add(item("Copy Data Path") { DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Files) })
+            add(item("Copy Cache Path") { DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Cache) })
+        })
+        add(menu("Reader", AwtKeyEvent.VK_R) {
+            add(item("Previous Page") { onCommand(ChimahonDesktopCommand.ReaderPreviousPage) })
+            add(item("Next Page") { onCommand(ChimahonDesktopCommand.ReaderNextPage) })
+            add(item("First Page") { onCommand(ChimahonDesktopCommand.ReaderFirstPage) })
+            add(item("Last Page") { onCommand(ChimahonDesktopCommand.ReaderLastPage) })
+            addSeparator()
+            add(item("Previous Chapter") { onCommand(ChimahonDesktopCommand.ReaderPreviousChapter) })
+            add(item("Next Chapter") { onCommand(ChimahonDesktopCommand.ReaderNextChapter) })
+            addSeparator()
+            add(item("Toggle Controls") { onCommand(ChimahonDesktopCommand.ReaderToggleControls) })
+            add(item("Back / Close Reader Panel") { onCommand(ChimahonDesktopCommand.Back) })
+            addSeparator()
+            add(item("Cycle Page/Webtoon Mode") { onCommand(ChimahonDesktopCommand.ReaderCycleMode) })
+            add(item("Open Reader Settings") { onCommand(ChimahonDesktopCommand.ReaderOpenSettings) })
+            add(item("Open Chapter List") { onCommand(ChimahonDesktopCommand.ReaderOpenChapters) })
+            add(item("Toggle Reader Stats") { onCommand(ChimahonDesktopCommand.ReaderToggleStats) })
+            add(item("Toggle Crop Borders") { onCommand(ChimahonDesktopCommand.ReaderToggleCrop) })
+            addSeparator()
+            add(item("Bookmark Chapter") { onCommand(ChimahonDesktopCommand.ReaderBookmarkChapter) })
+            add(item("Download Chapter") { onCommand(ChimahonDesktopCommand.ReaderDownloadChapter) })
+            add(item("Mark Chapter Read") { onCommand(ChimahonDesktopCommand.ReaderMarkChapterRead) })
+            add(item("Open Chapter URL") { onCommand(ChimahonDesktopCommand.ReaderOpenChapterUrl) })
+        })
     }
 }
 

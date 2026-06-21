@@ -47,10 +47,10 @@ data class ChimahonAppearanceSettings(
     val previewsRowCount: Int = 4,
 )
 
-enum class ChimahonThemeMode {
-    System,
-    Light,
-    Dark,
+enum class ChimahonThemeMode(val title: String) {
+    System("Follow system"),
+    Light("Light"),
+    Dark("Dark"),
 }
 
 enum class ChimahonAppTheme(val title: String) {

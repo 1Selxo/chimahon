@@ -3,7 +3,7 @@ package app.chimahon.shared
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceRegistry
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.online.ScriptHttpSource
 import okio.FileSystem
 import platform.Foundation.NSDate
 import tachiyomi.core.database.NativeDatabaseDriverFactory
@@ -39,12 +39,12 @@ internal actual class ChimahonPlatformServices actual constructor() {
     actual val javaScriptRuntimeFactory: JavaScriptRuntimeFactory = IosJavaScriptRuntimeFactory
 
     actual fun currentTimeMillis(): Long {
-        return (NSDate().timeIntervalSince1970 * 1_000.0).toLong()
+        return (NSDate().timeIntervalSince1970() * 1_000.0).toLong()
     }
 
     actual fun resolveExternalMangaUrl(source: CatalogueSource, manga: SManga): String? {
         return when (source) {
-            is HttpSource -> runCatching { source.getMangaUrl(manga) }.getOrNull() ?: manga.url
+            is ScriptHttpSource -> resolveScriptMangaUrl(source.baseUrl, manga.url)
             else -> manga.url
         }
     }
@@ -57,4 +57,34 @@ internal actual class ChimahonPlatformServices actual constructor() {
         apkExtensionManager.close()
         databaseDriver.close()
     }
+}
+
+private fun resolveScriptMangaUrl(baseUrl: String, path: String): String? {
+    val candidate = path.trim()
+    if (candidate.isBlank()) return null
+    if (candidate.hasUrlScheme()) return candidate
+    if (candidate.startsWith("//")) return "https:$candidate"
+
+    val root = baseUrl.trimEnd('/')
+    if (root.isBlank()) return candidate
+    return if (candidate.startsWith("/")) {
+        val schemeSplit = root.indexOf("://")
+        if (schemeSplit == -1) {
+            "$root$candidate"
+        } else {
+            val hostStart = schemeSplit + 3
+            val hostEnd = root.indexOf('/', startIndex = hostStart).takeIf { it >= 0 } ?: root.length
+            root.take(hostEnd) + candidate
+        }
+    } else {
+        "$root/${candidate.trimStart('/')}"
+    }
+}
+
+private fun String.hasUrlScheme(): Boolean {
+    val colon = indexOf(':')
+    if (colon <= 0) return false
+    val scheme = take(colon)
+    return scheme.first().isLetter() &&
+        scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }
 }
