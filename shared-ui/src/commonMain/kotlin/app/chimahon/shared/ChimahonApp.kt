@@ -1945,11 +1945,11 @@ private fun ReaderTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(60.dp)
+            .height(52.dp)
             .background(hudBackground.copy(alpha = 0.96f))
             .border(1.dp, hudContent.copy(alpha = 0.08f))
             .clickable(role = Role.Button, onClick = onToggleHud)
-            .padding(start = 4.dp, end = 8.dp),
+            .padding(start = 2.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ReaderAction(
@@ -1961,13 +1961,13 @@ private fun ReaderTopBar(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(start = 2.dp, end = 6.dp),
+                .padding(start = 1.dp, end = 5.dp),
         ) {
             if (showTitle) {
                 Label(
                     text = request.mangaTitle,
                     color = hudContent,
-                    size = 14,
+                    size = 13,
                     weight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
@@ -1980,7 +1980,7 @@ private fun ReaderTopBar(
                 Label(
                     text = request.chapterName,
                     color = hudContent.copy(alpha = 0.70f),
-                    size = if (showTitle) 11 else 14,
+                    size = if (showTitle) 10 else 13,
                     weight = if (showTitle) FontWeight.Normal else FontWeight.SemiBold,
                     maxLines = 1,
                     modifier = Modifier.weight(1f, fill = false),
@@ -2000,7 +2000,7 @@ private fun ReaderTopBar(
         }
         if (pageCount > 0) {
             ReaderTinyHudPill(
-                text = "$currentPage / $pageCount",
+                text = "$currentPage/$pageCount",
                 canvas = canvas,
                 modifier = Modifier.padding(horizontal = 2.dp),
             )
@@ -2054,7 +2054,7 @@ private fun ReaderTinyHudPill(
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(readerHudContent(canvas).copy(alpha = if (subdued) 0.08f else 0.12f))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .padding(horizontal = 5.dp, vertical = 2.dp),
     )
 }
 
@@ -5957,7 +5957,7 @@ private fun SourceLanguageHeader(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.background)
-            .padding(start = 16.dp, end = 16.dp, top = 15.dp, bottom = 7.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Label(
@@ -6028,16 +6028,16 @@ private fun SourceCapabilityBadge(
 ) {
     Box(
         modifier = modifier
-            .heightIn(min = 22.dp)
-            .clip(RoundedCornerShape(11.dp))
+            .heightIn(min = 20.dp)
+            .clip(RoundedCornerShape(10.dp))
             .background(if (active) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 7.dp, vertical = 3.dp),
         contentAlignment = Alignment.Center,
     ) {
         Label(
             text,
             if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-            10,
+            9,
             weight = FontWeight.SemiBold,
             maxLines = 1,
         )
@@ -6062,32 +6062,32 @@ private fun SourceListItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = if (compact) 54.dp else 64.dp)
+                .heightIn(min = if (compact) 48.dp else 56.dp)
                 .clickable(onClick = onClick)
                 .padding(
                     start = 16.dp,
                     end = 8.dp,
-                    top = if (compact) 6.dp else 9.dp,
-                    bottom = if (compact) 6.dp else 9.dp,
+                    top = if (compact) 5.dp else 7.dp,
+                    bottom = if (compact) 5.dp else 7.dp,
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SourceIconTile(
                 source = source,
-                size = if (compact) 34.dp else 42.dp,
-                cornerRadius = if (compact) 9.dp else 11.dp,
+                size = if (compact) 30.dp else 36.dp,
+                cornerRadius = if (compact) 8.dp else 10.dp,
                 compact = compact,
             )
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 14.dp),
+                    .padding(horizontal = 12.dp),
             ) {
-                Label(source.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                Label(source.name, ChimahonPalette.onSurface, 13, weight = FontWeight.SemiBold, maxLines = 1)
                 if (showLanguage || !compact || source.supportsLatest) {
                     Row(
-                        modifier = Modifier.padding(top = 5.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         if (showLanguage || !compact) {
@@ -6121,14 +6121,14 @@ private fun SourceListItem(
                     icon = UiIcon.Forward,
                     contentDescription = "Open ${source.name}",
                     tint = ChimahonPalette.secondaryText,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(16.dp),
                 )
             }
         }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = if (compact) 64.dp else 72.dp)
+                .padding(start = if (compact) 58.dp else 66.dp)
                 .height(1.dp)
                 .background(ChimahonPalette.divider),
         )
@@ -9047,7 +9047,7 @@ private fun ReaderTapZoneOverlay(
         ) {
             ReaderTapZonePane(
                 icon = UiIcon.Back,
-                contentDescription = "Previous",
+                label = "Previous",
                 tint = paneTint,
                 background = paneBackground,
                 modifier = Modifier
@@ -9056,7 +9056,7 @@ private fun ReaderTapZoneOverlay(
             )
             ReaderTapZonePane(
                 icon = UiIcon.More,
-                contentDescription = "Menu",
+                label = "HUD",
                 tint = paneTint,
                 background = paneBackground.copy(alpha = 0.07f),
                 modifier = Modifier
@@ -9065,7 +9065,7 @@ private fun ReaderTapZoneOverlay(
             )
             ReaderTapZonePane(
                 icon = UiIcon.Forward,
-                contentDescription = "Next",
+                label = "Next",
                 tint = paneTint,
                 background = paneBackground,
                 modifier = Modifier
@@ -9081,7 +9081,7 @@ private fun ReaderTapZoneOverlay(
         ) {
             ReaderTapZonePane(
                 icon = if (rtl) UiIcon.Forward else UiIcon.Back,
-                contentDescription = if (rtl) "Next" else "Previous",
+                label = if (rtl) "Next" else "Previous",
                 tint = paneTint,
                 background = paneBackground,
                 modifier = Modifier
@@ -9090,7 +9090,7 @@ private fun ReaderTapZoneOverlay(
             )
             ReaderTapZonePane(
                 icon = UiIcon.More,
-                contentDescription = "Menu",
+                label = "HUD",
                 tint = paneTint,
                 background = paneBackground.copy(alpha = 0.07f),
                 modifier = Modifier
@@ -9099,7 +9099,7 @@ private fun ReaderTapZoneOverlay(
             )
             ReaderTapZonePane(
                 icon = if (rtl) UiIcon.Back else UiIcon.Forward,
-                contentDescription = if (rtl) "Previous" else "Next",
+                label = if (rtl) "Previous" else "Next",
                 tint = paneTint,
                 background = paneBackground,
                 modifier = Modifier
@@ -9113,7 +9113,7 @@ private fun ReaderTapZoneOverlay(
 @Composable
 private fun ReaderTapZonePane(
     icon: UiIcon,
-    contentDescription: String,
+    label: String,
     tint: Color,
     background: Color,
     modifier: Modifier = Modifier,
@@ -9125,12 +9125,24 @@ private fun ReaderTapZonePane(
             .border(1.dp, tint.copy(alpha = 0.10f), RoundedCornerShape(18.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        IconGlyph(
-            icon = icon,
-            contentDescription = contentDescription,
-            tint = tint.copy(alpha = 0.38f),
-            modifier = Modifier.size(26.dp),
-        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = label,
+                tint = tint.copy(alpha = 0.42f),
+                modifier = Modifier.size(24.dp),
+            )
+            Label(
+                text = label,
+                color = tint.copy(alpha = 0.46f),
+                size = 10,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -13002,11 +13014,12 @@ private fun ExtensionsSection(
     }
     val visibleExtensions = filteredExtensions.take(visibleExtensionCount)
     val hasMoreExtensions = visibleExtensionCount < filteredExtensions.size
+    val catalogTotalCount = readyCatalog?.catalog?.extensions?.size ?: 0
 
     LaunchedEffect(snapshot.extensionRepos) {
-        if (selectedRepo == null || snapshot.extensionRepos.none { it.baseUrl == selectedRepo?.baseUrl }) {
-            selectedRepo = snapshot.extensionRepos.firstOrNull()
-        }
+        selectedRepo = snapshot.extensionRepos.firstOrNull { it.baseUrl == selectedRepo?.baseUrl }
+            ?: selectedRepo?.takeIf { repo -> snapshot.extensionRepos.none { it.baseUrl == repo.baseUrl } }
+            ?: snapshot.extensionRepos.firstOrNull()
     }
 
     LaunchedEffect(repoInputRequestKey) {
@@ -13051,23 +13064,6 @@ private fun ExtensionsSection(
                         .coerceAtMost(filteredExtensions.size)
                 }
             }
-    }
-
-    LaunchedEffect(
-        selectedRepo?.baseUrl,
-        query,
-        selectedFilter,
-        browseSettings.enabledLanguages.joinToString(),
-        browseSettings.showNsfwSources,
-        browseSettings.autoLoadMore,
-        filteredExtensions.size,
-    ) {
-        if (!browseSettings.autoLoadMore) return@LaunchedEffect
-        while (visibleExtensionCount < filteredExtensions.size) {
-            delay(48)
-            visibleExtensionCount = (visibleExtensionCount + EXTENSION_CATALOG_PAGE_SIZE)
-                .coerceAtMost(filteredExtensions.size)
-        }
     }
 
     repoPendingDeletion?.let { repo ->
@@ -20577,6 +20573,13 @@ private fun MoreDetailPage(
                 MorePage.DictionarySettings -> {
                     item { ListGroupHeader("Reader tools") }
                     item {
+                        SettingsInfoPanel(
+                            title = "Dictionary popup",
+                            detail = "${settings.dictionary.popupMode.title} - ${settings.dictionary.popupWidth} x ${settings.dictionary.popupHeight} - ${settings.dictionary.fontSize}sp",
+                            icon = UiIcon.Search,
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             title = "Dictionary lookup",
                             subtitle = "Enable shared reader lookup actions where a dictionary engine is present",
@@ -20584,6 +20587,30 @@ private fun MoreDetailPage(
                             checked = settings.dictionary.enabled,
                             onCheckedChange = {
                                 onDictionarySettingsChange(settings.dictionary.copy(enabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Popup mode",
+                            options = ChimahonDictionaryPopupMode.entries.map { it.title },
+                            selected = settings.dictionary.popupMode.title,
+                            onSelect = { selected ->
+                                ChimahonDictionaryPopupMode.entries.firstOrNull { it.title == selected }?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(popupMode = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Recursive lookup",
+                            options = ChimahonDictionaryRecursiveLookupMode.entries.map { it.title },
+                            selected = settings.dictionary.recursiveLookupMode.title,
+                            onSelect = { selected ->
+                                ChimahonDictionaryRecursiveLookupMode.entries.firstOrNull { it.title == selected }?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(recursiveLookupMode = it))
+                                }
                             },
                         )
                     }
@@ -20602,6 +20629,88 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item { ListGroupHeader("Popup layout") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Popup width",
+                            options = listOf("260", "300", "360", "420", "520", "640"),
+                            selected = settings.dictionary.popupWidth.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(popupWidth = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Popup height",
+                            options = listOf("260", "320", "360", "420", "480", "640"),
+                            selected = settings.dictionary.popupHeight.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(popupHeight = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Font size",
+                            options = listOf("12", "14", "16", "18", "20", "22", "24"),
+                            selected = settings.dictionary.fontSize.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(fontSize = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Dictionary theme",
+                            options = ChimahonDictionaryThemeMode.entries.map { it.title },
+                            selected = settings.dictionary.themeMode.title,
+                            onSelect = { selected ->
+                                ChimahonDictionaryThemeMode.entries.firstOrNull { it.title == selected }?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(themeMode = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "E-ink mode",
+                            "Use higher contrast dictionary rendering",
+                            UiIcon.VisibilityOff,
+                            checked = settings.dictionary.eInkMode,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(eInkMode = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Paginated scrolling",
+                            "Page through dictionary entries instead of free scrolling",
+                            UiIcon.Reorder,
+                            checked = settings.dictionary.paginatedScrolling,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(paginatedScrolling = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Navigation buttons",
+                            "Show previous and next lookup controls in the popup",
+                            UiIcon.Play,
+                            checked = settings.dictionary.showNavigationButtons,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(showNavigationButtons = it))
+                            },
+                        )
+                    }
                     item {
                         PreferenceSwitchRow(
                             title = "OCR",
@@ -20610,6 +20719,177 @@ private fun MoreDetailPage(
                             checked = settings.dictionary.ocrEnabled,
                             onCheckedChange = {
                                 onDictionarySettingsChange(settings.dictionary.copy(ocrEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "OCR engine",
+                            options = ChimahonDictionaryOcrEngine.entries.map { it.title },
+                            selected = settings.dictionary.ocrEngine.title,
+                            onSelect = { selected ->
+                                ChimahonDictionaryOcrEngine.entries.firstOrNull { it.title == selected }?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(ocrEngine = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "OCR box width",
+                            options = listOf("60", "80", "100", "120", "140", "160"),
+                            selected = settings.dictionary.ocrBoxScaleXPercent.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(ocrBoxScaleXPercent = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "OCR box height",
+                            options = listOf("60", "80", "100", "120", "140", "160"),
+                            selected = settings.dictionary.ocrBoxScaleYPercent.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(ocrBoxScaleYPercent = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "OCR overlay opacity",
+                            options = listOf("0", "10", "25", "50", "75"),
+                            selected = settings.dictionary.ocrBoxOpacityPercent.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onDictionarySettingsChange(settings.dictionary.copy(ocrBoxOpacityPercent = it))
+                                }
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Entry display") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Group terms",
+                            "Combine matching dictionary entries under one heading",
+                            UiIcon.Reorder,
+                            checked = settings.dictionary.groupTerms,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(groupTerms = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Group pitches",
+                            "Combine pitch accent rows where possible",
+                            UiIcon.Reorder,
+                            checked = settings.dictionary.groupPitches,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(groupPitches = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Pitch diagram",
+                            "Show pitch accent diagrams in lookup entries",
+                            UiIcon.Info,
+                            checked = settings.dictionary.showPitchDiagram,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(showPitchDiagram = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Pitch number",
+                            "Show numeric pitch accent labels",
+                            UiIcon.Info,
+                            checked = settings.dictionary.showPitchNumber,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(showPitchNumber = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Pitch text",
+                            "Show textual pitch accent labels",
+                            UiIcon.Info,
+                            checked = settings.dictionary.showPitchText,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(showPitchText = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Frequency harmonic",
+                            "Show harmonic frequency scores when dictionaries provide them",
+                            UiIcon.Filter,
+                            checked = settings.dictionary.showFrequencyHarmonic,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(showFrequencyHarmonic = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Frequency average",
+                            "Show average frequency scores when dictionaries provide them",
+                            UiIcon.Filter,
+                            checked = settings.dictionary.showFrequencyAverage,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(showFrequencyAverage = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Audio and conversion") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Kana conversion",
+                            "Convert lookup text to kana variants where supported",
+                            UiIcon.Swap,
+                            checked = settings.dictionary.autoKanaConversion,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(autoKanaConversion = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Word audio",
+                            "Enable dictionary word audio buttons",
+                            UiIcon.Play,
+                            checked = settings.dictionary.wordAudioEnabled,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(wordAudioEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Autoplay word audio",
+                            "Play the first available pronunciation after lookup",
+                            UiIcon.Play,
+                            checked = settings.dictionary.wordAudioAutoplay,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(wordAudioAutoplay = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Local audio",
+                            "Prefer locally stored pronunciation files where available",
+                            UiIcon.Download,
+                            checked = settings.dictionary.wordAudioLocalEnabled,
+                            onCheckedChange = {
+                                onDictionarySettingsChange(settings.dictionary.copy(wordAudioLocalEnabled = it))
                             },
                         )
                     }
@@ -23307,18 +23587,18 @@ private fun ReaderAction(
 ) {
     Box(
         modifier = modifier
-            .size(44.dp)
+            .size(40.dp)
             .clip(CircleShape)
             .background(if (active) ReaderPalette.selectedControl.copy(alpha = 0.72f) else Color.Transparent)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(10.dp),
+            .padding(9.dp),
         contentAlignment = Alignment.Center,
     ) {
         IconGlyph(
             icon = icon,
             contentDescription = contentDescription,
             tint = if (enabled) tint else tint.copy(alpha = 0.42f),
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(19.dp),
         )
     }
 }

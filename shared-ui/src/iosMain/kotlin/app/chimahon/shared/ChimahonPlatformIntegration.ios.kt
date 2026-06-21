@@ -7,7 +7,6 @@ import platform.Foundation.NSURL
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIApplication
 import platform.UIKit.UIDevice
-import platform.UIKit.UIModalPresentationPopover
 import platform.UIKit.UINavigationController
 import platform.UIKit.UIPasteboard
 import platform.UIKit.UITabBarController
@@ -187,11 +186,6 @@ private fun presentShareSheet(items: List<*>, title: String?): Boolean {
         applicationActivities = null,
     )
     activityController.title = title?.trim()?.takeIf(String::isNotBlank)
-    activityController.modalPresentationStyle = UIModalPresentationPopover
-    activityController.popoverPresentationController?.let { popover ->
-        popover.sourceView = presenter.view
-        popover.sourceRect = presenter.view.bounds
-    }
     presenter.presentViewController(activityController, animated = true, completion = null)
     return true
 }
