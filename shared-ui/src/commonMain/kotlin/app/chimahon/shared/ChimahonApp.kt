@@ -103,6 +103,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -583,6 +585,9 @@ fun ChimahonServiceApp(
         onSaveAppearanceSettings = services::saveAppearanceSettings,
         onSaveReaderSettings = services::saveReaderSettings,
         onSaveLibrarySettings = services::saveLibrarySettings,
+        onSaveDownloadPreferences = services::saveDownloadPreferences,
+        onSaveBrowseSettings = services::saveBrowseSettings,
+        onSaveSecuritySettings = services::saveSecuritySettings,
         onSetDownloadedOnly = services::setDownloadedOnly,
         onSetIncognitoMode = services::setIncognitoMode,
         onOpenExternalUrl = services::openExternalUrl,
@@ -600,13 +605,28 @@ fun ChimahonServiceApp(
         onClearHistory = services::clearHistory,
         onDismissUpdateIssue = services::dismissUpdateIssue,
         onClearUpdateIssues = services::clearUpdateIssues,
+        onLoadDataMaintenance = services::loadDataMaintenanceSnapshot,
+        onClearThumbnailCache = services::clearThumbnailCache,
+        onClearCacheData = services::clearCacheData,
+        onRunDatabaseMaintenance = services::runDatabaseMaintenance,
         onSetMangaChaptersRead = services::setMangaChaptersRead,
         onSetChapterRead = services::setChapterRead,
         onSetChapterBookmark = services::setChapterBookmark,
+        onLoadDownloadQueue = services::loadDownloadQueue,
+        onPauseDownloadQueue = services::pauseDownloadQueue,
+        onResumeDownloadQueue = services::resumeDownloadQueue,
+        onPauseDownload = services::pauseDownload,
+        onResumeDownload = services::resumeDownload,
+        onRetryDownload = services::retryDownload,
+        onRemoveDownload = services::removeDownload,
+        onClearCompletedDownloads = services::clearCompletedDownloads,
+        onMoveDownloadToTop = services::moveDownloadToTop,
+        onMoveDownloadToBottom = services::moveDownloadToBottom,
         onAddExtensionRepo = services::addExtensionRepo,
         onDeleteExtensionRepo = services::deleteExtensionRepo,
         onLoadExtensionRepoCatalog = services::loadExtensionRepoCatalog,
         onInstallExtension = services::installExtension,
+        onUninstallExtension = services::uninstallExtension,
     )
 }
 
@@ -658,6 +678,9 @@ fun ChimahonApp(
     onSaveAppearanceSettings: suspend (ChimahonAppearanceSettings) -> ChimahonAppearanceSettings = { it },
     onSaveReaderSettings: suspend (ChimahonReaderSettings) -> ChimahonReaderSettings = { it },
     onSaveLibrarySettings: suspend (ChimahonLibrarySettings) -> ChimahonLibrarySettings = { it },
+    onSaveDownloadPreferences: suspend (ChimahonDownloadPreferences) -> ChimahonDownloadPreferences = { it },
+    onSaveBrowseSettings: suspend (ChimahonBrowseSettings) -> ChimahonBrowseSettings = { it },
+    onSaveSecuritySettings: suspend (ChimahonSecuritySettings) -> ChimahonSecuritySettings = { it },
     onSetDownloadedOnly: suspend (Boolean) -> ChimahonAppModeSettings = {
         ChimahonAppModeSettings(downloadedOnly = it)
     },
@@ -681,9 +704,25 @@ fun ChimahonApp(
     onClearHistory: suspend () -> Unit = {},
     onDismissUpdateIssue: suspend (Long) -> Unit = {},
     onClearUpdateIssues: suspend () -> Unit = {},
+    onLoadDataMaintenance: suspend () -> ChimahonDataMaintenanceSnapshot = { previewDataMaintenanceSnapshot() },
+    onClearThumbnailCache: suspend () -> ChimahonCacheClearResult = { previewCacheClearResult(ChimahonCacheClearTarget.Thumbnails) },
+    onClearCacheData: suspend () -> ChimahonCacheClearResult = { previewCacheClearResult(ChimahonCacheClearTarget.ApplicationCache) },
+    onRunDatabaseMaintenance: suspend () -> ChimahonDatabaseMaintenanceResult = { previewDatabaseMaintenanceResult() },
     onSetMangaChaptersRead: suspend (Long, Boolean) -> Unit = { _, _ -> },
     onSetChapterRead: suspend (Long, Boolean) -> Unit = { _, _ -> },
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit = { _, _ -> },
+    onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData = {
+        ChimahonDownloadQueueData(entries = emptyList(), paused = false)
+    },
+    onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onPauseDownload: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onResumeDownload: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onRetryDownload: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onRemoveDownload: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onClearCompletedDownloads: suspend () -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onMoveDownloadToTop: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onMoveDownloadToBottom: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
     onAddExtensionRepo: suspend (String) -> ChimahonExtensionRepoEntry = { input ->
         ChimahonExtensionRepoEntry(
             baseUrl = input,
@@ -704,6 +743,19 @@ fun ChimahonApp(
             version = extension.version,
             sourceCount = 0,
             packageType = extension.packageType,
+        )
+    },
+    onUninstallExtension: suspend (
+        String,
+        ChimahonExtensionPackageType,
+    ) -> ChimahonExtensionUninstallResult = { extensionId, packageType ->
+        ChimahonExtensionUninstallResult(
+            extensionId = extensionId,
+            packageType = packageType,
+            supported = true,
+            removed = true,
+            installedExtensions = emptyList(),
+            errors = emptyList(),
         )
     },
 ) {
@@ -733,8 +785,10 @@ fun ChimahonApp(
     }
     ChimahonPalette.apply(
         theme = persistedSettings.appearance.appTheme,
+        colorTheme = persistedSettings.appearance.colorTheme,
         dark = darkTheme,
         amoled = persistedSettings.appearance.amoled,
+        fontScalePercent = persistedSettings.appearance.fontScalePercent,
     )
 
     LaunchedEffect(Unit) {
@@ -1079,12 +1133,27 @@ fun ChimahonApp(
                                         onClearHistory = onClearHistory,
                                         onDismissUpdateIssue = onDismissUpdateIssue,
                                         onClearUpdateIssues = onClearUpdateIssues,
+                                        onLoadDataMaintenance = onLoadDataMaintenance,
+                                        onClearThumbnailCache = onClearThumbnailCache,
+                                        onClearCacheData = onClearCacheData,
+                                        onRunDatabaseMaintenance = onRunDatabaseMaintenance,
                                         onSetChapterRead = onSetChapterRead,
                                         onSetChapterBookmark = onSetChapterBookmark,
+                                        onLoadDownloadQueue = onLoadDownloadQueue,
+                                        onPauseDownloadQueue = onPauseDownloadQueue,
+                                        onResumeDownloadQueue = onResumeDownloadQueue,
+                                        onPauseDownload = onPauseDownload,
+                                        onResumeDownload = onResumeDownload,
+                                        onRetryDownload = onRetryDownload,
+                                        onRemoveDownload = onRemoveDownload,
+                                        onClearCompletedDownloads = onClearCompletedDownloads,
+                                        onMoveDownloadToTop = onMoveDownloadToTop,
+                                        onMoveDownloadToBottom = onMoveDownloadToBottom,
                                         onAddExtensionRepo = onAddExtensionRepo,
                                         onDeleteExtensionRepo = onDeleteExtensionRepo,
                                         onLoadExtensionRepoCatalog = onLoadExtensionRepoCatalog,
                                         onInstallExtension = onInstallExtension,
+                                        onUninstallExtension = onUninstallExtension,
                                         onRepoSaved = onRefresh,
                                         downloadedOnlyMode = downloadedOnlyMode,
                                         incognitoMode = incognitoMode,
@@ -1105,6 +1174,24 @@ fun ChimahonApp(
                                             persistedSettings = persistedSettings.copy(reader = settings)
                                             appScope.launch {
                                                 runCatching { onSaveReaderSettings(settings) }
+                                            }
+                                        },
+                                        onDownloadPreferencesChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(downloads = settings)
+                                            appScope.launch {
+                                                runCatching { onSaveDownloadPreferences(settings) }
+                                            }
+                                        },
+                                        onBrowseSettingsChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(browse = settings)
+                                            appScope.launch {
+                                                runCatching { onSaveBrowseSettings(settings) }
+                                            }
+                                        },
+                                        onSecuritySettingsChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(security = settings)
+                                            appScope.launch {
+                                                runCatching { onSaveSecuritySettings(settings) }
                                             }
                                         },
                                         onOpenExternalUrl = onOpenExternalUrl,
@@ -1606,12 +1693,27 @@ private fun HomeContent(
     onClearHistory: suspend () -> Unit,
     onDismissUpdateIssue: suspend (Long) -> Unit,
     onClearUpdateIssues: suspend () -> Unit,
+    onLoadDataMaintenance: suspend () -> ChimahonDataMaintenanceSnapshot,
+    onClearThumbnailCache: suspend () -> ChimahonCacheClearResult,
+    onClearCacheData: suspend () -> ChimahonCacheClearResult,
+    onRunDatabaseMaintenance: suspend () -> ChimahonDatabaseMaintenanceResult,
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
+    onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onPauseDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onResumeDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onRetryDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onRemoveDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onClearCompletedDownloads: suspend () -> ChimahonDownloadQueueData,
+    onMoveDownloadToTop: suspend (Long) -> ChimahonDownloadQueueData,
+    onMoveDownloadToBottom: suspend (Long) -> ChimahonDownloadQueueData,
     onAddExtensionRepo: suspend (String) -> ChimahonExtensionRepoEntry,
     onDeleteExtensionRepo: suspend (String) -> Unit,
     onLoadExtensionRepoCatalog: suspend (ChimahonExtensionRepoEntry) -> ChimahonExtensionRepoCatalog,
     onInstallExtension: suspend (ChimahonRepoExtensionEntry) -> ChimahonInstalledExtensionEntry,
+    onUninstallExtension: suspend (String, ChimahonExtensionPackageType) -> ChimahonExtensionUninstallResult,
     onRepoSaved: () -> Unit,
     downloadedOnlyMode: Boolean,
     incognitoMode: Boolean,
@@ -1619,6 +1721,9 @@ private fun HomeContent(
     onAppearanceSettingsChange: (ChimahonAppearanceSettings) -> Unit,
     onLibrarySettingsChange: (ChimahonLibrarySettings) -> Unit,
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
+    onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
+    onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onSecuritySettingsChange: (ChimahonSecuritySettings) -> Unit,
     onOpenExternalUrl: (String) -> Boolean,
     onDownloadedOnlyModeChange: (Boolean) -> Unit,
     onIncognitoModeChange: (Boolean) -> Unit,
@@ -1676,6 +1781,7 @@ private fun HomeContent(
             onDeleteExtensionRepo = onDeleteExtensionRepo,
             onLoadExtensionRepoCatalog = onLoadExtensionRepoCatalog,
             onInstallExtension = onInstallExtension,
+            onUninstallExtension = onUninstallExtension,
             onRepoSaved = onRepoSaved,
         )
         HomeTab.More -> MoreHome(
@@ -1684,12 +1790,29 @@ private fun HomeContent(
             onCreateCategory = onCreateCategory,
             onDeleteCategory = onDeleteCategory,
             onCategoriesChanged = onRepoSaved,
+            onLoadDataMaintenance = onLoadDataMaintenance,
+            onClearThumbnailCache = onClearThumbnailCache,
+            onClearCacheData = onClearCacheData,
+            onRunDatabaseMaintenance = onRunDatabaseMaintenance,
+            onLoadDownloadQueue = onLoadDownloadQueue,
+            onPauseDownloadQueue = onPauseDownloadQueue,
+            onResumeDownloadQueue = onResumeDownloadQueue,
+            onPauseDownload = onPauseDownload,
+            onResumeDownload = onResumeDownload,
+            onRetryDownload = onRetryDownload,
+            onRemoveDownload = onRemoveDownload,
+            onClearCompletedDownloads = onClearCompletedDownloads,
+            onMoveDownloadToTop = onMoveDownloadToTop,
+            onMoveDownloadToBottom = onMoveDownloadToBottom,
             downloadedOnlyMode = downloadedOnlyMode,
             incognitoMode = incognitoMode,
             settings = settings,
             onAppearanceSettingsChange = onAppearanceSettingsChange,
             onLibrarySettingsChange = onLibrarySettingsChange,
             onReaderSettingsChange = onReaderSettingsChange,
+            onDownloadPreferencesChange = onDownloadPreferencesChange,
+            onBrowseSettingsChange = onBrowseSettingsChange,
+            onSecuritySettingsChange = onSecuritySettingsChange,
             onOpenExternalUrl = onOpenExternalUrl,
             onDownloadedOnlyModeChange = onDownloadedOnlyModeChange,
             onIncognitoModeChange = onIncognitoModeChange,
@@ -1733,8 +1856,12 @@ private fun LibraryHome(
             selectedCategoryId = ALL_LIBRARY_CATEGORY_ID
         }
     }
-    var selectedFilter by remember { mutableStateOf(LibraryFilter.All) }
-    var selectedSort by remember { mutableStateOf(LibrarySort.Alphabetical) }
+    var selectedFilter by remember(settings.downloadedFilter, settings.unreadFilter, settings.startedFilter, settings.bookmarkedFilter) {
+        mutableStateOf(settings.toInitialLibraryFilter())
+    }
+    var selectedSort by remember(settings.sort) {
+        mutableStateOf(settings.sort.toUiLibrarySort())
+    }
     var displayMode by remember(settings.displayMode) {
         mutableStateOf(settings.displayMode.toUiLibraryDisplayMode())
     }
@@ -1749,6 +1876,13 @@ private fun LibraryHome(
         }
         .filter { entry ->
             val chapters = snapshot.chaptersByMangaId[entry.id].orEmpty()
+            settings.unreadFilter.matches(chapters.any { !it.read }) &&
+                settings.startedFilter.matches(chapters.any { it.lastPageRead > 0L && !it.read }) &&
+                settings.bookmarkedFilter.matches(chapters.any { it.bookmarked }) &&
+                settings.completedFilter.matches(chapters.isNotEmpty() && chapters.all { it.read })
+        }
+        .filter { entry ->
+            val chapters = snapshot.chaptersByMangaId[entry.id].orEmpty()
             when (selectedFilter) {
                 LibraryFilter.All -> true
                 LibraryFilter.Unread -> chapters.any { !it.read }
@@ -1757,7 +1891,7 @@ private fun LibraryHome(
             }
         }
         .let { entries ->
-            when (selectedSort) {
+            val sorted = when (selectedSort) {
                 LibrarySort.Alphabetical -> entries.sortedBy { it.title.lowercase() }
                 LibrarySort.DateAdded -> entries.sortedByDescending { it.dateAdded }
                 LibrarySort.LastUpdated -> entries.sortedByDescending { it.lastUpdate ?: 0L }
@@ -1765,6 +1899,7 @@ private fun LibraryHome(
                     snapshot.chaptersByMangaId[entry.id].orEmpty().count { !it.read }
                 }
             }
+            if (settings.sortAscending) sorted else sorted.asReversed()
         }
     val categoryCounts = categories.associate { category ->
         category.id to snapshot.libraryForCategory(category.id).size
@@ -1865,9 +2000,13 @@ private fun LibraryHome(
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(
-                    if (displayMode == LibraryDisplayMode.CompactGrid) 92.dp else 124.dp,
-                ),
+                columns = if (settings.gridColumnsLandscape > 0) {
+                    GridCells.Fixed(settings.gridColumnsLandscape.coerceIn(2, 8))
+                } else {
+                    GridCells.Adaptive(
+                        if (displayMode == LibraryDisplayMode.CompactGrid) 92.dp else 124.dp,
+                    )
+                },
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2826,6 +2965,7 @@ private fun BrowseHome(
     onDeleteExtensionRepo: suspend (String) -> Unit,
     onLoadExtensionRepoCatalog: suspend (ChimahonExtensionRepoEntry) -> ChimahonExtensionRepoCatalog,
     onInstallExtension: suspend (ChimahonRepoExtensionEntry) -> ChimahonInstalledExtensionEntry,
+    onUninstallExtension: suspend (String, ChimahonExtensionPackageType) -> ChimahonExtensionUninstallResult,
     onRepoSaved: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -2856,6 +2996,7 @@ private fun BrowseHome(
                 onDeleteExtensionRepo = onDeleteExtensionRepo,
                 onLoadExtensionRepoCatalog = onLoadExtensionRepoCatalog,
                 onInstallExtension = onInstallExtension,
+                onUninstallExtension = onUninstallExtension,
                 onRepoSaved = onRepoSaved,
             )
             BrowseSection.Migrate -> MigrateSection(
@@ -4236,6 +4377,7 @@ private fun ReaderContent(
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onCloseReader: () -> Unit,
 ) {
+    var readerPreferences by remember(chapter.request) { mutableStateOf(settings) }
     var mode by remember(chapter.request) { mutableStateOf(settings.mode.toUiReaderMode()) }
     var scale by remember(chapter.request.mangaId) { mutableStateOf(settings.scale.toUiReaderScale()) }
     var canvas by remember(chapter.request.mangaId) { mutableStateOf(settings.canvas.toUiReaderCanvas()) }
@@ -4257,6 +4399,10 @@ private fun ReaderContent(
     val previousChapter = chapter.request.chapterQueue.getOrNull(chapter.request.chapterIndex + 1)
     val nextChapter = chapter.request.chapterQueue.getOrNull(chapter.request.chapterIndex - 1)
     val scope = rememberCoroutineScope()
+    val saveReaderPreferences: (ChimahonReaderSettings) -> Unit = { updated ->
+        readerPreferences = updated
+        onSettingsChange(updated)
+    }
     val openAdjacentChapter: (ChimahonReaderChapterRef) -> Unit = { adjacent ->
         onOpenReader(adjacent.toReaderRequest(chapter.request))
     }
@@ -4315,13 +4461,21 @@ private fun ReaderContent(
                 chaptersVisible = chaptersVisible,
                 showPageStrip = showPageStrip,
                 showControlsOnStart = showControlsOnStart,
+                readerSettings = readerPreferences.copy(
+                    mode = mode.toSettingsReaderMode(),
+                    scale = scale.toSettingsReaderScale(),
+                    canvas = canvas.toSettingsReaderCanvas(),
+                    showPageStrip = showPageStrip,
+                    keepControlsVisible = showControlsOnStart,
+                ),
+                onReaderSettingsChange = saveReaderPreferences,
                 previousChapter = previousChapter,
                 nextChapter = nextChapter,
                 onModeChange = {
                     retainedPage = actualPage
                     mode = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = it.toSettingsReaderMode(),
                             scale = scale.toSettingsReaderScale(),
                             canvas = canvas.toSettingsReaderCanvas(),
@@ -4332,8 +4486,8 @@ private fun ReaderContent(
                 },
                 onScaleChange = {
                     scale = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = mode.toSettingsReaderMode(),
                             scale = it.toSettingsReaderScale(),
                             canvas = canvas.toSettingsReaderCanvas(),
@@ -4344,8 +4498,8 @@ private fun ReaderContent(
                 },
                 onCanvasChange = {
                     canvas = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = mode.toSettingsReaderMode(),
                             scale = scale.toSettingsReaderScale(),
                             canvas = it.toSettingsReaderCanvas(),
@@ -4356,8 +4510,8 @@ private fun ReaderContent(
                 },
                 onShowPageStripChange = {
                     showPageStrip = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = mode.toSettingsReaderMode(),
                             scale = scale.toSettingsReaderScale(),
                             canvas = canvas.toSettingsReaderCanvas(),
@@ -4368,8 +4522,8 @@ private fun ReaderContent(
                 },
                 onShowControlsOnStartChange = {
                     showControlsOnStart = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = mode.toSettingsReaderMode(),
                             scale = scale.toSettingsReaderScale(),
                             canvas = canvas.toSettingsReaderCanvas(),
@@ -4416,7 +4570,13 @@ private fun ReaderContent(
                         pagerState.currentPage - 1
                     }
                     if (target in chapter.pages.indices) {
-                        scope.launch { pagerState.animateScrollToPage(target) }
+                        scope.launch {
+                            if (readerPreferences.pageTransitions) {
+                                pagerState.animateScrollToPage(target)
+                            } else {
+                                pagerState.scrollToPage(target)
+                            }
+                        }
                     } else {
                         previousChapter?.let(openAdjacentChapter)
                     }
@@ -4428,7 +4588,13 @@ private fun ReaderContent(
                         pagerState.currentPage + 1
                     }
                     if (target in chapter.pages.indices) {
-                        scope.launch { pagerState.animateScrollToPage(target) }
+                        scope.launch {
+                            if (readerPreferences.pageTransitions) {
+                                pagerState.animateScrollToPage(target)
+                            } else {
+                                pagerState.scrollToPage(target)
+                            }
+                        }
                     } else {
                         nextChapter?.let(openAdjacentChapter)
                     }
@@ -4468,6 +4634,7 @@ private fun ReaderContent(
                         paged = true,
                         scale = scale,
                         canvas = canvas,
+                        readerSettings = readerPreferences,
                         cachedState = pageStates[pageIndex],
                         onStateChange = { pageStates[pageIndex] = it },
                         onLoadReaderPageImage = onLoadReaderPageImage,
@@ -4502,13 +4669,21 @@ private fun ReaderContent(
                 chaptersVisible = chaptersVisible,
                 showPageStrip = showPageStrip,
                 showControlsOnStart = showControlsOnStart,
+                readerSettings = readerPreferences.copy(
+                    mode = mode.toSettingsReaderMode(),
+                    scale = scale.toSettingsReaderScale(),
+                    canvas = canvas.toSettingsReaderCanvas(),
+                    showPageStrip = showPageStrip,
+                    keepControlsVisible = showControlsOnStart,
+                ),
+                onReaderSettingsChange = saveReaderPreferences,
                 previousChapter = previousChapter,
                 nextChapter = nextChapter,
                 onModeChange = {
                     retainedPage = listState.firstVisibleItemIndex
                     mode = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = it.toSettingsReaderMode(),
                             scale = scale.toSettingsReaderScale(),
                             canvas = canvas.toSettingsReaderCanvas(),
@@ -4519,8 +4694,8 @@ private fun ReaderContent(
                 },
                 onScaleChange = {
                     scale = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = mode.toSettingsReaderMode(),
                             scale = it.toSettingsReaderScale(),
                             canvas = canvas.toSettingsReaderCanvas(),
@@ -4531,8 +4706,8 @@ private fun ReaderContent(
                 },
                 onCanvasChange = {
                     canvas = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = mode.toSettingsReaderMode(),
                             scale = scale.toSettingsReaderScale(),
                             canvas = it.toSettingsReaderCanvas(),
@@ -4543,8 +4718,8 @@ private fun ReaderContent(
                 },
                 onShowPageStripChange = {
                     showPageStrip = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = mode.toSettingsReaderMode(),
                             scale = scale.toSettingsReaderScale(),
                             canvas = canvas.toSettingsReaderCanvas(),
@@ -4555,8 +4730,8 @@ private fun ReaderContent(
                 },
                 onShowControlsOnStartChange = {
                     showControlsOnStart = it
-                    onSettingsChange(
-                        settings.copy(
+                    saveReaderPreferences(
+                        readerPreferences.copy(
                             mode = mode.toSettingsReaderMode(),
                             scale = scale.toSettingsReaderScale(),
                             canvas = canvas.toSettingsReaderCanvas(),
@@ -4599,7 +4774,12 @@ private fun ReaderContent(
                 onPreviousPage = {
                     if (listState.firstVisibleItemIndex > 0) {
                         scope.launch {
-                            listState.animateScrollToItem(listState.firstVisibleItemIndex - 1)
+                            val target = listState.firstVisibleItemIndex - 1
+                            if (readerPreferences.pageTransitions) {
+                                listState.animateScrollToItem(target)
+                            } else {
+                                listState.scrollToItem(target)
+                            }
                         }
                     } else {
                         previousChapter?.let(openAdjacentChapter)
@@ -4608,7 +4788,12 @@ private fun ReaderContent(
                 onNextPage = {
                     if (listState.firstVisibleItemIndex < chapter.pages.lastIndex) {
                         scope.launch {
-                            listState.animateScrollToItem(listState.firstVisibleItemIndex + 1)
+                            val target = listState.firstVisibleItemIndex + 1
+                            if (readerPreferences.pageTransitions) {
+                                listState.animateScrollToItem(target)
+                            } else {
+                                listState.scrollToItem(target)
+                            }
                         }
                     } else {
                         nextChapter?.let(openAdjacentChapter)
@@ -4642,6 +4827,7 @@ private fun ReaderContent(
                             paged = false,
                             scale = scale,
                             canvas = canvas,
+                            readerSettings = readerPreferences,
                             cachedState = pageStates[page.index],
                             onStateChange = { pageStates[page.index] = it },
                             onLoadReaderPageImage = onLoadReaderPageImage,
@@ -4668,6 +4854,8 @@ private fun ReaderScaffold(
     chaptersVisible: Boolean,
     showPageStrip: Boolean,
     showControlsOnStart: Boolean,
+    readerSettings: ChimahonReaderSettings,
+    onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
     previousChapter: ChimahonReaderChapterRef?,
     nextChapter: ChimahonReaderChapterRef?,
     onModeChange: (ReaderMode) -> Unit,
@@ -4704,6 +4892,22 @@ private fun ReaderScaffold(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
+                    Key.VolumeUp -> {
+                        if (!readerSettings.volumeKeysEnabled) {
+                            false
+                        } else {
+                            if (readerSettings.volumeKeysInverted) onNextPage() else onPreviousPage()
+                            true
+                        }
+                    }
+                    Key.VolumeDown -> {
+                        if (!readerSettings.volumeKeysEnabled) {
+                            false
+                        } else {
+                            if (readerSettings.volumeKeysInverted) onPreviousPage() else onNextPage()
+                            true
+                        }
+                    }
                     Key.DirectionLeft,
                     Key.PageUp,
                     Key.DirectionUp,
@@ -4746,21 +4950,37 @@ private fun ReaderScaffold(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(currentPage, pageCount, controlsVisible) {
-                    detectTapGestures { offset ->
-                        if (size.width <= 0) return@detectTapGestures
-                        when (offset.x / size.width.toFloat()) {
-                            in 0f..0.28f -> onPreviousPage()
-                            in 0.72f..1f -> onNextPage()
-                            else -> onToggleControls()
-                        }
-                    }
+                .pointerInput(currentPage, pageCount, controlsVisible, readerSettings) {
+                    detectTapGestures(
+                        onLongPress = {
+                            if (readerSettings.longTapEnabled) onToggleControls()
+                        },
+                        onTap = { offset ->
+                            if (!readerSettings.tapZonesEnabled || size.width <= 0 || size.height <= 0) {
+                                onToggleControls()
+                                return@detectTapGestures
+                            }
+                            when (
+                                readerTapActionAt(
+                                    offset = offset,
+                                    width = size.width,
+                                    height = size.height,
+                                    smallerZones = readerSettings.smallerTapZones,
+                                    inversion = readerSettings.invertTapZones,
+                                )
+                            ) {
+                                ReaderTapAction.Previous -> onPreviousPage()
+                                ReaderTapAction.Menu -> onToggleControls()
+                                ReaderTapAction.Next -> onNextPage()
+                            }
+                        },
+                    )
                 },
         ) {
             content()
         }
 
-        if (!controlsVisible && pageCount > 0) {
+        if (!controlsVisible && pageCount > 0 && readerSettings.showPageNumber) {
             ReaderPageIndicator(
                 currentPage = currentPage,
                 pageCount = pageCount,
@@ -4786,6 +5006,20 @@ private fun ReaderScaffold(
                     onBack = onBack,
                     onToggleBookmark = onToggleBookmark,
                 )
+                if (readerSettings.keepScreenOn) {
+                    Label(
+                        text = "Screen stays awake while reading",
+                        color = Color.White,
+                        size = 10,
+                        weight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(ReaderPalette.selectedControl.copy(alpha = 0.9f))
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
                 if (chaptersVisible) {
                     ReaderChapterQueuePanel(
                         request = request,
@@ -4803,13 +5037,19 @@ private fun ReaderScaffold(
                         mode = mode,
                         scale = scale,
                         canvas = canvas,
-                        showPageStrip = showPageStrip,
-                        showControlsOnStart = showControlsOnStart,
+                        settings = readerSettings,
                         onModeChange = onModeChange,
                         onScaleChange = onScaleChange,
                         onCanvasChange = onCanvasChange,
-                        onShowPageStripChange = onShowPageStripChange,
-                        onShowControlsOnStartChange = onShowControlsOnStartChange,
+                        onSettingsChange = { updated ->
+                            if (updated.showPageStrip != showPageStrip) {
+                                onShowPageStripChange(updated.showPageStrip)
+                            } else if (updated.keepControlsVisible != showControlsOnStart) {
+                                onShowControlsOnStartChange(updated.keepControlsVisible)
+                            } else {
+                                onReaderSettingsChange(updated)
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth(0.96f)
                             .widthIn(max = 680.dp)
@@ -4847,6 +5087,35 @@ private fun ReaderScaffold(
                 )
             }
         }
+    }
+}
+
+private enum class ReaderTapAction {
+    Previous,
+    Menu,
+    Next,
+}
+
+private fun readerTapActionAt(
+    offset: Offset,
+    width: Int,
+    height: Int,
+    smallerZones: Boolean,
+    inversion: ChimahonTapZoneInvert,
+): ReaderTapAction {
+    var x = (offset.x / width.toFloat()).coerceIn(0f, 1f)
+    var y = (offset.y / height.toFloat()).coerceIn(0f, 1f)
+    if (inversion == ChimahonTapZoneInvert.Horizontal || inversion == ChimahonTapZoneInvert.Both) {
+        x = 1f - x
+    }
+    if (inversion == ChimahonTapZoneInvert.Vertical || inversion == ChimahonTapZoneInvert.Both) {
+        y = 1f - y
+    }
+    val edge = if (smallerZones) 0.22f else 0.33f
+    return when {
+        x < edge || (x < 1f - edge && y < edge) -> ReaderTapAction.Previous
+        x > 1f - edge || (x > edge && y > 1f - edge) -> ReaderTapAction.Next
+        else -> ReaderTapAction.Menu
     }
 }
 
@@ -5040,20 +5309,20 @@ private fun ReaderSettingsPanel(
     mode: ReaderMode,
     scale: ReaderScale,
     canvas: ReaderCanvas,
-    showPageStrip: Boolean,
-    showControlsOnStart: Boolean,
+    settings: ChimahonReaderSettings,
     onModeChange: (ReaderMode) -> Unit,
     onScaleChange: (ReaderScale) -> Unit,
     onCanvasChange: (ReaderCanvas) -> Unit,
-    onShowPageStripChange: (Boolean) -> Unit,
-    onShowControlsOnStartChange: (Boolean) -> Unit,
+    onSettingsChange: (ChimahonReaderSettings) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
+            .heightIn(max = 560.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(ReaderPalette.chrome.copy(alpha = 0.97f))
             .border(1.dp, ReaderPalette.divider, RoundedCornerShape(8.dp))
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -5083,15 +5352,199 @@ private fun ReaderSettingsPanel(
         )
         ReaderToggleRow(
             label = "Page scrubber",
-            checked = showPageStrip,
-            onCheckedChange = onShowPageStripChange,
+            checked = settings.showPageStrip,
+            onCheckedChange = { onSettingsChange(settings.copy(showPageStrip = it)) },
         )
         ReaderToggleRow(
             label = "Show controls on start",
-            checked = showControlsOnStart,
-            onCheckedChange = onShowControlsOnStartChange,
+            checked = settings.keepControlsVisible,
+            onCheckedChange = { onSettingsChange(settings.copy(keepControlsVisible = it)) },
+        )
+        ReaderToggleRow(
+            label = "Show page number",
+            checked = settings.showPageNumber,
+            onCheckedChange = { onSettingsChange(settings.copy(showPageNumber = it)) },
+        )
+        ReaderToggleRow(
+            label = "Crop borders",
+            checked = settings.cropBorders,
+            onCheckedChange = { onSettingsChange(settings.copy(cropBorders = it)) },
+        )
+        ReaderToggleRow(
+            label = "Page transitions",
+            checked = settings.pageTransitions,
+            onCheckedChange = { onSettingsChange(settings.copy(pageTransitions = it)) },
+        )
+        ReaderToggleRow(
+            label = "Tap zones",
+            checked = settings.tapZonesEnabled,
+            onCheckedChange = { onSettingsChange(settings.copy(tapZonesEnabled = it)) },
+        )
+        ReaderToggleRow(
+            label = "Smaller tap zones",
+            checked = settings.smallerTapZones,
+            onCheckedChange = { onSettingsChange(settings.copy(smallerTapZones = it)) },
+        )
+        ReaderOptionRow(
+            label = "Invert tap zones",
+            options = ChimahonTapZoneInvert.entries.map { it.readerTitle() },
+            selected = settings.invertTapZones.readerTitle(),
+            onSelect = { title ->
+                ChimahonTapZoneInvert.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(invertTapZones = it)) }
+            },
+        )
+        ReaderToggleRow(
+            label = "Volume keys",
+            checked = settings.volumeKeysEnabled,
+            onCheckedChange = { onSettingsChange(settings.copy(volumeKeysEnabled = it)) },
+        )
+        ReaderToggleRow(
+            label = "Invert volume keys",
+            checked = settings.volumeKeysInverted,
+            onCheckedChange = { onSettingsChange(settings.copy(volumeKeysInverted = it)) },
+        )
+        ReaderToggleRow(
+            label = "Long tap controls",
+            checked = settings.longTapEnabled,
+            onCheckedChange = { onSettingsChange(settings.copy(longTapEnabled = it)) },
+        )
+        ReaderToggleRow(
+            label = "Keep screen on",
+            checked = settings.keepScreenOn,
+            onCheckedChange = { onSettingsChange(settings.copy(keepScreenOn = it)) },
         )
     }
+}
+
+private fun ChimahonTapZoneInvert.readerTitle(): String = when (this) {
+    ChimahonTapZoneInvert.None -> "None"
+    ChimahonTapZoneInvert.Horizontal -> "Horizontal"
+    ChimahonTapZoneInvert.Vertical -> "Vertical"
+    ChimahonTapZoneInvert.Both -> "Both"
+}
+
+private fun ChimahonReaderOrientation.readerTitle(): String = when (this) {
+    ChimahonReaderOrientation.Free -> "Free"
+    ChimahonReaderOrientation.Portrait -> "Portrait"
+    ChimahonReaderOrientation.Landscape -> "Landscape"
+    ChimahonReaderOrientation.ReversePortrait -> "Reverse portrait"
+    ChimahonReaderOrientation.ReverseLandscape -> "Reverse landscape"
+}
+
+private fun ChimahonDualPageMode.readerTitle(): String = when (this) {
+    ChimahonDualPageMode.Off -> "Off"
+    ChimahonDualPageMode.Automatic -> "Automatic"
+    ChimahonDualPageMode.Always -> "Always"
+}
+
+private fun ChimahonReaderNavigationMode.readerTitle(): String = when (this) {
+    ChimahonReaderNavigationMode.Automatic -> "Automatic"
+    ChimahonReaderNavigationMode.LeftToRight -> "Left to right"
+    ChimahonReaderNavigationMode.RightToLeft -> "Right to left"
+    ChimahonReaderNavigationMode.Vertical -> "Vertical"
+}
+
+private fun ChimahonLibraryCoverRatio.libraryTitle(): String = when (this) {
+    ChimahonLibraryCoverRatio.Automatic -> "Automatic"
+    ChimahonLibraryCoverRatio.Square -> "Square"
+    ChimahonLibraryCoverRatio.ThreeToFour -> "3:4"
+    ChimahonLibraryCoverRatio.TwoToThree -> "2:3"
+    ChimahonLibraryCoverRatio.Original -> "Original"
+}
+
+private fun ChimahonLibrarySort.libraryTitle(): String = when (this) {
+    ChimahonLibrarySort.Alphabetical -> "Alphabetical"
+    ChimahonLibrarySort.LastRead -> "Last read"
+    ChimahonLibrarySort.LastUpdate -> "Last update"
+    ChimahonLibrarySort.UnreadCount -> "Unread count"
+    ChimahonLibrarySort.TotalChapters -> "Total chapters"
+    ChimahonLibrarySort.LatestChapter -> "Latest chapter"
+    ChimahonLibrarySort.ChapterFetchDate -> "Chapter fetch date"
+    ChimahonLibrarySort.DateAdded -> "Date added"
+    ChimahonLibrarySort.Random -> "Random"
+}
+
+private fun ChimahonLibrarySort.toUiLibrarySort(): LibrarySort = when (this) {
+    ChimahonLibrarySort.DateAdded -> LibrarySort.DateAdded
+    ChimahonLibrarySort.LastRead,
+    ChimahonLibrarySort.LastUpdate,
+    ChimahonLibrarySort.LatestChapter,
+    ChimahonLibrarySort.ChapterFetchDate,
+    -> LibrarySort.LastUpdated
+    ChimahonLibrarySort.UnreadCount -> LibrarySort.UnreadCount
+    ChimahonLibrarySort.Alphabetical,
+    ChimahonLibrarySort.TotalChapters,
+    ChimahonLibrarySort.Random,
+    -> LibrarySort.Alphabetical
+}
+
+private fun ChimahonLibrarySettings.toInitialLibraryFilter(): LibraryFilter {
+    return when {
+        unreadFilter == ChimahonFilterMode.Include -> LibraryFilter.Unread
+        startedFilter == ChimahonFilterMode.Include -> LibraryFilter.Started
+        bookmarkedFilter == ChimahonFilterMode.Include -> LibraryFilter.Bookmarked
+        else -> LibraryFilter.All
+    }
+}
+
+private fun ChimahonFilterMode.filterTitle(): String = when (this) {
+    ChimahonFilterMode.Any -> "Any"
+    ChimahonFilterMode.Include -> "Include"
+    ChimahonFilterMode.Exclude -> "Exclude"
+}
+
+private fun Int.toColumnTitle(): String = if (this <= 0) "Automatic" else toString()
+
+private fun String.toColumnCount(): Int = if (this == "Automatic") 0 else toIntOrNull() ?: 0
+
+private fun Int.toOffCountTitle(): String = if (this <= 0) "Off" else toString()
+
+private fun String.toOffCount(): Int = if (this == "Off") 0 else toIntOrNull()?.coerceAtLeast(0) ?: 0
+
+private fun Int.toRemoveAfterReadTitle(): String = when (this) {
+    1 -> "After next chapter"
+    2 -> "After 2 chapters"
+    5 -> "After 5 chapters"
+    else -> "Never"
+}
+
+private fun String.toRemoveAfterReadSlots(): Int = when (this) {
+    "After next chapter" -> 1
+    "After 2 chapters" -> 2
+    "After 5 chapters" -> 5
+    else -> -1
+}
+
+private fun ChimahonBrowseSourceDisplayMode.browseTitle(): String = when (this) {
+    ChimahonBrowseSourceDisplayMode.List -> "List"
+    ChimahonBrowseSourceDisplayMode.CompactList -> "Compact list"
+    ChimahonBrowseSourceDisplayMode.Grid -> "Grid"
+}
+
+private fun ChimahonSecureScreenMode.securityTitle(): String = when (this) {
+    ChimahonSecureScreenMode.Always -> "Always"
+    ChimahonSecureScreenMode.Incognito -> "Incognito"
+    ChimahonSecureScreenMode.Never -> "Never"
+}
+
+private fun Int.toLockAfterTitle(): String = when (this) {
+    0 -> "Immediately"
+    1 -> "1 minute"
+    5 -> "5 minutes"
+    15 -> "15 minutes"
+    30 -> "30 minutes"
+    else -> "$this minutes"
+}
+
+private fun String.toLockAfterMinutes(): Int = when (this) {
+    "Immediately" -> 0
+    "1 minute" -> 1
+    "5 minutes" -> 5
+    "15 minutes" -> 15
+    "30 minutes" -> 30
+    else -> removeSuffix(" minutes").toIntOrNull()?.coerceAtLeast(0) ?: 0
 }
 
 @Composable
@@ -5313,6 +5766,7 @@ private fun ReaderPageImage(
     paged: Boolean,
     scale: ReaderScale,
     canvas: ReaderCanvas,
+    readerSettings: ChimahonReaderSettings,
     cachedState: ReaderPageUiState?,
     onStateChange: (ReaderPageUiState) -> Unit,
     onLoadReaderPageImage: suspend (ChimahonReaderPage) -> ByteArray,
@@ -5337,7 +5791,7 @@ private fun ReaderPageImage(
             Modifier
                 .fillMaxSize()
                 .background(canvas.color)
-                .padding(12.dp)
+                .padding(if (readerSettings.cropBorders) 0.dp else 12.dp)
         } else {
             Modifier
                 .fillMaxWidth()
@@ -5373,11 +5827,14 @@ private fun ReaderPageImage(
             is ReaderPageUiState.Ready -> {
                 val aspectRatio = pageState.image.width.toFloat() /
                     pageState.image.height.coerceAtLeast(1).toFloat()
+                val colorFilter = readerSettings.readerColorFilter()
                 Image(
                     bitmap = pageState.image,
                     contentDescription = "Page ${page.index + 1}",
-                    contentScale = ContentScale.Fit,
+                    contentScale = if (readerSettings.cropBorders) ContentScale.Crop else ContentScale.Fit,
+                    colorFilter = colorFilter,
                     modifier = when {
+                        paged && readerSettings.cropBorders -> Modifier.fillMaxSize()
                         paged && scale == ReaderScale.FitScreen -> Modifier.fillMaxSize()
                         paged && scale == ReaderScale.FitHeight -> Modifier
                             .fillMaxHeight()
@@ -5387,8 +5844,43 @@ private fun ReaderPageImage(
                             .aspectRatio(aspectRatio)
                     },
                 )
+                readerSettings.readerBrightnessOverlay()?.let { overlay ->
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(overlay),
+                    )
+                }
             }
         }
+    }
+}
+
+private fun ChimahonReaderSettings.readerColorFilter(): ColorFilter? {
+    if (!colorFilterEnabled) return null
+    return when {
+        invertColors -> ColorFilter.colorMatrix(
+            ColorMatrix(
+                floatArrayOf(
+                    -1f, 0f, 0f, 0f, 255f,
+                    0f, -1f, 0f, 0f, 255f,
+                    0f, 0f, -1f, 0f, 255f,
+                    0f, 0f, 0f, 1f, 0f,
+                ),
+            ),
+        )
+        grayscale -> ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+        else -> null
+    }
+}
+
+private fun ChimahonReaderSettings.readerBrightnessOverlay(): Color? {
+    if (!colorFilterEnabled || brightness == 0) return null
+    val alpha = (kotlin.math.abs(brightness).coerceAtMost(100) / 100f) * 0.42f
+    return if (brightness > 0) {
+        Color.White.copy(alpha = alpha)
+    } else {
+        Color.Black.copy(alpha = alpha)
     }
 }
 
@@ -5718,6 +6210,7 @@ private fun ExtensionsSection(
     onDeleteExtensionRepo: suspend (String) -> Unit,
     onLoadExtensionRepoCatalog: suspend (ChimahonExtensionRepoEntry) -> ChimahonExtensionRepoCatalog,
     onInstallExtension: suspend (ChimahonRepoExtensionEntry) -> ChimahonInstalledExtensionEntry,
+    onUninstallExtension: suspend (String, ChimahonExtensionPackageType) -> ChimahonExtensionUninstallResult,
     onRepoSaved: () -> Unit,
 ) {
     var repoUrl by remember { mutableStateOf("") }
@@ -5729,7 +6222,9 @@ private fun ExtensionsSection(
     var repoDeleteMessage by remember { mutableStateOf<String?>(null) }
     var catalogState by remember { mutableStateOf<ExtensionRepoCatalogUiState>(ExtensionRepoCatalogUiState.Idle) }
     var installingExtensionId by remember { mutableStateOf<String?>(null) }
+    var uninstallingExtensionId by remember { mutableStateOf<String?>(null) }
     var installMessage by remember { mutableStateOf<String?>(null) }
+    var uninstallMessage by remember { mutableStateOf<String?>(null) }
     var selectedFilter by remember { mutableStateOf(ExtensionFilter.All) }
     var showRepoInput by remember { mutableStateOf(snapshot.extensionRepos.isEmpty()) }
     val scope = rememberCoroutineScope()
@@ -5867,7 +6362,46 @@ private fun ExtensionsSection(
                 }
             } else {
                 items(filteredInstalledExtensions, key = { it.id }) { extension ->
-                    InstalledExtensionListItem(extension)
+                    InstalledExtensionListItem(
+                        extension = extension,
+                        uninstalling = uninstallingExtensionId == extension.id,
+                        onUninstall = {
+                            if (uninstallingExtensionId == null) {
+                                uninstallingExtensionId = extension.id
+                                uninstallMessage = null
+                                scope.launch {
+                                    runCatching { onUninstallExtension(extension.id, extension.packageType) }
+                                        .onSuccess { result ->
+                                            uninstallMessage = if (result.removed) {
+                                                "Uninstalled ${extension.name}"
+                                            } else {
+                                                "No installed copy of ${extension.name} was found"
+                                            }
+                                            onRepoSaved()
+                                        }
+                                        .onFailure { error ->
+                                            uninstallMessage = error.message ?: "Could not uninstall extension"
+                                        }
+                                    uninstallingExtensionId = null
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+            uninstallMessage?.let { message ->
+                item {
+                    Label(
+                        text = message,
+                        color = if (message.startsWith("Could not")) {
+                            ChimahonPalette.error
+                        } else {
+                            ChimahonPalette.primary
+                        },
+                        size = 12,
+                        maxLines = 2,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
                 }
             }
         }
@@ -6343,13 +6877,22 @@ private fun ExtensionRepoDialogAction(
 }
 
 @Composable
-private fun InstalledExtensionListItem(extension: ChimahonInstalledExtensionEntry) {
+private fun InstalledExtensionListItem(
+    extension: ChimahonInstalledExtensionEntry,
+    uninstalling: Boolean,
+    onUninstall: () -> Unit,
+) {
     ExtensionListRow(
         marker = extension.packageType.marker,
         title = extension.name,
         subtitle = "${extension.sourceCount} source(s)  \u00b7  ${extension.version}",
-        action = "Settings",
+        action = if (uninstalling) "Removing" else "Uninstall",
         active = true,
+        onClick = if (uninstalling) {
+            {}
+        } else {
+            onUninstall
+        },
     )
 }
 
@@ -8058,12 +8601,29 @@ private fun MoreHome(
     onCreateCategory: suspend (String) -> Long,
     onDeleteCategory: suspend (Long) -> Unit,
     onCategoriesChanged: () -> Unit,
+    onLoadDataMaintenance: suspend () -> ChimahonDataMaintenanceSnapshot,
+    onClearThumbnailCache: suspend () -> ChimahonCacheClearResult,
+    onClearCacheData: suspend () -> ChimahonCacheClearResult,
+    onRunDatabaseMaintenance: suspend () -> ChimahonDatabaseMaintenanceResult,
+    onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onPauseDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onResumeDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onRetryDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onRemoveDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onClearCompletedDownloads: suspend () -> ChimahonDownloadQueueData,
+    onMoveDownloadToTop: suspend (Long) -> ChimahonDownloadQueueData,
+    onMoveDownloadToBottom: suspend (Long) -> ChimahonDownloadQueueData,
     downloadedOnlyMode: Boolean,
     incognitoMode: Boolean,
     settings: ChimahonSettings,
     onAppearanceSettingsChange: (ChimahonAppearanceSettings) -> Unit,
     onLibrarySettingsChange: (ChimahonLibrarySettings) -> Unit,
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
+    onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
+    onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onSecuritySettingsChange: (ChimahonSecuritySettings) -> Unit,
     onOpenExternalUrl: (String) -> Boolean,
     onDownloadedOnlyModeChange: (Boolean) -> Unit,
     onIncognitoModeChange: (Boolean) -> Unit,
@@ -8081,12 +8641,29 @@ private fun MoreHome(
             onCreateCategory = onCreateCategory,
             onDeleteCategory = onDeleteCategory,
             onCategoriesChanged = onCategoriesChanged,
+            onLoadDataMaintenance = onLoadDataMaintenance,
+            onClearThumbnailCache = onClearThumbnailCache,
+            onClearCacheData = onClearCacheData,
+            onRunDatabaseMaintenance = onRunDatabaseMaintenance,
+            onLoadDownloadQueue = onLoadDownloadQueue,
+            onPauseDownloadQueue = onPauseDownloadQueue,
+            onResumeDownloadQueue = onResumeDownloadQueue,
+            onPauseDownload = onPauseDownload,
+            onResumeDownload = onResumeDownload,
+            onRetryDownload = onRetryDownload,
+            onRemoveDownload = onRemoveDownload,
+            onClearCompletedDownloads = onClearCompletedDownloads,
+            onMoveDownloadToTop = onMoveDownloadToTop,
+            onMoveDownloadToBottom = onMoveDownloadToBottom,
             downloadedOnlyMode = downloadedOnlyMode,
             incognitoMode = incognitoMode,
             settings = settings,
             onAppearanceSettingsChange = onAppearanceSettingsChange,
             onLibrarySettingsChange = onLibrarySettingsChange,
             onReaderSettingsChange = onReaderSettingsChange,
+            onDownloadPreferencesChange = onDownloadPreferencesChange,
+            onBrowseSettingsChange = onBrowseSettingsChange,
+            onSecuritySettingsChange = onSecuritySettingsChange,
             onOpenExternalUrl = onOpenExternalUrl,
             onDownloadedOnlyModeChange = onDownloadedOnlyModeChange,
             onIncognitoModeChange = onIncognitoModeChange,
@@ -8247,12 +8824,29 @@ private fun MoreDetailPage(
     onCreateCategory: suspend (String) -> Long,
     onDeleteCategory: suspend (Long) -> Unit,
     onCategoriesChanged: () -> Unit,
+    onLoadDataMaintenance: suspend () -> ChimahonDataMaintenanceSnapshot,
+    onClearThumbnailCache: suspend () -> ChimahonCacheClearResult,
+    onClearCacheData: suspend () -> ChimahonCacheClearResult,
+    onRunDatabaseMaintenance: suspend () -> ChimahonDatabaseMaintenanceResult,
+    onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onPauseDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onResumeDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onRetryDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onRemoveDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onClearCompletedDownloads: suspend () -> ChimahonDownloadQueueData,
+    onMoveDownloadToTop: suspend (Long) -> ChimahonDownloadQueueData,
+    onMoveDownloadToBottom: suspend (Long) -> ChimahonDownloadQueueData,
     downloadedOnlyMode: Boolean,
     incognitoMode: Boolean,
     settings: ChimahonSettings,
     onAppearanceSettingsChange: (ChimahonAppearanceSettings) -> Unit,
     onLibrarySettingsChange: (ChimahonLibrarySettings) -> Unit,
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
+    onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
+    onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onSecuritySettingsChange: (ChimahonSecuritySettings) -> Unit,
     onOpenExternalUrl: (String) -> Boolean,
     onDownloadedOnlyModeChange: (Boolean) -> Unit,
     onIncognitoModeChange: (Boolean) -> Unit,
@@ -8262,7 +8856,22 @@ private fun MoreDetailPage(
     var categoryName by remember { mutableStateOf("") }
     var categoryMessage by remember { mutableStateOf<String?>(null) }
     var categoryBusy by remember { mutableStateOf(false) }
+    var downloadQueue by remember { mutableStateOf<ChimahonDownloadQueueData?>(null) }
+    var downloadQueueMessage by remember { mutableStateOf<String?>(null) }
+    var maintenanceSnapshot by remember { mutableStateOf<ChimahonDataMaintenanceSnapshot?>(null) }
+    var maintenanceMessage by remember { mutableStateOf<String?>(null) }
+    var maintenanceBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(page) {
+        if (page == MorePage.Downloads) {
+            downloadQueue = runCatching { onLoadDownloadQueue() }.getOrNull()
+        }
+        if (page == MorePage.Storage) {
+            maintenanceSnapshot = runCatching { onLoadDataMaintenance() }
+                .onFailure { maintenanceMessage = it.message ?: "Could not load storage data" }
+                .getOrNull()
+        }
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -8282,6 +8891,7 @@ private fun MoreDetailPage(
         ) {
             when (page) {
                 MorePage.Downloads -> {
+                    val queue = downloadQueue
                     item {
                         MoreDownloadSummary(
                             downloadsDirectory = snapshot.runtime.downloadsDir,
@@ -8290,12 +8900,91 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
-                        EmptyMobileState(
-                            marker = "D",
-                            icon = UiIcon.Download,
-                            title = "Download queue is empty",
-                            detail = "New chapter downloads will appear here with pause, resume, reorder, and cancel controls.",
+                        DownloadQueueToolbar(
+                            queue = queue,
+                            message = downloadQueueMessage,
+                            onTogglePaused = {
+                                scope.launch {
+                                    downloadQueue = if (downloadQueue?.paused == true) {
+                                        runCatching { onResumeDownloadQueue() }
+                                            .onFailure { downloadQueueMessage = it.message ?: "Could not resume queue" }
+                                            .getOrNull()
+                                    } else {
+                                        runCatching { onPauseDownloadQueue() }
+                                            .onFailure { downloadQueueMessage = it.message ?: "Could not pause queue" }
+                                            .getOrNull()
+                                    } ?: downloadQueue
+                                }
+                            },
+                            onClearCompleted = {
+                                scope.launch {
+                                    downloadQueue = runCatching { onClearCompletedDownloads() }
+                                        .onSuccess { downloadQueueMessage = "Cleared completed downloads" }
+                                        .onFailure { downloadQueueMessage = it.message ?: "Could not clear completed downloads" }
+                                        .getOrNull() ?: downloadQueue
+                                }
+                            },
                         )
+                    }
+                    if (queue == null) {
+                        item {
+                            ExtensionStatusRow(
+                                title = "Loading download queue",
+                                subtitle = "Reading saved queue state.",
+                            )
+                        }
+                    } else if (queue.entries.isEmpty()) {
+                        item {
+                            EmptyMobileState(
+                                marker = "D",
+                                icon = UiIcon.Download,
+                                title = "Download queue is empty",
+                                detail = "New chapter downloads will appear here with pause, resume, reorder, and cancel controls.",
+                            )
+                        }
+                    } else {
+                        items(queue.entries, key = { it.id }) { entry ->
+                            DownloadQueueEntryRow(
+                                entry = entry,
+                                onPrimaryAction = {
+                                    scope.launch {
+                                        downloadQueue = runCatching {
+                                            when (entry.status) {
+                                                ChimahonDownloadState.Paused -> onResumeDownload(entry.chapterId)
+                                                ChimahonDownloadState.Error -> onRetryDownload(entry.chapterId)
+                                                ChimahonDownloadState.Downloaded -> onRemoveDownload(entry.chapterId)
+                                                ChimahonDownloadState.Queued,
+                                                ChimahonDownloadState.Downloading,
+                                                -> onPauseDownload(entry.chapterId)
+                                            }
+                                        }
+                                            .onFailure { downloadQueueMessage = it.message ?: "Could not update download" }
+                                            .getOrNull() ?: downloadQueue
+                                    }
+                                },
+                                onMoveTop = {
+                                    scope.launch {
+                                        downloadQueue = runCatching { onMoveDownloadToTop(entry.chapterId) }
+                                            .onFailure { downloadQueueMessage = it.message ?: "Could not move download" }
+                                            .getOrNull() ?: downloadQueue
+                                    }
+                                },
+                                onMoveBottom = {
+                                    scope.launch {
+                                        downloadQueue = runCatching { onMoveDownloadToBottom(entry.chapterId) }
+                                            .onFailure { downloadQueueMessage = it.message ?: "Could not move download" }
+                                            .getOrNull() ?: downloadQueue
+                                    }
+                                },
+                                onRemove = {
+                                    scope.launch {
+                                        downloadQueue = runCatching { onRemoveDownload(entry.chapterId) }
+                                            .onFailure { downloadQueueMessage = it.message ?: "Could not remove download" }
+                                            .getOrNull() ?: downloadQueue
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
                 MorePage.Categories -> {
@@ -8430,6 +9119,7 @@ private fun MoreDetailPage(
                     }
                 }
                 MorePage.Storage -> {
+                    val maintenance = maintenanceSnapshot
                     item { ListGroupHeader("Runtime") }
                     item { RuntimeLineRow("Platform", snapshot.runtime.platformName) }
                     item { RuntimeLineRow("Database", snapshot.runtime.databaseState) }
@@ -8438,6 +9128,98 @@ private fun MoreDetailPage(
                     item { RuntimeLineRow("Files", snapshot.runtime.filesDir) }
                     item { RuntimeLineRow("Cache", snapshot.runtime.cacheDir) }
                     item { RuntimeLineRow("Downloads", snapshot.runtime.downloadsDir) }
+                    item { ListGroupHeader("Storage usage") }
+                    if (maintenance == null) {
+                        item {
+                            ExtensionStatusRow(
+                                title = "Loading storage data",
+                                subtitle = "Scanning shared files, cache, and downloads.",
+                            )
+                        }
+                    } else {
+                        item {
+                            StorageUsageHero(storage = maintenance.storage)
+                        }
+                        item {
+                            StorageSectionRow("Files", maintenance.storage.files)
+                        }
+                        item {
+                            StorageSectionRow("Cache", maintenance.storage.cache)
+                        }
+                        item {
+                            StorageSectionRow("Downloads", maintenance.storage.downloads)
+                        }
+                        item { ListGroupHeader("Maintenance") }
+                        item {
+                            ExtensionStatusRow(
+                                title = "Thumbnail cache",
+                                subtitle = "${maintenance.thumbnailCache.entryCount} cached image(s), ${maintenance.thumbnailCache.sizeBytes.toReadableBytes()} in memory",
+                                action = if (maintenanceBusy) "Working" else "Clear",
+                                onAction = {
+                                    if (!maintenanceBusy) {
+                                        maintenanceBusy = true
+                                        scope.launch {
+                                            runCatching { onClearThumbnailCache() }
+                                                .onSuccess { maintenanceMessage = it.cacheClearSummary() }
+                                                .onFailure { maintenanceMessage = it.message ?: "Could not clear thumbnail cache" }
+                                            maintenanceSnapshot = runCatching { onLoadDataMaintenance() }
+                                                .getOrNull() ?: maintenanceSnapshot
+                                            maintenanceBusy = false
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            ExtensionStatusRow(
+                                title = "Application cache",
+                                subtitle = "${maintenance.storage.cache.sizeBytes.toReadableBytes()} across ${maintenance.storage.cache.fileCount} file(s)",
+                                action = if (maintenanceBusy) "Working" else "Clear",
+                                onAction = {
+                                    if (!maintenanceBusy) {
+                                        maintenanceBusy = true
+                                        scope.launch {
+                                            runCatching { onClearCacheData() }
+                                                .onSuccess { maintenanceMessage = it.cacheClearSummary() }
+                                                .onFailure { maintenanceMessage = it.message ?: "Could not clear app cache" }
+                                            maintenanceSnapshot = runCatching { onLoadDataMaintenance() }
+                                                .getOrNull() ?: maintenanceSnapshot
+                                            maintenanceBusy = false
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            ExtensionStatusRow(
+                                title = "Database maintenance",
+                                subtitle = "${maintenance.database.historyEntryCount} history record(s), ${maintenance.database.updateIssues.totalIssueCount} update issue(s)",
+                                action = if (maintenanceBusy) "Working" else "Run",
+                                onAction = {
+                                    if (!maintenanceBusy) {
+                                        maintenanceBusy = true
+                                        scope.launch {
+                                            runCatching { onRunDatabaseMaintenance() }
+                                                .onSuccess { maintenanceMessage = it.databaseMaintenanceSummary() }
+                                                .onFailure { maintenanceMessage = it.message ?: "Could not run maintenance" }
+                                            maintenanceSnapshot = runCatching { onLoadDataMaintenance() }
+                                                .getOrNull() ?: maintenanceSnapshot
+                                            maintenanceBusy = false
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                        maintenanceMessage?.let { message ->
+                            item {
+                                ExtensionStatusRow(
+                                    title = "Maintenance result",
+                                    subtitle = message,
+                                    error = message.startsWith("Could not"),
+                                )
+                            }
+                        }
+                    }
                     item { ListGroupHeader("Database content") }
                     item { RuntimeLineRow("Manga records", snapshot.mangaDetails.size.toString()) }
                     item {
@@ -8570,6 +9352,18 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        SettingsChoiceRow(
+                            title = "Color theme",
+                            options = ChimahonColorTheme.entries.map { it.title },
+                            selected = settings.appearance.colorTheme.title,
+                            onSelect = { selected ->
+                                ChimahonColorTheme.entries.firstOrNull { it.title == selected }?.let {
+                                    onAppearanceSettingsChange(settings.appearance.copy(colorTheme = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             "Pure black dark mode",
                             "Use an AMOLED black background while dark mode is active",
@@ -8581,6 +9375,20 @@ private fun MoreDetailPage(
                         )
                     }
                     item { ListGroupHeader("Display") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Font scale",
+                            options = listOf("85%", "90%", "95%", "100%", "105%", "110%", "115%", "120%"),
+                            selected = "${settings.appearance.fontScalePercent}%",
+                            onSelect = { selected ->
+                                selected.removeSuffix("%").toIntOrNull()?.let {
+                                    onAppearanceSettingsChange(
+                                        settings.appearance.copy(fontScalePercent = it),
+                                    )
+                                }
+                            },
+                        )
+                    }
                     item {
                         PreferenceSwitchRow(
                             "Compact navigation",
@@ -8639,6 +9447,42 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        SettingsChoiceRow(
+                            title = "Grid columns portrait",
+                            options = listOf("Automatic", "2", "3", "4", "5", "6"),
+                            selected = settings.library.gridColumnsPortrait.toColumnTitle(),
+                            onSelect = { selected ->
+                                onLibrarySettingsChange(
+                                    settings.library.copy(gridColumnsPortrait = selected.toColumnCount()),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Grid columns landscape",
+                            options = listOf("Automatic", "3", "4", "5", "6", "7", "8"),
+                            selected = settings.library.gridColumnsLandscape.toColumnTitle(),
+                            onSelect = { selected ->
+                                onLibrarySettingsChange(
+                                    settings.library.copy(gridColumnsLandscape = selected.toColumnCount()),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Cover ratio",
+                            options = ChimahonLibraryCoverRatio.entries.map { it.libraryTitle() },
+                            selected = settings.library.coverAspectRatio.libraryTitle(),
+                            onSelect = { selected ->
+                                ChimahonLibraryCoverRatio.entries
+                                    .firstOrNull { it.libraryTitle() == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(coverAspectRatio = it)) }
+                            },
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             "Show category tabs",
                             "Keep library categories above the grid",
@@ -8662,12 +9506,130 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceSwitchRow(
+                            "Show downloaded badges",
+                            "Display offline availability on library covers",
+                            UiIcon.Download,
+                            checked = settings.library.showDownloadedBadges,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(showDownloadedBadges = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show language badges",
+                            "Display source language on library entries",
+                            UiIcon.Web,
+                            checked = settings.library.showLanguageBadges,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(showLanguageBadges = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
                             "Show continue buttons",
                             "Resume the next readable chapter from library items",
                             UiIcon.Play,
                             checked = settings.library.showContinueButtons,
                             onCheckedChange = {
                                 onLibrarySettingsChange(settings.library.copy(showContinueButtons = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Filter and sort") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Default sort",
+                            options = ChimahonLibrarySort.entries.map { it.libraryTitle() },
+                            selected = settings.library.sort.libraryTitle(),
+                            onSelect = { selected ->
+                                ChimahonLibrarySort.entries
+                                    .firstOrNull { it.libraryTitle() == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(sort = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Ascending sort",
+                            "Reverse the selected default sort when disabled",
+                            UiIcon.Swap,
+                            checked = settings.library.sortAscending,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(sortAscending = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Downloaded filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.library.downloadedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(downloadedFilter = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Unread filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.library.unreadFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(unreadFilter = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Started filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.library.startedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(startedFilter = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Bookmarked filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.library.bookmarkedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(bookmarkedFilter = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Completed filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.library.completedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(completedFilter = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Tracked filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.library.trackedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(trackedFilter = it)) }
                             },
                         )
                     }
@@ -8717,6 +9679,99 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        SettingsChoiceRow(
+                            title = "Orientation",
+                            options = ChimahonReaderOrientation.entries.map { it.readerTitle() },
+                            selected = settings.reader.orientation.readerTitle(),
+                            onSelect = { title ->
+                                ChimahonReaderOrientation.entries
+                                    .firstOrNull { it.readerTitle() == title }
+                                    ?.let { onReaderSettingsChange(settings.reader.copy(orientation = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Dual page",
+                            options = ChimahonDualPageMode.entries.map { it.readerTitle() },
+                            selected = settings.reader.dualPageMode.readerTitle(),
+                            onSelect = { title ->
+                                ChimahonDualPageMode.entries
+                                    .firstOrNull { it.readerTitle() == title }
+                                    ?.let { onReaderSettingsChange(settings.reader.copy(dualPageMode = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Navigation mode",
+                            options = ChimahonReaderNavigationMode.entries.map { it.readerTitle() },
+                            selected = settings.reader.navigationMode.readerTitle(),
+                            onSelect = { title ->
+                                ChimahonReaderNavigationMode.entries
+                                    .firstOrNull { it.readerTitle() == title }
+                                    ?.let { onReaderSettingsChange(settings.reader.copy(navigationMode = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Split wide pages",
+                            "Split landscape manga pages in paged readers",
+                            UiIcon.Swap,
+                            checked = settings.reader.splitWidePages,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(splitWidePages = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Color filter") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Enable color filter",
+                            "Apply reader-level color adjustments",
+                            UiIcon.Filter,
+                            checked = settings.reader.colorFilterEnabled,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(colorFilterEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Grayscale",
+                            "Render pages without color",
+                            UiIcon.VisibilityOff,
+                            checked = settings.reader.grayscale,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(grayscale = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Invert colors",
+                            "Invert manga page colors while reading",
+                            UiIcon.Circle,
+                            checked = settings.reader.invertColors,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(invertColors = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Brightness",
+                            options = listOf("-50", "-25", "0", "25", "50"),
+                            selected = settings.reader.brightness.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onReaderSettingsChange(settings.reader.copy(brightness = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             "Page scrubber",
                             "Show direct page navigation above reader controls",
@@ -8738,6 +9793,142 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show page number",
+                            "Display the current page while reader controls are hidden",
+                            UiIcon.Info,
+                            checked = settings.reader.showPageNumber,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(showPageNumber = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Crop borders",
+                            "Fill the reader canvas and trim empty image edges",
+                            UiIcon.Filter,
+                            checked = settings.reader.cropBorders,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(cropBorders = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Page transitions",
+                            "Animate movement between pages",
+                            UiIcon.Swap,
+                            checked = settings.reader.pageTransitions,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(pageTransitions = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Controls") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Swipe navigation",
+                            "Allow swiping and wheel gestures between pages",
+                            UiIcon.Swap,
+                            checked = settings.reader.swipeNavigationEnabled,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(swipeNavigationEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Double tap to zoom",
+                            "Enable image zoom gestures where supported",
+                            UiIcon.Search,
+                            checked = settings.reader.doubleTapToZoom,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(doubleTapToZoom = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Tap zones",
+                            "Tap page edges to navigate and the center to show controls",
+                            UiIcon.Play,
+                            checked = settings.reader.tapZonesEnabled,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(tapZonesEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Smaller tap zones",
+                            "Reserve more of the page center for opening reader controls",
+                            UiIcon.Reorder,
+                            checked = settings.reader.smallerTapZones,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(smallerTapZones = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Invert tap zones",
+                            options = ChimahonTapZoneInvert.entries.map { it.readerTitle() },
+                            selected = settings.reader.invertTapZones.readerTitle(),
+                            onSelect = { title ->
+                                ChimahonTapZoneInvert.entries
+                                    .firstOrNull { it.readerTitle() == title }
+                                    ?.let {
+                                        onReaderSettingsChange(settings.reader.copy(invertTapZones = it))
+                                    }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Volume keys",
+                            "Use volume buttons to navigate pages on supported platforms",
+                            UiIcon.SkipNext,
+                            checked = settings.reader.volumeKeysEnabled,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(volumeKeysEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Invert volume keys",
+                            "Swap previous and next page volume-button actions",
+                            UiIcon.Swap,
+                            checked = settings.reader.volumeKeysInverted,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(volumeKeysInverted = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Long tap controls",
+                            "Press and hold the page to show or hide reader controls",
+                            UiIcon.Settings,
+                            checked = settings.reader.longTapEnabled,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(longTapEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Keep screen on",
+                            "Request an uninterrupted reading session while the reader is open",
+                            UiIcon.Incognito,
+                            checked = settings.reader.keepScreenOn,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(keepScreenOn = it))
+                            },
+                        )
+                    }
                 }
                 MorePage.DownloadSettings -> {
                     item { ListGroupHeader("Offline reading") }
@@ -8748,6 +9939,143 @@ private fun MoreDetailPage(
                             UiIcon.Download,
                             checked = downloadedOnlyMode,
                             onCheckedChange = onDownloadedOnlyModeChange,
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Wi-Fi only",
+                            "Start new downloads only on unmetered connections",
+                            UiIcon.Web,
+                            checked = settings.downloads.wifiOnly,
+                            onCheckedChange = {
+                                onDownloadPreferencesChange(settings.downloads.copy(wifiOnly = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Save as CBZ",
+                            "Package downloaded chapters as comic archives when supported",
+                            UiIcon.Download,
+                            checked = settings.downloads.saveAsCbz,
+                            onCheckedChange = {
+                                onDownloadPreferencesChange(settings.downloads.copy(saveAsCbz = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Split tall images",
+                            "Split very tall pages for smoother native reading",
+                            UiIcon.Swap,
+                            checked = settings.downloads.splitTallImages,
+                            onCheckedChange = {
+                                onDownloadPreferencesChange(settings.downloads.copy(splitTallImages = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Ahead while reading",
+                            options = listOf("Off", "1", "2", "3", "5", "10"),
+                            selected = settings.downloads.autoDownloadWhileReadingCount.toOffCountTitle(),
+                            onSelect = { selected ->
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(
+                                        autoDownloadWhileReadingCount = selected.toOffCount(),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Source downloads",
+                            options = listOf("1", "2", "3", "4", "5", "8"),
+                            selected = settings.downloads.parallelSourceDownloads.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onDownloadPreferencesChange(
+                                        settings.downloads.copy(parallelSourceDownloads = it),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Page downloads",
+                            options = listOf("1", "2", "3", "4", "5", "8"),
+                            selected = settings.downloads.parallelPageDownloads.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onDownloadPreferencesChange(
+                                        settings.downloads.copy(parallelPageDownloads = it),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Automatic cleanup") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Remove after read",
+                            options = listOf("Never", "After next chapter", "After 2 chapters", "After 5 chapters"),
+                            selected = settings.downloads.removeAfterReadSlots.toRemoveAfterReadTitle(),
+                            onSelect = { selected ->
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(removeAfterReadSlots = selected.toRemoveAfterReadSlots()),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Remove marked read",
+                            "Delete downloaded chapters when they are marked read",
+                            UiIcon.Delete,
+                            checked = settings.downloads.removeAfterMarkedRead,
+                            onCheckedChange = {
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(removeAfterMarkedRead = it),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Keep bookmarks",
+                            "Do not remove downloaded bookmarked chapters",
+                            UiIcon.Bookmark,
+                            checked = settings.downloads.removeBookmarkedChapters.not(),
+                            onCheckedChange = {
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(removeBookmarkedChapters = !it),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("New chapters") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Download new chapters",
+                            "Automatically queue new library chapters",
+                            UiIcon.Updates,
+                            checked = settings.downloads.downloadNewChapters,
+                            onCheckedChange = {
+                                onDownloadPreferencesChange(settings.downloads.copy(downloadNewChapters = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Unread only",
+                            "Skip new chapters already marked read",
+                            UiIcon.DoneAll,
+                            checked = settings.downloads.downloadNewUnreadOnly,
+                            onCheckedChange = {
+                                onDownloadPreferencesChange(settings.downloads.copy(downloadNewUnreadOnly = it))
+                            },
                         )
                     }
                     item { RuntimeLineRow("Download directory", snapshot.runtime.downloadsDir) }
@@ -8801,9 +10129,83 @@ private fun MoreDetailPage(
                     item { RuntimeLineRow("Installed extensions", snapshot.summary.extensionCount.toString()) }
                     item { RuntimeLineRow("Repositories", snapshot.extensionRepos.size.toString()) }
                     item {
-                        ExtensionStatusRow(
-                            title = "Feed",
-                            subtitle = "Use Manage feeds in Browse to choose which installed sources appear.",
+                        PreferenceSwitchRow(
+                            "Show NSFW sources",
+                            "Include sources marked adult in Browse",
+                            UiIcon.VisibilityOff,
+                            checked = settings.browse.showNsfwSources,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(showNsfwSources = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Hide library entries",
+                            "Dim or hide titles already in your library",
+                            UiIcon.Library,
+                            checked = settings.browse.hideLibraryEntries,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(hideLibraryEntries = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Auto-load more",
+                            "Continue loading extension/source lists as you scroll",
+                            UiIcon.Refresh,
+                            checked = settings.browse.autoLoadMore,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(autoLoadMore = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Source display",
+                            options = ChimahonBrowseSourceDisplayMode.entries.map { it.browseTitle() },
+                            selected = settings.browse.sourceDisplayMode.browseTitle(),
+                            onSelect = { selected ->
+                                ChimahonBrowseSourceDisplayMode.entries
+                                    .firstOrNull { it.browseTitle() == selected }
+                                    ?.let { onBrowseSettingsChange(settings.browse.copy(sourceDisplayMode = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Group by language",
+                            "Group extension sources by language",
+                            UiIcon.Web,
+                            checked = settings.browse.groupSourcesByLanguage,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(groupSourcesByLanguage = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show source language",
+                            "Display language badges beside sources",
+                            UiIcon.Tag,
+                            checked = settings.browse.showSourceLanguage,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(showSourceLanguage = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Extension update notices",
+                            "Notify when installed extensions have updates",
+                            UiIcon.Updates,
+                            checked = settings.browse.extensionUpdateNotificationsEnabled,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(
+                                    settings.browse.copy(extensionUpdateNotificationsEnabled = it),
+                                )
+                            },
                         )
                     }
                     item {
@@ -8840,15 +10242,83 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
-                        ExtensionStatusRow(
-                            title = "App lock",
-                            subtitle = "Biometric and credential locking requires a platform security implementation.",
+                        PreferenceSwitchRow(
+                            "Incognito by default",
+                            "Start new sessions with history paused",
+                            UiIcon.Incognito,
+                            checked = settings.security.incognitoModeByDefault,
+                            onCheckedChange = {
+                                onSecuritySettingsChange(settings.security.copy(incognitoModeByDefault = it))
+                            },
                         )
                     }
                     item {
-                        ExtensionStatusRow(
+                        SettingsChoiceRow(
                             title = "Secure screen",
-                            subtitle = "Screenshot protection is supported only after each native window layer exposes it.",
+                            options = ChimahonSecureScreenMode.entries.map { it.securityTitle() },
+                            selected = settings.security.secureScreenMode.securityTitle(),
+                            onSelect = { selected ->
+                                ChimahonSecureScreenMode.entries
+                                    .firstOrNull { it.securityTitle() == selected }
+                                    ?.let { onSecuritySettingsChange(settings.security.copy(secureScreenMode = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Hide notification content",
+                            "Mask titles and chapters in notifications",
+                            UiIcon.VisibilityOff,
+                            checked = settings.security.hideNotificationContent,
+                            onCheckedChange = {
+                                onSecuritySettingsChange(settings.security.copy(hideNotificationContent = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("App lock") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Require authentication",
+                            "Use the native platform lock when available",
+                            UiIcon.Settings,
+                            checked = settings.security.requireAuthentication,
+                            onCheckedChange = {
+                                onSecuritySettingsChange(settings.security.copy(requireAuthentication = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Lock after",
+                            options = listOf("Immediately", "1 minute", "5 minutes", "15 minutes", "30 minutes"),
+                            selected = settings.security.lockAfterMinutes.toLockAfterTitle(),
+                            onSelect = { selected ->
+                                onSecuritySettingsChange(
+                                    settings.security.copy(lockAfterMinutes = selected.toLockAfterMinutes()),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Lock on app exit",
+                            "Require authentication after closing the app",
+                            UiIcon.Back,
+                            checked = settings.security.lockOnAppExit,
+                            onCheckedChange = {
+                                onSecuritySettingsChange(settings.security.copy(lockOnAppExit = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Protect downloads",
+                            "Treat downloaded files as private app data where supported",
+                            UiIcon.Download,
+                            checked = settings.security.protectDownloads,
+                            onCheckedChange = {
+                                onSecuritySettingsChange(settings.security.copy(protectDownloads = it))
+                            },
                         )
                     }
                 }
@@ -8974,6 +10444,320 @@ private fun MoreDownloadSummary(
             modifier = Modifier.size(20.dp),
         )
     }
+}
+
+@Composable
+private fun StorageUsageHero(
+    storage: ChimahonStorageData,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 20.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(58.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = UiIcon.Storage,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(28.dp),
+            )
+        }
+        Label(
+            storage.totalSizeBytes.toReadableBytes(),
+            ChimahonPalette.onSurface,
+            25,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        Label(
+            "${storage.downloadedMangaCount} downloaded manga - ${storage.downloadedChapterCount} downloaded chapter(s)",
+            ChimahonPalette.secondaryText,
+            12,
+            maxLines = 2,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun StorageSectionRow(
+    title: String,
+    section: ChimahonStorageSection,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(ChimahonPalette.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = UiIcon.Storage,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 12.dp),
+        ) {
+            Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(
+                if (section.exists) section.path else "${section.path} (missing)",
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Label(section.sizeBytes.toReadableBytes(), ChimahonPalette.onSurface, 12, weight = FontWeight.SemiBold)
+            Label(
+                "${section.fileCount} file(s), ${section.directoryCount} dir(s)",
+                ChimahonPalette.secondaryText,
+                10,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DownloadQueueToolbar(
+    queue: ChimahonDownloadQueueData?,
+    message: String?,
+    onTogglePaused: () -> Unit,
+    onClearCompleted: () -> Unit,
+) {
+    val entries = queue?.entries.orEmpty()
+    val completedCount = entries.count { it.status == ChimahonDownloadState.Downloaded }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(ChimahonPalette.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                IconGlyph(
+                    icon = if (queue?.paused == true) UiIcon.Refresh else UiIcon.Download,
+                    contentDescription = "",
+                    tint = ChimahonPalette.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+            ) {
+                Label(
+                    if (queue?.paused == true) "Download queue paused" else "Download queue",
+                    ChimahonPalette.onSurface,
+                    14,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    queue?.downloadQueueSummary() ?: "Loading saved queue",
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            TextButtonLike(
+                text = if (queue?.paused == true) "Resume all" else "Pause all",
+                onClick = onTogglePaused,
+            )
+        }
+        if (queue != null && entries.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                QueueStatChip("Queued", queue.pendingCount, UiIcon.Chapters, Modifier.weight(1f))
+                QueueStatChip("Active", queue.activeCount, UiIcon.Play, Modifier.weight(1f))
+                QueueStatChip("Failed", queue.failedCount, UiIcon.Info, Modifier.weight(1f))
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Label(
+                message ?: if (completedCount > 0) {
+                    "$completedCount completed download(s) can be cleared"
+                } else {
+                    "Per-chapter controls match the Android download queue"
+                },
+                if (message?.startsWith("Could not") == true) ChimahonPalette.error else ChimahonPalette.secondaryText,
+                11,
+                maxLines = 2,
+                modifier = Modifier.weight(1f),
+            )
+            if (completedCount > 0) {
+                TextButtonLike("Clear done", onClick = onClearCompleted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueueStatChip(
+    label: String,
+    value: Int,
+    icon: UiIcon,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .height(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(ChimahonPalette.background)
+            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(8.dp))
+            .padding(horizontal = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        IconGlyph(icon, "", ChimahonPalette.primary, Modifier.size(16.dp))
+        Label(label, ChimahonPalette.secondaryText, 10, maxLines = 1)
+        Label(value.toString(), ChimahonPalette.onSurface, 11, weight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+@Composable
+private fun DownloadQueueEntryRow(
+    entry: ChimahonDownloadQueueEntry,
+    onPrimaryAction: () -> Unit,
+    onMoveTop: () -> Unit,
+    onMoveBottom: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val progress = entry.downloadProgressFraction()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(entry.status.statusBackground()),
+                contentAlignment = Alignment.Center,
+            ) {
+                IconGlyph(
+                    icon = entry.status.statusIcon(),
+                    contentDescription = "",
+                    tint = entry.status.statusColor(),
+                    modifier = Modifier.size(23.dp),
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+            ) {
+                Label(entry.mangaTitle, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                Label(entry.chapterName, ChimahonPalette.secondaryText, 12, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                Label(
+                    entry.downloadSubtitle(),
+                    if (entry.status == ChimahonDownloadState.Error) ChimahonPalette.error else ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            TextButtonLike(entry.primaryDownloadActionTitle(), onClick = onPrimaryAction)
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(5.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(ChimahonPalette.surfaceVariant),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress)
+                    .fillMaxHeight()
+                    .background(entry.status.statusColor()),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Label(
+                entry.status.queueTitle(),
+                entry.status.statusColor(),
+                11,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            QueueTextAction("Top", onMoveTop)
+            QueueTextAction("Bottom", onMoveBottom)
+            QueueTextAction("Remove", onRemove, destructive = true)
+        }
+    }
+}
+
+@Composable
+private fun QueueTextAction(
+    label: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    Label(
+        label,
+        if (destructive) ChimahonPalette.error else ChimahonPalette.primary,
+        11,
+        weight = FontWeight.SemiBold,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(7.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 7.dp, vertical = 5.dp),
+    )
 }
 
 @Composable
@@ -9797,9 +11581,9 @@ private fun Label(
         modifier = modifier,
         style = TextStyle(
             color = color,
-            fontSize = size.sp,
+            fontSize = (size * ChimahonPalette.fontScale).sp,
             fontWeight = weight,
-            lineHeight = lineHeight.sp,
+            lineHeight = (lineHeight * ChimahonPalette.fontScale).sp,
         ),
         maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
@@ -9826,6 +11610,180 @@ private fun HomeTab.subtitle(state: ChimahonUiState): String {
         HomeTab.Browse -> snapshot?.let { "${it.summary.sourceCount} source(s), ${it.summary.extensionCount} extension(s)" } ?: "Sources and extensions"
         HomeTab.More -> snapshot?.runtime?.platformName?.let { "$it settings and tools" } ?: "Settings and tools"
     }
+}
+
+private fun ChimahonFilterMode.matches(value: Boolean): Boolean {
+    return when (this) {
+        ChimahonFilterMode.Any -> true
+        ChimahonFilterMode.Include -> value
+        ChimahonFilterMode.Exclude -> !value
+    }
+}
+
+private fun ChimahonDownloadQueueData.downloadQueueSummary(): String {
+    if (entries.isEmpty()) return "No queued chapter downloads"
+    val total = entries.size
+    val downloaded = entries.count { it.status == ChimahonDownloadState.Downloaded }
+    return "$total chapter(s) - $activeCount active, $pendingCount queued, $downloaded completed"
+}
+
+private fun ChimahonDownloadQueueEntry.downloadProgressFraction(): Float {
+    val total = totalBytes
+    return when {
+        status == ChimahonDownloadState.Downloaded -> 1f
+        total != null && total > 0L -> (downloadedBytes.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+        progress > 0 -> (progress.toFloat() / 100f).coerceIn(0f, 1f)
+        status == ChimahonDownloadState.Downloading -> 0.08f
+        else -> 0f
+    }
+}
+
+private fun ChimahonDownloadQueueEntry.downloadSubtitle(): String {
+    if (status == ChimahonDownloadState.Error && !errorMessage.isNullOrBlank()) {
+        return errorMessage
+    }
+    val byteLabel = totalBytes?.takeIf { it > 0L }?.let { total ->
+        "${downloadedBytes.toReadableBytes()} / ${total.toReadableBytes()}"
+    } ?: downloadedBytes.takeIf { it > 0L }?.toReadableBytes()
+    return listOfNotNull(
+        "Source $sourceId",
+        byteLabel,
+        progress.takeIf { it > 0 && it < 100 }?.let { "$it%" },
+    ).joinToString(" - ")
+}
+
+private fun ChimahonDownloadQueueEntry.primaryDownloadActionTitle(): String {
+    return when (status) {
+        ChimahonDownloadState.Paused -> "Resume"
+        ChimahonDownloadState.Error -> "Retry"
+        ChimahonDownloadState.Downloaded -> "Remove"
+        ChimahonDownloadState.Queued,
+        ChimahonDownloadState.Downloading,
+        -> "Pause"
+    }
+}
+
+private fun ChimahonDownloadState.queueTitle(): String {
+    return when (this) {
+        ChimahonDownloadState.Queued -> "Queued"
+        ChimahonDownloadState.Downloading -> "Downloading"
+        ChimahonDownloadState.Paused -> "Paused"
+        ChimahonDownloadState.Downloaded -> "Downloaded"
+        ChimahonDownloadState.Error -> "Error"
+    }
+}
+
+private fun ChimahonDownloadState.statusIcon(): UiIcon {
+    return when (this) {
+        ChimahonDownloadState.Queued -> UiIcon.Chapters
+        ChimahonDownloadState.Downloading -> UiIcon.Download
+        ChimahonDownloadState.Paused -> UiIcon.Refresh
+        ChimahonDownloadState.Downloaded -> UiIcon.CheckCircle
+        ChimahonDownloadState.Error -> UiIcon.Info
+    }
+}
+
+private fun ChimahonDownloadState.statusColor(): Color {
+    return when (this) {
+        ChimahonDownloadState.Error -> ChimahonPalette.error
+        ChimahonDownloadState.Downloaded -> ChimahonPalette.primary
+        ChimahonDownloadState.Paused -> ChimahonPalette.secondaryText
+        else -> ChimahonPalette.primary
+    }
+}
+
+private fun ChimahonDownloadState.statusBackground(): Color {
+    return when (this) {
+        ChimahonDownloadState.Error -> ChimahonPalette.errorContainer
+        ChimahonDownloadState.Paused -> ChimahonPalette.surfaceVariant
+        else -> ChimahonPalette.primaryContainer
+    }
+}
+
+private fun Long.toReadableBytes(): String {
+    if (this <= 0L) return "0 B"
+    val units = listOf("B", "KB", "MB", "GB", "TB")
+    var value = this.toDouble()
+    var index = 0
+    while (value >= 1024.0 && index < units.lastIndex) {
+        value /= 1024.0
+        index += 1
+    }
+    return if (index == 0) {
+        "${value.toLong()} ${units[index]}"
+    } else {
+        "${(value * 10.0).toInt() / 10.0} ${units[index]}"
+    }
+}
+
+private fun ChimahonCacheClearResult.cacheClearSummary(): String {
+    val targetTitle = when (target) {
+        ChimahonCacheClearTarget.Thumbnails -> "Thumbnail cache"
+        ChimahonCacheClearTarget.ApplicationCache -> "Application cache"
+    }
+    val removedBytes = diskBytesRemoved + memoryBytesRemoved
+    val removedEntries = diskFilesRemoved + memoryEntriesRemoved
+    val base = "$targetTitle cleared: ${removedBytes.toReadableBytes()}, $removedEntries file/cache item(s)"
+    return if (failures.isEmpty()) {
+        base
+    } else {
+        "$base, ${failures.size} path(s) could not be removed"
+    }
+}
+
+private fun ChimahonDatabaseMaintenanceResult.databaseMaintenanceSummary(): String {
+    return "Removed $historyEntriesRemoved history record(s) and $updateIssuesRemoved update issue(s). " +
+        "$remainingHistoryEntryCount history record(s) remain."
+}
+
+private fun previewDataMaintenanceSnapshot(): ChimahonDataMaintenanceSnapshot {
+    val section = ChimahonStorageSection(
+        path = "preview",
+        exists = false,
+        sizeBytes = 0L,
+        fileCount = 0,
+        directoryCount = 0,
+    )
+    return ChimahonDataMaintenanceSnapshot(
+        storage = ChimahonStorageData(
+            files = section,
+            cache = section,
+            downloads = section,
+            totalSizeBytes = 0L,
+            downloadedMangaCount = 0,
+            downloadedChapterCount = 0,
+        ),
+        thumbnailCache = ChimahonThumbnailCacheData(entryCount = 0, sizeBytes = 0L),
+        database = ChimahonDatabaseMaintenanceData(
+            historyEntryCount = 0,
+            updateIssues = ChimahonUpdateIssueSummary(
+                totalIssueCount = 0,
+                affectedMangaCount = 0,
+                staleIssueCount = 0,
+                groups = emptyList(),
+            ),
+        ),
+    )
+}
+
+private fun previewCacheClearResult(target: ChimahonCacheClearTarget): ChimahonCacheClearResult {
+    return ChimahonCacheClearResult(
+        target = target,
+        diskBytesRemoved = 0L,
+        diskFilesRemoved = 0,
+        diskDirectoriesRemoved = 0,
+        memoryBytesRemoved = 0L,
+        memoryEntriesRemoved = 0,
+    )
+}
+
+private fun previewDatabaseMaintenanceResult(): ChimahonDatabaseMaintenanceResult {
+    return ChimahonDatabaseMaintenanceResult(
+        historyEntriesRemoved = 0,
+        updateIssuesRemoved = 0,
+        remainingHistoryEntryCount = 0,
+        remainingUpdateIssueCount = 0,
+    )
 }
 
 private fun ChimahonRecentUpdateEntry.updateStateLabel(): String {
@@ -10113,6 +12071,7 @@ private enum class UiIcon {
     BookmarkBorder,
     Download,
     Incognito,
+    VisibilityOff,
     Tag,
     Statistics,
     Storage,
@@ -10168,6 +12127,7 @@ private val UiIcon.imageVector: ImageVector
         UiIcon.BookmarkBorder -> Icons.Outlined.BookmarkBorder
         UiIcon.Download -> Icons.Outlined.Download
         UiIcon.Incognito -> Icons.Outlined.VisibilityOff
+        UiIcon.VisibilityOff -> Icons.Outlined.VisibilityOff
         UiIcon.Tag -> Icons.Outlined.Label
         UiIcon.Statistics -> Icons.Outlined.QueryStats
         UiIcon.Storage -> Icons.Outlined.Storage
@@ -10342,7 +12302,9 @@ private fun LegacyIconGlyph(
                 line(0.66f, 0.48f, 0.50f, 0.64f)
                 line(0.24f, 0.78f, 0.76f, 0.78f)
             }
-            UiIcon.Incognito -> {
+            UiIcon.Incognito,
+            UiIcon.VisibilityOff,
+            -> {
                 line(0.18f, 0.42f, 0.82f, 0.42f)
                 line(0.32f, 0.42f, 0.38f, 0.28f)
                 line(0.68f, 0.42f, 0.62f, 0.28f)
@@ -10611,8 +12573,16 @@ private object ChimahonPalette {
         private set
     var errorContainer = Color(0xFFFFDAD6)
         private set
+    var fontScale = 1f
+        private set
 
-    fun apply(theme: ChimahonAppTheme, dark: Boolean, amoled: Boolean) {
+    fun apply(
+        theme: ChimahonAppTheme,
+        colorTheme: ChimahonColorTheme,
+        dark: Boolean,
+        amoled: Boolean,
+        fontScalePercent: Int,
+    ) {
         val colors = chimahonThemeColors(theme, dark, amoled)
         background = colors.background
         surface = colors.surface
@@ -10620,12 +12590,26 @@ private object ChimahonPalette {
         divider = colors.divider
         onSurface = colors.onSurface
         secondaryText = colors.secondaryText
-        primary = colors.primary
+        primary = colorTheme.primaryOverride(dark) ?: colors.primary
         primaryContainer = colors.primaryContainer
         onPrimaryContainer = colors.onPrimaryContainer
         error = colors.error
         errorContainer = colors.errorContainer
+        fontScale = (fontScalePercent.coerceIn(80, 130) / 100f)
     }
+}
+
+private fun ChimahonColorTheme.primaryOverride(dark: Boolean): Color? = when (this) {
+    ChimahonColorTheme.Default,
+    ChimahonColorTheme.Dynamic,
+    -> null
+    ChimahonColorTheme.Blue -> if (dark) Color(0xFF9BCBFF) else Color(0xFF0061A4)
+    ChimahonColorTheme.Green -> if (dark) Color(0xFF7DDB91) else Color(0xFF006D3B)
+    ChimahonColorTheme.Orange -> if (dark) Color(0xFFFFB86C) else Color(0xFF9A4F00)
+    ChimahonColorTheme.Pink -> if (dark) Color(0xFFFFB1C8) else Color(0xFFB71858)
+    ChimahonColorTheme.Purple -> if (dark) Color(0xFFD0BCFF) else Color(0xFF6750A4)
+    ChimahonColorTheme.Red -> if (dark) Color(0xFFFFB4AB) else Color(0xFFBA1A1A)
+    ChimahonColorTheme.Teal -> if (dark) Color(0xFF80D8CF) else Color(0xFF006A60)
 }
 
 private object ReaderPalette {

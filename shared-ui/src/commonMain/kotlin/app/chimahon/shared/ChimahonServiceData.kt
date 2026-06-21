@@ -28,6 +28,12 @@ data class ChimahonCategoryData(
     val downloadedChapterCount: Int,
 )
 
+data class ChimahonLibraryBulkActionResult(
+    val mangaCount: Int,
+    val chapterCount: Int = 0,
+    val categoryCount: Int = 0,
+)
+
 data class ChimahonUpdatesFilter(
     val read: Boolean? = null,
     val started: Boolean? = null,
