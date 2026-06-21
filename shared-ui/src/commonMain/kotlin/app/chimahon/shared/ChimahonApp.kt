@@ -57,15 +57,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
-import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -77,6 +79,8 @@ import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.NewReleases
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Public
@@ -85,14 +89,13 @@ import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Reorder
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapHoriz
-import androidx.compose.material.icons.outlined.TravelExplore
-import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -2100,16 +2103,14 @@ private fun RailItem(
 ) {
     Column(
         modifier = Modifier
-            .width(if (compact) 62.dp else 72.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.74f) else Color.Transparent)
+            .width(if (compact) 62.dp else 76.dp)
             .semantics(mergeDescendants = true) {
                 contentDescription = tab.title
                 this.selected = selected
                 stateDescription = if (selected) "Selected" else "Not selected"
             }
             .clickable(role = Role.Tab, onClick = onClick)
-            .padding(vertical = if (compact) 7.dp else 9.dp),
+            .padding(vertical = if (compact) 7.dp else 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         NavIcon(
@@ -2124,7 +2125,7 @@ private fun RailItem(
             size = if (compact) 9 else 11,
             weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
-            modifier = Modifier.padding(top = if (compact) 4.dp else 5.dp),
+            modifier = Modifier.padding(top = if (compact) 3.dp else 4.dp),
         )
     }
 }
@@ -2198,22 +2199,27 @@ private fun NavIcon(
     badge: Int?,
 ) {
     Box(
-        modifier = Modifier.size(width = 52.dp, height = 32.dp),
+        modifier = Modifier.size(width = 58.dp, height = 34.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .width(46.dp)
-                .height(30.dp)
+                .width(if (selected) 56.dp else 44.dp)
+                .height(32.dp)
                 .clip(RoundedCornerShape(20.dp))
-                .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.96f) else Color.Transparent),
+                .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.96f) else Color.Transparent)
+                .border(
+                    1.dp,
+                    if (selected) ChimahonPalette.primary.copy(alpha = 0.12f) else Color.Transparent,
+                    RoundedCornerShape(20.dp),
+                ),
             contentAlignment = Alignment.Center,
         ) {
             IconGlyph(
                 icon = icon,
                 contentDescription = contentDescription,
                 tint = if (selected) ChimahonPalette.onPrimaryContainer else ChimahonPalette.secondaryText,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(if (selected) 24.dp else 23.dp),
             )
         }
         if (badge != null && badge > 0) {
@@ -18116,7 +18122,7 @@ private fun MoreDetailPage(
                         PreferenceRow(
                             "Appearance",
                             "Theme, dark mode, navigation, and dates",
-                            UiIcon.Settings,
+                            UiIcon.Appearance,
                             onClick = { onOpenPage(MorePage.AppearanceSettings) },
                         )
                     }
@@ -18124,7 +18130,7 @@ private fun MoreDetailPage(
                         PreferenceRow(
                             "Security",
                             "Privacy and protected access",
-                            UiIcon.Incognito,
+                            UiIcon.Security,
                             onClick = { onOpenPage(MorePage.SecuritySettings) },
                         )
                     }
@@ -18207,7 +18213,7 @@ private fun MoreDetailPage(
                         PreferenceRow(
                             "Backup and restore",
                             "Import, export, and migration checkpoints",
-                            UiIcon.Download,
+                            UiIcon.Backup,
                             onClick = { onOpenPage(MorePage.BackupSettings) },
                         )
                     }
@@ -18224,12 +18230,19 @@ private fun MoreDetailPage(
                 MorePage.AppearanceSettings -> {
                     item { ListGroupHeader("Theme") }
                     item {
+                        SettingsInfoPanel(
+                            title = "Active appearance",
+                            detail = "${settings.appearance.themeMode.title} - ${settings.appearance.appTheme.title} - ${settings.appearance.colorTheme.title} - ${settings.appearance.appIcon.title}",
+                            icon = UiIcon.Appearance,
+                        )
+                    }
+                    item {
                         SettingsChoiceRow(
                             title = "Theme mode",
-                            options = ChimahonThemeMode.entries.map { it.name },
-                            selected = settings.appearance.themeMode.name,
+                            options = ChimahonThemeMode.entries.map { it.title },
+                            selected = settings.appearance.themeMode.title,
                             onSelect = { selected ->
-                                ChimahonThemeMode.entries.firstOrNull { it.name == selected }?.let {
+                                ChimahonThemeMode.entries.firstOrNull { it.title == selected }?.let {
                                     onAppearanceSettingsChange(settings.appearance.copy(themeMode = it))
                                 }
                             },
@@ -24477,6 +24490,9 @@ private enum class UiIcon {
     Storage,
     Extensions,
     Settings,
+    Appearance,
+    Security,
+    Backup,
     Info,
     Help,
     Star,
@@ -24508,10 +24524,10 @@ private fun IconGlyph(
 
 private val UiIcon.imageVector: ImageVector
     get() = when (this) {
-        UiIcon.Library -> Icons.Outlined.AutoStories
-        UiIcon.Updates -> Icons.Outlined.Update
+        UiIcon.Library -> Icons.Outlined.CollectionsBookmark
+        UiIcon.Updates -> Icons.Outlined.NewReleases
         UiIcon.History -> Icons.Outlined.History
-        UiIcon.Browse -> Icons.Outlined.TravelExplore
+        UiIcon.Browse -> Icons.Outlined.Explore
         UiIcon.More -> Icons.Outlined.MoreHoriz
         UiIcon.Search -> Icons.Outlined.Search
         UiIcon.Filter -> Icons.Outlined.FilterList
@@ -24537,6 +24553,9 @@ private val UiIcon.imageVector: ImageVector
         UiIcon.Storage -> Icons.Outlined.Storage
         UiIcon.Extensions -> Icons.Outlined.Extension
         UiIcon.Settings -> Icons.Outlined.Settings
+        UiIcon.Appearance -> Icons.Outlined.Palette
+        UiIcon.Security -> Icons.Outlined.Security
+        UiIcon.Backup -> Icons.Outlined.Backup
         UiIcon.Info -> Icons.Outlined.Info
         UiIcon.Help -> Icons.Outlined.HelpOutline
         UiIcon.Star -> Icons.Outlined.Star
