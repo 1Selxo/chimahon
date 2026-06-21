@@ -53,6 +53,7 @@ import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CollectionsBookmark
+import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
@@ -65,6 +66,7 @@ import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Label
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.NewReleases
@@ -341,6 +343,9 @@ data class ChimahonReaderChapterRef(
     val scanlator: String?,
     val dateUpload: Long,
     val initialPage: Int = 0,
+    val read: Boolean = false,
+    val bookmarked: Boolean = false,
+    val lastPageRead: Long = 0L,
 )
 
 data class ChimahonReaderChapter(
@@ -617,9 +622,13 @@ fun ChimahonServiceApp(
         onSetMangasChaptersRead = services::setMangasChaptersRead,
         onSetChapterRead = services::setChapterRead,
         onSetChapterBookmark = services::setChapterBookmark,
+        onEnqueueDownload = services::enqueueDownload,
+        onEnqueueDownloads = services::enqueueDownloads,
+        onLoadDownloadSnapshot = services::loadDownloadSnapshot,
         onLoadDownloadQueue = services::loadDownloadQueue,
         onPauseDownloadQueue = services::pauseDownloadQueue,
         onResumeDownloadQueue = services::resumeDownloadQueue,
+        onProcessNextDownload = services::processNextDownload,
         onPauseDownload = services::pauseDownload,
         onResumeDownload = services::resumeDownload,
         onRetryDownload = services::retryDownload,
@@ -725,11 +734,24 @@ fun ChimahonApp(
     },
     onSetChapterRead: suspend (Long, Boolean) -> Unit = { _, _ -> },
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit = { _, _ -> },
+    onEnqueueDownload: suspend (Long) -> ChimahonDownloadQueueData = {
+        ChimahonDownloadQueueData(entries = emptyList(), paused = false)
+    },
+    onEnqueueDownloads: suspend (Collection<Long>) -> ChimahonDownloadQueueData = {
+        ChimahonDownloadQueueData(entries = emptyList(), paused = false)
+    },
+    onLoadDownloadSnapshot: suspend () -> ChimahonDownloadSnapshot = {
+        ChimahonDownloadSnapshot(
+            chaptersById = emptyMap(),
+            queue = ChimahonDownloadQueueData(entries = emptyList(), paused = false),
+        )
+    },
     onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData = {
         ChimahonDownloadQueueData(entries = emptyList(), paused = false)
     },
     onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
     onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
+    onProcessNextDownload: suspend () -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
     onPauseDownload: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
     onResumeDownload: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
     onRetryDownload: suspend (Long) -> ChimahonDownloadQueueData = { onLoadDownloadQueue() },
@@ -1025,7 +1047,10 @@ fun ChimahonApp(
                                                 onSaveReaderProgress(request, page, completed)
                                             }
                                         },
+                                        onSetChapterRead = onSetChapterRead,
                                         onSetChapterBookmark = onSetChapterBookmark,
+                                        onEnqueueDownload = onEnqueueDownload,
+                                        onOpenExternalUrl = onOpenExternalUrl,
                                         onOpenReader = { selectedReader = it },
                                         onCloseReader = {
                                             selectedReader = null
@@ -1087,6 +1112,9 @@ fun ChimahonApp(
                                             onSetChapterBookmark(chapterId, bookmarked)
                                             onRefresh()
                                         },
+                                        onEnqueueDownload = onEnqueueDownload,
+                                        onEnqueueDownloads = onEnqueueDownloads,
+                                        onLoadDownloadSnapshot = onLoadDownloadSnapshot,
                                         onSelectBrowse = {
                                             selectedMangaId = null
                                             selectedTab = HomeTab.Browse
@@ -1159,6 +1187,7 @@ fun ChimahonApp(
                                         onLoadDownloadQueue = onLoadDownloadQueue,
                                         onPauseDownloadQueue = onPauseDownloadQueue,
                                         onResumeDownloadQueue = onResumeDownloadQueue,
+                                        onProcessNextDownload = onProcessNextDownload,
                                         onPauseDownload = onPauseDownload,
                                         onResumeDownload = onResumeDownload,
                                         onRetryDownload = onRetryDownload,
@@ -1497,36 +1526,48 @@ private fun ReaderTopBar(
     request: ChimahonReaderRequest,
     currentPage: Int,
     pageCount: Int,
+    canvas: ReaderCanvas = ReaderCanvas.Black,
+    showTitle: Boolean = true,
     bookmarked: Boolean,
     bookmarkBusy: Boolean,
     onBack: () -> Unit,
+    onToggleHud: () -> Unit = {},
     onToggleBookmark: (() -> Unit)?,
+    downloadBusy: Boolean = false,
+    onDownloadChapter: (() -> Unit)? = null,
+    readBusy: Boolean = false,
+    onMarkChapterRead: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp)
-            .background(ReaderPalette.chrome.copy(alpha = 0.94f))
+            .background(readerHudBackground(canvas))
+            .clickable(onClick = onToggleHud)
             .padding(start = 8.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ReaderAction(
             icon = UiIcon.Back,
             contentDescription = "Back",
+            tint = readerHudContent(canvas),
             onClick = onBack,
         )
         Column(modifier = Modifier.weight(1f)) {
-            Label(
-                text = request.mangaTitle,
-                color = Color.White,
-                size = 16,
-                weight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
+            if (showTitle) {
+                Label(
+                    text = request.mangaTitle,
+                    color = readerHudContent(canvas),
+                    size = 16,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
             Label(
                 text = request.chapterName,
-                color = ReaderPalette.secondaryText,
-                size = 11,
+                color = readerHudContent(canvas).copy(alpha = 0.68f),
+                size = if (showTitle) 11 else 16,
+                weight = if (showTitle) FontWeight.Normal else FontWeight.SemiBold,
                 maxLines = 1,
                 modifier = Modifier.padding(top = 2.dp),
             )
@@ -1534,11 +1575,29 @@ private fun ReaderTopBar(
         if (pageCount > 0) {
             Label(
                 text = "$currentPage / $pageCount",
-                color = ReaderPalette.secondaryText,
+                color = readerHudContent(canvas).copy(alpha = 0.68f),
                 size = 11,
                 weight = FontWeight.SemiBold,
                 maxLines = 1,
                 modifier = Modifier.padding(horizontal = 8.dp),
+            )
+        }
+        onDownloadChapter?.let {
+            ReaderAction(
+                icon = UiIcon.Download,
+                contentDescription = "Download chapter",
+                active = downloadBusy,
+                tint = readerHudContent(canvas),
+                onClick = it,
+            )
+        }
+        onMarkChapterRead?.let {
+            ReaderAction(
+                icon = UiIcon.DoneAll,
+                contentDescription = "Mark chapter read",
+                active = readBusy,
+                tint = readerHudContent(canvas),
+                onClick = it,
             )
         }
         onToggleBookmark?.let {
@@ -1546,6 +1605,7 @@ private fun ReaderTopBar(
                 icon = if (bookmarked) UiIcon.Bookmark else UiIcon.BookmarkBorder,
                 contentDescription = if (bookmarked) "Unbookmark chapter" else "Bookmark chapter",
                 active = bookmarked || bookmarkBusy,
+                tint = readerHudContent(canvas),
                 onClick = it,
             )
         }
@@ -1595,7 +1655,7 @@ private fun RailItem(
             .width(if (compact) 64.dp else 76.dp)
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = if (compact) 5.dp else 8.dp),
+            .padding(vertical = if (compact) 6.dp else 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         NavIcon(
@@ -1608,8 +1668,9 @@ private fun RailItem(
             text = tab.title,
             color = if (selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
             size = if (compact) 9 else 11,
+            weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
-            modifier = Modifier.padding(top = 5.dp),
+            modifier = Modifier.padding(top = if (compact) 4.dp else 5.dp),
         )
     }
 }
@@ -1666,24 +1727,29 @@ private fun NavIcon(
     badge: Int?,
 ) {
     Box(
-        modifier = Modifier
-            .width(44.dp)
-            .height(28.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) ChimahonPalette.primaryContainer else Color.Transparent),
+        modifier = Modifier.size(width = 54.dp, height = 34.dp),
         contentAlignment = Alignment.Center,
     ) {
-        IconGlyph(
-            icon = icon,
-            contentDescription = contentDescription,
-            tint = if (selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-            modifier = Modifier.size(20.dp),
-        )
+        Box(
+            modifier = Modifier
+                .width(46.dp)
+                .height(30.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(if (selected) ChimahonPalette.primaryContainer else Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = contentDescription,
+                tint = if (selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                modifier = Modifier.size(if (selected) 22.dp else 21.dp),
+            )
+        }
         if (badge != null && badge > 0) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .size(15.dp)
+                    .size(17.dp)
                     .clip(CircleShape)
                     .background(ChimahonPalette.error),
                 contentAlignment = Alignment.Center,
@@ -1739,6 +1805,7 @@ private fun HomeContent(
     onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onProcessNextDownload: suspend () -> ChimahonDownloadQueueData,
     onPauseDownload: suspend (Long) -> ChimahonDownloadQueueData,
     onResumeDownload: suspend (Long) -> ChimahonDownloadQueueData,
     onRetryDownload: suspend (Long) -> ChimahonDownloadQueueData,
@@ -1841,6 +1908,7 @@ private fun HomeContent(
             onLoadDownloadQueue = onLoadDownloadQueue,
             onPauseDownloadQueue = onPauseDownloadQueue,
             onResumeDownloadQueue = onResumeDownloadQueue,
+            onProcessNextDownload = onProcessNextDownload,
             onPauseDownload = onPauseDownload,
             onResumeDownload = onResumeDownload,
             onRetryDownload = onRetryDownload,
@@ -4559,7 +4627,10 @@ private fun ReaderHome(
     settings: ChimahonReaderSettings,
     onSettingsChange: (ChimahonReaderSettings) -> Unit,
     onSaveReaderProgress: suspend (ChimahonReaderRequest, Int, Boolean) -> Unit,
+    onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
+    onEnqueueDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onOpenExternalUrl: (String) -> Boolean,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onCloseReader: () -> Unit,
 ) {
@@ -4615,7 +4686,10 @@ private fun ReaderHome(
                     settings = settings,
                     onSettingsChange = onSettingsChange,
                     onSaveReaderProgress = onSaveReaderProgress,
+                    onSetChapterRead = onSetChapterRead,
                     onSetChapterBookmark = onSetChapterBookmark,
+                    onEnqueueDownload = onEnqueueDownload,
+                    onOpenExternalUrl = onOpenExternalUrl,
                     onOpenReader = onOpenReader,
                     onCloseReader = onCloseReader,
                 )
@@ -4668,7 +4742,10 @@ private fun ReaderContent(
     settings: ChimahonReaderSettings,
     onSettingsChange: (ChimahonReaderSettings) -> Unit,
     onSaveReaderProgress: suspend (ChimahonReaderRequest, Int, Boolean) -> Unit,
+    onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
+    onEnqueueDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onOpenExternalUrl: (String) -> Boolean,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onCloseReader: () -> Unit,
 ) {
@@ -4679,12 +4756,15 @@ private fun ReaderContent(
     var controlsVisible by remember(chapter.request) { mutableStateOf(settings.keepControlsVisible) }
     var settingsVisible by remember(chapter.request) { mutableStateOf(false) }
     var chaptersVisible by remember(chapter.request) { mutableStateOf(false) }
+    var statsVisible by remember(chapter.request) { mutableStateOf(false) }
     var showPageStrip by remember(chapter.request.mangaId) { mutableStateOf(settings.showPageStrip) }
     var showControlsOnStart by remember(chapter.request.mangaId) {
         mutableStateOf(settings.keepControlsVisible)
     }
     var bookmarked by remember(chapter.request.chapterId) { mutableStateOf(initialBookmarked) }
     var bookmarkBusy by remember(chapter.request.chapterId) { mutableStateOf(false) }
+    var readBusy by remember(chapter.request.chapterId) { mutableStateOf(false) }
+    var downloadBusy by remember(chapter.request.chapterId) { mutableStateOf(false) }
     var retainedPage by remember(chapter.request) {
         mutableIntStateOf(chapter.request.initialPage.coerceIn(chapter.pages.indices))
     }
@@ -4694,6 +4774,17 @@ private fun ReaderContent(
     val previousChapter = chapter.request.chapterQueue.getOrNull(chapter.request.chapterIndex + 1)
     val nextChapter = chapter.request.chapterQueue.getOrNull(chapter.request.chapterIndex - 1)
     val scope = rememberCoroutineScope()
+    val preloadReaderPage: suspend (Int) -> Unit = { pageIndex ->
+        if (pageIndex in chapter.pages.indices && pageStates[pageIndex] == null) {
+            pageStates[pageIndex] = ReaderPageUiState.Loading
+            pageStates[pageIndex] = runCatching {
+                onLoadReaderPageImage(chapter.pages[pageIndex]).decodeToImageBitmap()
+            }.fold(
+                onSuccess = ReaderPageUiState::Ready,
+                onFailure = { ReaderPageUiState.Failed(it.message ?: "Unable to decode page image.") },
+            )
+        }
+    }
     val saveReaderPreferences: (ChimahonReaderSettings) -> Unit = { updated ->
         readerPreferences = updated
         onSettingsChange(updated)
@@ -4701,39 +4792,103 @@ private fun ReaderContent(
     val openAdjacentChapter: (ChimahonReaderChapterRef) -> Unit = { adjacent ->
         onOpenReader(adjacent.toReaderRequest(chapter.request))
     }
+    val bookmarkChapterRef: (ChimahonReaderChapterRef) -> Unit = { ref ->
+        ref.chapterId?.let { chapterId ->
+            scope.launch {
+                runCatching { onSetChapterBookmark(chapterId, !ref.bookmarked) }
+            }
+        }
+    }
+    val downloadChapterRef: (ChimahonReaderChapterRef) -> Unit = { ref ->
+        ref.chapterId?.let { chapterId ->
+            scope.launch {
+                runCatching { onEnqueueDownload(chapterId) }
+            }
+        }
+    }
+    val markChapterRefRead: (ChimahonReaderChapterRef) -> Unit = { ref ->
+        ref.chapterId?.let { chapterId ->
+            scope.launch {
+                runCatching { onSetChapterRead(chapterId, !ref.read) }
+            }
+        }
+    }
+    val markChapterRead = chapter.request.chapterId?.let { chapterId ->
+        {
+            if (!readBusy) {
+                scope.launch {
+                    readBusy = true
+                    runCatching {
+                        onSetChapterRead(chapterId, true)
+                        onSaveReaderProgress(chapter.request, chapter.pages.lastIndex, true)
+                    }
+                    readBusy = false
+                }
+            }
+        }
+    }
+    val downloadChapter = chapter.request.chapterId?.let { chapterId ->
+        {
+            if (!downloadBusy) {
+                scope.launch {
+                    downloadBusy = true
+                    runCatching { onEnqueueDownload(chapterId) }
+                    downloadBusy = false
+                }
+            }
+        }
+    }
+    val openChapterUrl: (() -> Unit)? = chapter.request.chapterUrl
+        .takeIf { it.isNotBlank() }
+        ?.let { url -> { onOpenExternalUrl(url) } }
     val toggleControls = {
         controlsVisible = !controlsVisible
         if (!controlsVisible) {
             settingsVisible = false
             chaptersVisible = false
+            statsVisible = false
         }
     }
 
-    key(mode) {
+    key(mode, readerPreferences.dualPageMode) {
         if (mode.paged) {
+            val dualPage = readerPreferences.dualPageMode != ChimahonDualPageMode.Off
+            val spreadGroups = remember(chapter.pages, dualPage) {
+                if (dualPage) {
+                    chapter.pages.indices.chunked(2)
+                } else {
+                    chapter.pages.indices.map { listOf(it) }
+                }
+            }
+            val retainedGroupIndex = spreadGroups
+                .indexOfFirst { retainedPage in it }
+                .takeIf { it >= 0 }
+                ?: 0
             val initialPagerPage = if (mode.rightToLeft) {
-                chapter.pages.lastIndex - retainedPage
+                spreadGroups.lastIndex - retainedGroupIndex
             } else {
-                retainedPage
-            }.coerceIn(chapter.pages.indices)
+                retainedGroupIndex
+            }.coerceIn(spreadGroups.indices)
             val pagerState = rememberPagerState(
                 initialPage = initialPagerPage,
-                pageCount = { chapter.pages.size },
+                pageCount = { spreadGroups.size },
             )
-            val actualPage = if (mode.rightToLeft) {
-                chapter.pages.lastIndex - pagerState.currentPage
+            val actualGroupIndex = if (mode.rightToLeft) {
+                spreadGroups.lastIndex - pagerState.currentPage
             } else {
                 pagerState.currentPage
-            }
-            LaunchedEffect(chapter.request, pagerState, mode) {
+            }.coerceIn(spreadGroups.indices)
+            val actualPage = spreadGroups.getOrNull(actualGroupIndex)?.firstOrNull() ?: 0
+            LaunchedEffect(chapter.request, pagerState, mode, spreadGroups) {
                 snapshotFlow { pagerState.currentPage }
                     .distinctUntilChanged()
                     .collect { pagerPage ->
-                        val pageIndex = if (mode.rightToLeft) {
-                            chapter.pages.lastIndex - pagerPage
+                        val groupIndex = if (mode.rightToLeft) {
+                            spreadGroups.lastIndex - pagerPage
                         } else {
                             pagerPage
-                        }
+                        }.coerceIn(spreadGroups.indices)
+                        val pageIndex = spreadGroups.getOrNull(groupIndex)?.firstOrNull() ?: 0
                         retainedPage = pageIndex
                         onSaveReaderProgress(
                             chapter.request,
@@ -4741,6 +4896,13 @@ private fun ReaderContent(
                             pageIndex == chapter.pages.lastIndex,
                         )
                     }
+            }
+            LaunchedEffect(chapter.request, actualGroupIndex, spreadGroups) {
+                listOf(actualGroupIndex - 1, actualGroupIndex + 1)
+                    .filter { it in spreadGroups.indices }
+                    .flatMap { spreadGroups[it] }
+                    .distinct()
+                    .forEach { preloadReaderPage(it) }
             }
             ReaderScaffold(
                 request = chapter.request,
@@ -4751,9 +4913,12 @@ private fun ReaderContent(
                 pageCount = chapter.pages.size,
                 bookmarked = bookmarked,
                 bookmarkBusy = bookmarkBusy,
+                readBusy = readBusy,
+                downloadBusy = downloadBusy,
                 controlsVisible = controlsVisible,
                 settingsVisible = settingsVisible,
                 chaptersVisible = chaptersVisible,
+                statsVisible = statsVisible,
                 showPageStrip = showPageStrip,
                 showControlsOnStart = showControlsOnStart,
                 readerSettings = readerPreferences.copy(
@@ -4831,17 +4996,39 @@ private fun ReaderContent(
                 onDismissPanels = {
                     settingsVisible = false
                     chaptersVisible = false
+                    statsVisible = false
                 },
                 onToggleSettings = {
                     controlsVisible = true
                     settingsVisible = !settingsVisible
                     if (settingsVisible) chaptersVisible = false
+                    if (settingsVisible) statsVisible = false
                 },
                 onToggleChapters = {
                     controlsVisible = true
                     chaptersVisible = !chaptersVisible
                     if (chaptersVisible) settingsVisible = false
+                    if (chaptersVisible) statsVisible = false
                 },
+                onToggleStats = {
+                    controlsVisible = true
+                    statsVisible = !statsVisible
+                    if (statsVisible) {
+                        settingsVisible = false
+                        chaptersVisible = false
+                    }
+                },
+                onToggleCrop = {
+                    val updated = readerPreferences.copy(cropBorders = !readerPreferences.cropBorders)
+                    readerPreferences = updated
+                    saveReaderPreferences(updated)
+                },
+                onMarkChapterRead = markChapterRead,
+                onDownloadChapter = downloadChapter,
+                onOpenChapterUrl = openChapterUrl,
+                onBookmarkChapterRef = bookmarkChapterRef,
+                onDownloadChapterRef = downloadChapterRef,
+                onMarkChapterRefRead = markChapterRefRead,
                 onToggleBookmark = chapter.request.chapterId?.let { chapterId ->
                     {
                         if (!bookmarkBusy) {
@@ -4864,7 +5051,7 @@ private fun ReaderContent(
                     } else {
                         pagerState.currentPage - 1
                     }
-                    if (target in chapter.pages.indices) {
+                    if (target in spreadGroups.indices) {
                         scope.launch {
                             if (readerPreferences.pageTransitions) {
                                 pagerState.animateScrollToPage(target)
@@ -4882,7 +5069,7 @@ private fun ReaderContent(
                     } else {
                         pagerState.currentPage + 1
                     }
-                    if (target in chapter.pages.indices) {
+                    if (target in spreadGroups.indices) {
                         scope.launch {
                             if (readerPreferences.pageTransitions) {
                                 pagerState.animateScrollToPage(target)
@@ -4895,10 +5082,14 @@ private fun ReaderContent(
                     }
                 },
                 onPageSelected = { pageIndex ->
+                    val groupIndex = spreadGroups
+                        .indexOfFirst { pageIndex in it }
+                        .takeIf { it >= 0 }
+                        ?: 0
                     val target = if (mode.rightToLeft) {
-                        chapter.pages.lastIndex - pageIndex
+                        spreadGroups.lastIndex - groupIndex
                     } else {
-                        pageIndex
+                        groupIndex
                     }
                     scope.launch { pagerState.scrollToPage(target) }
                 },
@@ -4906,38 +5097,75 @@ private fun ReaderContent(
             ) {
                 HorizontalPager(
                     state = pagerState,
+                    userScrollEnabled = readerPreferences.swipeNavigationEnabled,
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(canvas.color),
+                        .background(canvas.readerBackground(readerPreferences.pureBlackBackground)),
                     key = { pagerPage ->
-                        val pageIndex = if (mode.rightToLeft) {
-                            chapter.pages.lastIndex - pagerPage
+                        val groupIndex = if (mode.rightToLeft) {
+                            spreadGroups.lastIndex - pagerPage
                         } else {
                             pagerPage
+                        }.coerceIn(spreadGroups.indices)
+                        spreadGroups[groupIndex].joinToString("|") { pageIndex ->
+                            val page = chapter.pages[pageIndex]
+                            "${page.index}:${page.url}"
                         }
-                        val page = chapter.pages[pageIndex]
-                        "${page.index}:${page.url}"
                     },
                 ) { pagerPage ->
-                    val pageIndex = if (mode.rightToLeft) {
-                        chapter.pages.lastIndex - pagerPage
+                    val groupIndex = if (mode.rightToLeft) {
+                        spreadGroups.lastIndex - pagerPage
                     } else {
                         pagerPage
+                    }.coerceIn(spreadGroups.indices)
+                    val spread = spreadGroups[groupIndex]
+                    if (spread.size == 1) {
+                        val pageIndex = spread.first()
+                        ReaderPageImage(
+                            request = chapter.request,
+                            page = chapter.pages[pageIndex],
+                            paged = true,
+                            scale = scale,
+                            canvas = canvas,
+                            readerSettings = readerPreferences,
+                            cachedState = pageStates[pageIndex],
+                            onStateChange = { pageStates[pageIndex] = it },
+                            onLoadReaderPageImage = onLoadReaderPageImage,
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            val visibleSpread = if (mode.rightToLeft) spread.reversed() else spread
+                            visibleSpread.forEach { pageIndex ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    ReaderPageImage(
+                                        request = chapter.request,
+                                        page = chapter.pages[pageIndex],
+                                        paged = true,
+                                        scale = scale,
+                                        canvas = canvas,
+                                        readerSettings = readerPreferences,
+                                        cachedState = pageStates[pageIndex],
+                                        onStateChange = { pageStates[pageIndex] = it },
+                                        onLoadReaderPageImage = onLoadReaderPageImage,
+                                    )
+                                }
+                            }
+                        }
                     }
-                    ReaderPageImage(
-                        page = chapter.pages[pageIndex],
-                        paged = true,
-                        scale = scale,
-                        canvas = canvas,
-                        readerSettings = readerPreferences,
-                        cachedState = pageStates[pageIndex],
-                        onStateChange = { pageStates[pageIndex] = it },
-                        onLoadReaderPageImage = onLoadReaderPageImage,
-                    )
                 }
             }
         } else {
             val listState = rememberLazyListState(initialFirstVisibleItemIndex = retainedPage)
+            val visibleListPage = listState.firstVisibleItemIndex
             LaunchedEffect(chapter.request, listState, mode) {
                 snapshotFlow { listState.firstVisibleItemIndex }
                     .distinctUntilChanged()
@@ -4950,18 +5178,24 @@ private fun ReaderContent(
                         )
                     }
             }
+            LaunchedEffect(chapter.request, visibleListPage) {
+                (visibleListPage + 1..visibleListPage + 3).forEach { preloadReaderPage(it) }
+            }
             ReaderScaffold(
                 request = chapter.request,
                 mode = mode,
                 scale = scale,
                 canvas = canvas,
-                currentPage = listState.firstVisibleItemIndex + 1,
+                currentPage = visibleListPage + 1,
                 pageCount = chapter.pages.size,
                 bookmarked = bookmarked,
                 bookmarkBusy = bookmarkBusy,
+                readBusy = readBusy,
+                downloadBusy = downloadBusy,
                 controlsVisible = controlsVisible,
                 settingsVisible = settingsVisible,
                 chaptersVisible = chaptersVisible,
+                statsVisible = statsVisible,
                 showPageStrip = showPageStrip,
                 showControlsOnStart = showControlsOnStart,
                 readerSettings = readerPreferences.copy(
@@ -5039,17 +5273,39 @@ private fun ReaderContent(
                 onDismissPanels = {
                     settingsVisible = false
                     chaptersVisible = false
+                    statsVisible = false
                 },
                 onToggleSettings = {
                     controlsVisible = true
                     settingsVisible = !settingsVisible
                     if (settingsVisible) chaptersVisible = false
+                    if (settingsVisible) statsVisible = false
                 },
                 onToggleChapters = {
                     controlsVisible = true
                     chaptersVisible = !chaptersVisible
                     if (chaptersVisible) settingsVisible = false
+                    if (chaptersVisible) statsVisible = false
                 },
+                onToggleStats = {
+                    controlsVisible = true
+                    statsVisible = !statsVisible
+                    if (statsVisible) {
+                        settingsVisible = false
+                        chaptersVisible = false
+                    }
+                },
+                onToggleCrop = {
+                    val updated = readerPreferences.copy(cropBorders = !readerPreferences.cropBorders)
+                    readerPreferences = updated
+                    saveReaderPreferences(updated)
+                },
+                onMarkChapterRead = markChapterRead,
+                onDownloadChapter = downloadChapter,
+                onOpenChapterUrl = openChapterUrl,
+                onBookmarkChapterRef = bookmarkChapterRef,
+                onDownloadChapterRef = downloadChapterRef,
+                onMarkChapterRefRead = markChapterRefRead,
                 onToggleBookmark = chapter.request.chapterId?.let { chapterId ->
                     {
                         if (!bookmarkBusy) {
@@ -5103,7 +5359,7 @@ private fun ReaderContent(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(canvas.color),
+                        .background(canvas.readerBackground(readerPreferences.pureBlackBackground)),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = if (mode == ReaderMode.Vertical) {
                         Arrangement.spacedBy(12.dp)
@@ -5118,6 +5374,7 @@ private fun ReaderContent(
                 ) {
                     items(chapter.pages, key = { "${it.index}:${it.url}" }) { page ->
                         ReaderPageImage(
+                            request = chapter.request,
                             page = page,
                             paged = false,
                             scale = scale,
@@ -5144,9 +5401,12 @@ private fun ReaderScaffold(
     pageCount: Int,
     bookmarked: Boolean,
     bookmarkBusy: Boolean,
+    readBusy: Boolean,
+    downloadBusy: Boolean,
     controlsVisible: Boolean,
     settingsVisible: Boolean,
     chaptersVisible: Boolean,
+    statsVisible: Boolean,
     showPageStrip: Boolean,
     showControlsOnStart: Boolean,
     readerSettings: ChimahonReaderSettings,
@@ -5162,6 +5422,14 @@ private fun ReaderScaffold(
     onDismissPanels: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleChapters: () -> Unit,
+    onToggleStats: () -> Unit,
+    onToggleCrop: () -> Unit,
+    onMarkChapterRead: (() -> Unit)?,
+    onDownloadChapter: (() -> Unit)?,
+    onOpenChapterUrl: (() -> Unit)?,
+    onBookmarkChapterRef: (ChimahonReaderChapterRef) -> Unit,
+    onDownloadChapterRef: (ChimahonReaderChapterRef) -> Unit,
+    onMarkChapterRefRead: (ChimahonReaderChapterRef) -> Unit,
     onToggleBookmark: (() -> Unit)?,
     onOpenChapter: (ChimahonReaderChapterRef) -> Unit,
     onPreviousChapter: (() -> Unit)?,
@@ -5173,6 +5441,14 @@ private fun ReaderScaffold(
     content: @Composable () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
+    val effectiveNavigationMode = when (readerSettings.navigationMode) {
+        ChimahonReaderNavigationMode.Automatic -> when {
+            mode.rightToLeft -> ChimahonReaderNavigationMode.RightToLeft
+            mode == ReaderMode.Webtoon || mode == ReaderMode.Vertical -> ChimahonReaderNavigationMode.Vertical
+            else -> ChimahonReaderNavigationMode.LeftToRight
+        }
+        else -> readerSettings.navigationMode
+    }
 
     LaunchedEffect(request) {
         focusRequester.requestFocus()
@@ -5181,7 +5457,7 @@ private fun ReaderScaffold(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(canvas.color)
+            .background(canvas.readerBackground(readerSettings.pureBlackBackground))
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -5232,7 +5508,7 @@ private fun ReaderScaffold(
                     }
                     Key.Escape -> {
                         when {
-                            settingsVisible || chaptersVisible -> onDismissPanels()
+                            settingsVisible || chaptersVisible || statsVisible -> onDismissPanels()
                             controlsVisible -> onToggleControls()
                             else -> onBack()
                         }
@@ -5250,6 +5526,17 @@ private fun ReaderScaffold(
                         onLongPress = {
                             if (readerSettings.longTapEnabled) onToggleControls()
                         },
+                        onDoubleTap = {
+                            if (readerSettings.doubleTapToZoom) {
+                                onScaleChange(
+                                    if (scale == ReaderScale.FitWidth) {
+                                        ReaderScale.FitScreen
+                                    } else {
+                                        ReaderScale.FitWidth
+                                    },
+                                )
+                            }
+                        },
                         onTap = { offset ->
                             if (!readerSettings.tapZonesEnabled || size.width <= 0 || size.height <= 0) {
                                 onToggleControls()
@@ -5261,7 +5548,9 @@ private fun ReaderScaffold(
                                     width = size.width,
                                     height = size.height,
                                     smallerZones = readerSettings.smallerTapZones,
+                                    tapZonePercent = readerSettings.tapZonePercent,
                                     inversion = readerSettings.invertTapZones,
+                                    navigationMode = effectiveNavigationMode,
                                 )
                             ) {
                                 ReaderTapAction.Previous -> onPreviousPage()
@@ -5280,7 +5569,7 @@ private fun ReaderScaffold(
                 currentPage = currentPage,
                 pageCount = pageCount,
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
+                    .align(if (readerSettings.showProgressTop) Alignment.TopEnd else Alignment.BottomEnd)
                     .padding(16.dp),
             )
         }
@@ -5296,10 +5585,17 @@ private fun ReaderScaffold(
                     request = request,
                     currentPage = currentPage,
                     pageCount = pageCount,
+                    canvas = canvas,
+                    showTitle = readerSettings.showTitle,
                     bookmarked = bookmarked,
                     bookmarkBusy = bookmarkBusy,
                     onBack = onBack,
+                    onToggleHud = onToggleControls,
                     onToggleBookmark = onToggleBookmark,
+                    downloadBusy = downloadBusy,
+                    onDownloadChapter = onDownloadChapter,
+                    readBusy = readBusy,
+                    onMarkChapterRead = onMarkChapterRead,
                 )
                 if (readerSettings.keepScreenOn) {
                     Label(
@@ -5315,16 +5611,42 @@ private fun ReaderScaffold(
                             .padding(horizontal = 10.dp, vertical = 5.dp),
                     )
                 }
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (statsVisible) {
+                    ReaderStatisticsPanel(
+                        request = request,
+                        mode = mode,
+                        scale = scale,
+                        currentPage = currentPage,
+                        pageCount = pageCount,
+                        previousChapter = previousChapter,
+                        nextChapter = nextChapter,
+                        modifier = Modifier
+                            .fillMaxWidth(0.96f)
+                            .widthIn(max = 680.dp)
+                            .padding(bottom = 8.dp),
+                    )
+                }
                 if (chaptersVisible) {
                     ReaderChapterQueuePanel(
                         request = request,
                         previousChapter = previousChapter,
                         nextChapter = nextChapter,
                         onOpenChapter = onOpenChapter,
+                        onBookmarkChapter = onBookmarkChapterRef,
+                        onDownloadChapter = onDownloadChapterRef,
+                        onMarkChapterRead = onMarkChapterRefRead,
                         modifier = Modifier
                             .fillMaxWidth(0.96f)
                             .widthIn(max = 760.dp)
-                            .padding(top = 8.dp),
+                            .padding(bottom = 8.dp),
                     )
                 }
                 if (settingsVisible) {
@@ -5348,21 +5670,14 @@ private fun ReaderScaffold(
                         modifier = Modifier
                             .fillMaxWidth(0.96f)
                             .widthIn(max = 680.dp)
-                            .padding(top = 8.dp),
+                            .padding(bottom = 8.dp),
                     )
                 }
-            }
-
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
                 if (showPageStrip) {
                     ReaderPageStrip(
                         currentPage = currentPage,
                         pageCount = pageCount,
+                        canvas = canvas,
                         onPageSelected = onPageSelected,
                         onPreviousChapter = onPreviousChapter,
                         onNextChapter = onNextChapter,
@@ -5371,14 +5686,23 @@ private fun ReaderScaffold(
                 }
                 ReaderControlBar(
                     mode = mode,
+                    canvas = canvas,
+                    currentPage = currentPage,
+                    pageCount = pageCount,
                     settingsVisible = settingsVisible,
                     chaptersVisible = chaptersVisible,
+                    statsVisible = statsVisible,
+                    cropActive = readerSettings.cropBorders,
+                    showPercentage = readerSettings.showPercentage,
+                    onOpenChapterUrl = onOpenChapterUrl,
                     onCycleMode = {
                         val nextIndex = (ReaderMode.entries.indexOf(mode) + 1) % ReaderMode.entries.size
                         onModeChange(ReaderMode.entries[nextIndex])
                     },
                     onToggleSettings = onToggleSettings,
                     onToggleChapters = onToggleChapters,
+                    onToggleStats = onToggleStats,
+                    onToggleCrop = onToggleCrop,
                 )
             }
         }
@@ -5396,7 +5720,9 @@ private fun readerTapActionAt(
     width: Int,
     height: Int,
     smallerZones: Boolean,
+    tapZonePercent: Int,
     inversion: ChimahonTapZoneInvert,
+    navigationMode: ChimahonReaderNavigationMode,
 ): ReaderTapAction {
     var x = (offset.x / width.toFloat()).coerceIn(0f, 1f)
     var y = (offset.y / height.toFloat()).coerceIn(0f, 1f)
@@ -5406,7 +5732,18 @@ private fun readerTapActionAt(
     if (inversion == ChimahonTapZoneInvert.Vertical || inversion == ChimahonTapZoneInvert.Both) {
         y = 1f - y
     }
-    val edge = if (smallerZones) 0.22f else 0.33f
+    if (navigationMode == ChimahonReaderNavigationMode.RightToLeft) {
+        x = 1f - x
+    }
+    val configuredEdge = tapZonePercent.coerceIn(0, 45) / 100f
+    val edge = if (smallerZones) min(configuredEdge, 0.22f) else configuredEdge
+    if (navigationMode == ChimahonReaderNavigationMode.Vertical) {
+        return when {
+            y < edge -> ReaderTapAction.Previous
+            y > 1f - edge -> ReaderTapAction.Next
+            else -> ReaderTapAction.Menu
+        }
+    }
     return when {
         x < edge || (x < 1f - edge && y < edge) -> ReaderTapAction.Previous
         x > 1f - edge || (x > edge && y > 1f - edge) -> ReaderTapAction.Next
@@ -5437,6 +5774,7 @@ private fun ReaderPageIndicator(
 private fun ReaderPageStrip(
     currentPage: Int,
     pageCount: Int,
+    canvas: ReaderCanvas,
     onPageSelected: (Int) -> Unit,
     onPreviousChapter: (() -> Unit)?,
     onNextChapter: (() -> Unit)?,
@@ -5465,6 +5803,7 @@ private fun ReaderPageStrip(
         ReaderNavigatorChapterAction(
             icon = UiIcon.SkipPrevious,
             contentDescription = "Previous chapter",
+            canvas = canvas,
             onClick = onPreviousChapter,
         )
         Row(
@@ -5472,13 +5811,13 @@ private fun ReaderPageStrip(
                 .weight(1f)
                 .height(44.dp)
                 .clip(RoundedCornerShape(22.dp))
-                .background(ReaderPalette.chrome.copy(alpha = 0.94f))
+                .background(readerHudBackground(canvas))
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Label(
                 text = currentPage.toString(),
-                color = Color.White,
+                color = readerHudContent(canvas),
                 size = 11,
                 weight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -5525,7 +5864,7 @@ private fun ReaderPageStrip(
                 val visualProgress = if (isRtl) 1f - progress else progress
                 val thumbX = size.width * visualProgress
                 drawLine(
-                    color = ReaderPalette.divider,
+                    color = readerHudContent(canvas).copy(alpha = 0.20f),
                     start = Offset(0f, y),
                     end = Offset(size.width, y),
                     strokeWidth = 5f,
@@ -5539,14 +5878,14 @@ private fun ReaderPageStrip(
                     cap = StrokeCap.Round,
                 )
                 drawCircle(
-                    color = Color.White,
+                    color = readerHudContent(canvas),
                     radius = 7f,
                     center = Offset(thumbX, y),
                 )
             }
             Label(
                 text = pageCount.toString(),
-                color = ReaderPalette.secondaryText,
+                color = readerHudContent(canvas).copy(alpha = 0.62f),
                 size = 11,
                 weight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -5556,6 +5895,7 @@ private fun ReaderPageStrip(
         ReaderNavigatorChapterAction(
             icon = UiIcon.SkipNext,
             contentDescription = "Next chapter",
+            canvas = canvas,
             onClick = onNextChapter,
         )
     }
@@ -5579,13 +5919,14 @@ private fun readerPageIndexAt(
 private fun ReaderNavigatorChapterAction(
     icon: UiIcon,
     contentDescription: String,
+    canvas: ReaderCanvas,
     onClick: (() -> Unit)?,
 ) {
     Box(
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
-            .background(ReaderPalette.chrome.copy(alpha = 0.94f))
+            .background(readerHudBackground(canvas))
             .clickable(enabled = onClick != null) { onClick?.invoke() }
             .padding(10.dp),
         contentAlignment = Alignment.Center,
@@ -5593,7 +5934,7 @@ private fun ReaderNavigatorChapterAction(
         IconGlyph(
             icon = icon,
             contentDescription = contentDescription,
-            tint = if (onClick != null) Color.White else ReaderPalette.divider,
+            tint = if (onClick != null) readerHudContent(canvas) else readerHudContent(canvas).copy(alpha = 0.28f),
             modifier = Modifier.size(22.dp),
         )
     }
@@ -5621,6 +5962,24 @@ private fun ReaderSettingsPanel(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        Label(
+            "Appearance",
+            Color.White,
+            16,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        ReaderSheetSectionTitle("Theme")
+        ReaderThemeSwatchRow(
+            selected = canvas,
+            onSelect = onCanvasChange,
+        )
+        ReaderToggleRow(
+            label = "Pure black background",
+            checked = settings.pureBlackBackground,
+            onCheckedChange = { onSettingsChange(settings.copy(pureBlackBackground = it)) },
+        )
+        ReaderSheetSectionTitle("Mode")
         ReaderOptionRow(
             label = "Reading mode",
             options = ReaderMode.entries.map { it.title },
@@ -5630,19 +5989,23 @@ private fun ReaderSettingsPanel(
             },
         )
         ReaderOptionRow(
-            label = "Scale",
-            options = ReaderScale.entries.map { it.title },
-            selected = scale.title,
+            label = "Orientation",
+            options = ChimahonReaderOrientation.entries.map { it.readerTitle() },
+            selected = settings.orientation.readerTitle(),
             onSelect = { title ->
-                ReaderScale.entries.firstOrNull { it.title == title }?.let(onScaleChange)
+                ChimahonReaderOrientation.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(orientation = it)) }
             },
         )
         ReaderOptionRow(
-            label = "Background",
-            options = ReaderCanvas.entries.map { it.title },
-            selected = canvas.title,
+            label = "Dual page",
+            options = ChimahonDualPageMode.entries.map { it.readerTitle() },
+            selected = settings.dualPageMode.readerTitle(),
             onSelect = { title ->
-                ReaderCanvas.entries.firstOrNull { it.title == title }?.let(onCanvasChange)
+                ChimahonDualPageMode.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(dualPageMode = it)) }
             },
         )
         ReaderToggleRow(
@@ -5650,15 +6013,69 @@ private fun ReaderSettingsPanel(
             checked = settings.showPageStrip,
             onCheckedChange = { onSettingsChange(settings.copy(showPageStrip = it)) },
         )
-        ReaderToggleRow(
-            label = "Show controls on start",
-            checked = settings.keepControlsVisible,
-            onCheckedChange = { onSettingsChange(settings.copy(keepControlsVisible = it)) },
+        ReaderSheetSectionTitle("Typography")
+        ReaderValueStepperRow(
+            label = "Font size",
+            value = "${settings.fontSize.toCleanDecimal()}px",
+            onDecrease = {
+                onSettingsChange(settings.copy(fontSize = (settings.fontSize - 0.5).coerceIn(12.0, 72.0)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(fontSize = (settings.fontSize + 0.5).coerceIn(12.0, 72.0)))
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Line height",
+            value = settings.lineHeight.toCleanDecimal(),
+            onDecrease = {
+                onSettingsChange(settings.copy(lineHeight = (settings.lineHeight - 0.05).coerceIn(1.0, 2.5)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(lineHeight = (settings.lineHeight + 0.05).coerceIn(1.0, 2.5)))
+            },
         )
         ReaderToggleRow(
-            label = "Show page number",
-            checked = settings.showPageNumber,
-            onCheckedChange = { onSettingsChange(settings.copy(showPageNumber = it)) },
+            label = "Hide furigana",
+            checked = settings.hideFurigana,
+            onCheckedChange = { onSettingsChange(settings.copy(hideFurigana = it)) },
+        )
+        ReaderSheetSectionTitle("Margins")
+        ReaderValueStepperRow(
+            label = "Horizontal padding",
+            value = "${settings.horizontalPadding.toCleanDecimal()}%",
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(horizontalPadding = (settings.horizontalPadding - 0.5).coerceIn(0.0, 50.0)),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(horizontalPadding = (settings.horizontalPadding + 0.5).coerceIn(0.0, 50.0)),
+                )
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Vertical padding",
+            value = "${settings.verticalPadding.toCleanDecimal()}%",
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(verticalPadding = (settings.verticalPadding - 0.5).coerceIn(0.0, 50.0)),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(verticalPadding = (settings.verticalPadding + 0.5).coerceIn(0.0, 50.0)),
+                )
+            },
+        )
+        ReaderSheetSectionTitle("Image")
+        ReaderOptionRow(
+            label = "Scale",
+            options = ReaderScale.entries.map { it.title },
+            selected = scale.title,
+            onSelect = { title ->
+                ReaderScale.entries.firstOrNull { it.title == title }?.let(onScaleChange)
+            },
         )
         ReaderToggleRow(
             label = "Crop borders",
@@ -5666,9 +6083,35 @@ private fun ReaderSettingsPanel(
             onCheckedChange = { onSettingsChange(settings.copy(cropBorders = it)) },
         )
         ReaderToggleRow(
-            label = "Page transitions",
-            checked = settings.pageTransitions,
-            onCheckedChange = { onSettingsChange(settings.copy(pageTransitions = it)) },
+            label = "Split wide pages",
+            checked = settings.splitWidePages,
+            onCheckedChange = { onSettingsChange(settings.copy(splitWidePages = it)) },
+        )
+        ReaderToggleRow(
+            label = "Color filter",
+            checked = settings.colorFilterEnabled,
+            onCheckedChange = { onSettingsChange(settings.copy(colorFilterEnabled = it)) },
+        )
+        ReaderToggleRow(
+            label = "Grayscale",
+            checked = settings.grayscale,
+            onCheckedChange = { onSettingsChange(settings.copy(grayscale = it, colorFilterEnabled = true)) },
+        )
+        ReaderToggleRow(
+            label = "Invert colors",
+            checked = settings.invertColors,
+            onCheckedChange = { onSettingsChange(settings.copy(invertColors = it, colorFilterEnabled = true)) },
+        )
+        ReaderSheetSectionTitle("Navigation")
+        ReaderOptionRow(
+            label = "Navigation",
+            options = ChimahonReaderNavigationMode.entries.map { it.readerTitle() },
+            selected = settings.navigationMode.readerTitle(),
+            onSelect = { title ->
+                ChimahonReaderNavigationMode.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(navigationMode = it)) }
+            },
         )
         ReaderToggleRow(
             label = "Tap zones",
@@ -5689,6 +6132,135 @@ private fun ReaderSettingsPanel(
                     .firstOrNull { it.readerTitle() == title }
                     ?.let { onSettingsChange(settings.copy(invertTapZones = it)) }
             },
+        )
+        ReaderToggleRow(
+            label = "Page transitions",
+            checked = settings.pageTransitions,
+            onCheckedChange = { onSettingsChange(settings.copy(pageTransitions = it)) },
+        )
+        ReaderToggleRow(
+            label = "Swipe navigation",
+            checked = settings.swipeNavigationEnabled,
+            onCheckedChange = { onSettingsChange(settings.copy(swipeNavigationEnabled = it)) },
+        )
+        ReaderToggleRow(
+            label = "Double tap zoom",
+            checked = settings.doubleTapToZoom,
+            onCheckedChange = { onSettingsChange(settings.copy(doubleTapToZoom = it)) },
+        )
+        ReaderValueStepperRow(
+            label = "Tap zone size",
+            value = "${settings.tapZonePercent}%",
+            onDecrease = {
+                onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent - 1).coerceIn(0, 40)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent + 1).coerceIn(0, 40)))
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Chapter swipe",
+            value = "${settings.chapterSwipeDistance}px",
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(chapterSwipeDistance = (settings.chapterSwipeDistance - 8).coerceIn(32, 256)),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(chapterSwipeDistance = (settings.chapterSwipeDistance + 8).coerceIn(32, 256)),
+                )
+            },
+        )
+        ReaderSheetSectionTitle("Layout")
+        ReaderToggleRow(
+            label = "Vertical writing",
+            checked = settings.verticalWriting,
+            onCheckedChange = { onSettingsChange(settings.copy(verticalWriting = it)) },
+        )
+        ReaderToggleRow(
+            label = "Continuous mode",
+            checked = settings.continuousMode,
+            onCheckedChange = { onSettingsChange(settings.copy(continuousMode = it)) },
+        )
+        ReaderToggleRow(
+            label = "Avoid page break",
+            checked = settings.avoidPageBreak,
+            onCheckedChange = { onSettingsChange(settings.copy(avoidPageBreak = it)) },
+        )
+        ReaderToggleRow(
+            label = "Justify text",
+            checked = settings.justifyText,
+            onCheckedChange = { onSettingsChange(settings.copy(justifyText = it)) },
+        )
+        ReaderValueStepperRow(
+            label = "Character spacing",
+            value = settings.characterSpacing.toCleanDecimal(),
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(characterSpacing = (settings.characterSpacing - 0.05).coerceIn(0.0, 0.5)),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(characterSpacing = (settings.characterSpacing + 0.05).coerceIn(0.0, 0.5)),
+                )
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Paragraph spacing",
+            value = "${settings.paragraphSpacing.toCleanDecimal()} em",
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(paragraphSpacing = (settings.paragraphSpacing - 0.05).coerceIn(0.0, 2.0)),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(paragraphSpacing = (settings.paragraphSpacing + 0.05).coerceIn(0.0, 2.0)),
+                )
+            },
+        )
+        ReaderSheetSectionTitle("Behavior")
+        ReaderToggleRow(
+            label = "Show controls on start",
+            checked = settings.keepControlsVisible,
+            onCheckedChange = { onSettingsChange(settings.copy(keepControlsVisible = it)) },
+        )
+        ReaderToggleRow(
+            label = "Show page number",
+            checked = settings.showPageNumber,
+            onCheckedChange = { onSettingsChange(settings.copy(showPageNumber = it)) },
+        )
+        ReaderToggleRow(
+            label = "Show title",
+            checked = settings.showTitle,
+            onCheckedChange = { onSettingsChange(settings.copy(showTitle = it)) },
+        )
+        ReaderToggleRow(
+            label = "Show characters",
+            checked = settings.showCharacters,
+            onCheckedChange = { onSettingsChange(settings.copy(showCharacters = it)) },
+        )
+        ReaderToggleRow(
+            label = "Show percentage",
+            checked = settings.showPercentage,
+            onCheckedChange = { onSettingsChange(settings.copy(showPercentage = it)) },
+        )
+        ReaderToggleRow(
+            label = "Progress on top",
+            checked = settings.showProgressTop,
+            onCheckedChange = { onSettingsChange(settings.copy(showProgressTop = it)) },
+        )
+        ReaderToggleRow(
+            label = "Reading speed",
+            checked = settings.showReadingSpeed,
+            onCheckedChange = { onSettingsChange(settings.copy(showReadingSpeed = it)) },
+        )
+        ReaderToggleRow(
+            label = "Reading time",
+            checked = settings.showReadingTime,
+            onCheckedChange = { onSettingsChange(settings.copy(showReadingTime = it)) },
         )
         ReaderToggleRow(
             label = "Volume keys",
@@ -5934,6 +6506,77 @@ private fun ChimahonLibraryBulkActionResult.libraryBulkSummary(action: String): 
 }
 
 @Composable
+private fun ReaderSheetSectionTitle(text: String) {
+    Label(
+        text = text,
+        color = ReaderPalette.secondaryText,
+        size = 11,
+        weight = FontWeight.Bold,
+        maxLines = 1,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+@Composable
+private fun ReaderThemeSwatchRow(
+    selected: ReaderCanvas,
+    onSelect: (ReaderCanvas) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ReaderCanvas.entries.forEach { canvas ->
+            ReaderThemeSwatchButton(
+                canvas = canvas,
+                selected = canvas == selected,
+                onClick = { onSelect(canvas) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReaderThemeSwatchButton(
+    canvas: ReaderCanvas,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val textColor = readerHudContent(canvas)
+    Column(
+        modifier = modifier
+            .height(74.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(canvas.color)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) ReaderPalette.selectedControl else ReaderPalette.divider,
+                shape = RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(9.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Label(
+            "Aa",
+            textColor,
+            19,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Label(
+            canvas.title,
+            textColor.copy(alpha = 0.76f),
+            10,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
 private fun ReaderToggleRow(
     label: String,
     checked: Boolean,
@@ -5970,6 +6613,57 @@ private fun ReaderToggleRow(
                     .background(Color.White),
             )
         }
+    }
+}
+
+@Composable
+private fun ReaderValueStepperRow(
+    label: String,
+    value: String,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Label(
+            text = label,
+            color = ReaderPalette.secondaryText,
+            size = 11,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        ReaderAction(
+            icon = UiIcon.Back,
+            contentDescription = "Decrease $label",
+            onClick = onDecrease,
+            modifier = Modifier.size(32.dp),
+        )
+        Label(
+            text = value,
+            color = Color.White,
+            size = 11,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.width(62.dp),
+        )
+        ReaderAction(
+            icon = UiIcon.Forward,
+            contentDescription = "Increase $label",
+            onClick = onIncrease,
+            modifier = Modifier.size(32.dp),
+        )
+    }
+}
+
+private fun Double.toCleanDecimal(): String {
+    val rounded = kotlin.math.round(this * 100.0) / 100.0
+    return if (rounded.rem(1.0) == 0.0) {
+        rounded.toInt().toString()
+    } else {
+        rounded.toString()
     }
 }
 
@@ -6020,8 +6714,17 @@ private fun ReaderChapterQueuePanel(
     previousChapter: ChimahonReaderChapterRef?,
     nextChapter: ChimahonReaderChapterRef?,
     onOpenChapter: (ChimahonReaderChapterRef) -> Unit,
+    onBookmarkChapter: (ChimahonReaderChapterRef) -> Unit,
+    onDownloadChapter: (ChimahonReaderChapterRef) -> Unit,
+    onMarkChapterRead: (ChimahonReaderChapterRef) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var query by remember(request.chapterQueue) { mutableStateOf("") }
+    val visibleChapters = request.chapterQueue.filter { chapter ->
+        query.isBlank() ||
+            chapter.chapterName.contains(query, ignoreCase = true) ||
+            chapter.scanlator.orEmpty().contains(query, ignoreCase = true)
+    }
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
@@ -6049,40 +6752,31 @@ private fun ReaderChapterQueuePanel(
                 maxLines = 1,
             )
         }
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            items(request.chapterQueue, key = { "${it.chapterId}:${it.chapterUrl}" }) { chapter ->
-                val selected = chapter.chapterUrl == request.chapterUrl
-                Column(
-                    modifier = Modifier
-                        .width(176.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (selected) ReaderPalette.selectedControl else ReaderPalette.control)
-                        .clickable { onOpenChapter(chapter) }
-                        .padding(horizontal = 11.dp, vertical = 9.dp),
-                ) {
-                    Label(
-                        chapter.chapterName,
-                        if (selected) Color.White else ReaderPalette.secondaryText,
-                        11,
-                        weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        maxLines = 1,
-                    )
-                    Label(
-                        buildString {
-                            append("Ch. ").append(chapter.chapterNumber.toDisplayChapter())
-                            chapter.scanlator?.takeIf { it.isNotBlank() }?.let {
-                                append("  \u00b7  ").append(it)
-                            }
-                        },
-                        ReaderPalette.secondaryText,
-                        9,
-                        maxLines = 1,
-                        modifier = Modifier.padding(top = 3.dp),
-                    )
+        if (request.chapterQueue.size > 8) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(ReaderPalette.control)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (query.isBlank()) {
+                    Label("Search chapters", ReaderPalette.secondaryText, 11, maxLines = 1)
                 }
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         if (request.chapterQueue.isEmpty()) {
@@ -6093,6 +6787,125 @@ private fun ReaderChapterQueuePanel(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
         } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 330.dp)
+                    .padding(top = 8.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(visibleChapters, key = { "${it.chapterId}:${it.chapterUrl}" }) { chapter ->
+                    val selected = chapter.chapterUrl == request.chapterUrl &&
+                        chapter.chapterId == request.chapterId
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (selected) ReaderPalette.selectedControl else ReaderPalette.control)
+                            .clickable { onOpenChapter(chapter) }
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (chapter.bookmarked) {
+                                    IconGlyph(
+                                        icon = UiIcon.Bookmark,
+                                        contentDescription = "Bookmarked",
+                                        tint = if (selected) Color.White else ReaderPalette.secondaryText,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                }
+                                if (!chapter.read && chapter.lastPageRead <= 0L) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(if (selected) Color.White else ReaderPalette.selectedControl),
+                                    )
+                                }
+                                Label(
+                                    chapter.chapterName,
+                                    if (selected) Color.White else ReaderPalette.secondaryText,
+                                    11,
+                                    weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            Label(
+                                buildString {
+                                    if (chapter.chapterNumber > 0.0) {
+                                        append("Ch. ").append(chapter.chapterNumber.toDisplayChapter())
+                                    } else {
+                                        append("Chapter")
+                                    }
+                                    if (chapter.read) {
+                                        append("  \u00b7  Read")
+                                    } else if (chapter.lastPageRead > 0L) {
+                                        append("  \u00b7  Page ").append(chapter.lastPageRead + 1)
+                                    }
+                                    chapter.scanlator?.takeIf { it.isNotBlank() }?.let {
+                                        append("  \u00b7  ").append(it)
+                                    }
+                                },
+                                ReaderPalette.secondaryText,
+                                9,
+                                maxLines = 1,
+                                modifier = Modifier.padding(top = 3.dp),
+                            )
+                        }
+                        if (selected) {
+                            Label(
+                                "Current",
+                                Color.White,
+                                9,
+                                weight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color.White.copy(alpha = 0.16f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
+                        if (chapter.chapterId != null) {
+                            ReaderChapterRowAction(
+                                icon = if (chapter.read) UiIcon.Circle else UiIcon.DoneAll,
+                                contentDescription = if (chapter.read) "Mark unread" else "Mark read",
+                                active = chapter.read,
+                                onClick = { onMarkChapterRead(chapter) },
+                            )
+                            ReaderChapterRowAction(
+                                icon = if (chapter.bookmarked) UiIcon.Bookmark else UiIcon.BookmarkBorder,
+                                contentDescription = if (chapter.bookmarked) {
+                                    "Unbookmark chapter"
+                                } else {
+                                    "Bookmark chapter"
+                                },
+                                active = chapter.bookmarked,
+                                onClick = { onBookmarkChapter(chapter) },
+                            )
+                            ReaderChapterRowAction(
+                                icon = UiIcon.Download,
+                                contentDescription = "Download chapter",
+                                onClick = { onDownloadChapter(chapter) },
+                            )
+                        }
+                    }
+                }
+            }
+            if (visibleChapters.isEmpty()) {
+                Label(
+                    "No matching chapters.",
+                    ReaderPalette.secondaryText,
+                    11,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             Label(
                 buildString {
                     previousChapter?.let { append("Previous: ").append(it.chapterName) }
@@ -6109,45 +6922,187 @@ private fun ReaderChapterQueuePanel(
 }
 
 @Composable
-private fun ReaderControlBar(
-    mode: ReaderMode,
-    settingsVisible: Boolean,
-    chaptersVisible: Boolean,
-    onCycleMode: () -> Unit,
-    onToggleSettings: () -> Unit,
-    onToggleChapters: () -> Unit,
+private fun ReaderChapterRowAction(
+    icon: UiIcon,
+    contentDescription: String,
+    active: Boolean = false,
+    onClick: () -> Unit,
 ) {
-    Row(
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .height(52.dp)
-            .background(ReaderPalette.chrome.copy(alpha = 0.94f))
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(if (active) Color.White.copy(alpha = 0.14f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(8.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        ReaderAction(
-            icon = UiIcon.Chapters,
-            contentDescription = "Chapter list",
-            active = chaptersVisible,
-            onClick = onToggleChapters,
-        )
-        ReaderAction(
-            icon = UiIcon.Swap,
-            contentDescription = "Reading mode: ${mode.title}",
-            onClick = onCycleMode,
-        )
-        ReaderAction(
-            icon = UiIcon.Settings,
-            contentDescription = "Reader settings",
-            active = settingsVisible,
-            onClick = onToggleSettings,
+        IconGlyph(
+            icon = icon,
+            contentDescription = contentDescription,
+            tint = if (active) Color.White else ReaderPalette.secondaryText,
+            modifier = Modifier.size(18.dp),
         )
     }
 }
 
 @Composable
+private fun ReaderStatisticsPanel(
+    request: ChimahonReaderRequest,
+    mode: ReaderMode,
+    scale: ReaderScale,
+    currentPage: Int,
+    pageCount: Int,
+    previousChapter: ChimahonReaderChapterRef?,
+    nextChapter: ChimahonReaderChapterRef?,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(ReaderPalette.chrome.copy(alpha = 0.97f))
+            .border(1.dp, ReaderPalette.divider, RoundedCornerShape(8.dp))
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(13.dp),
+    ) {
+        Label(
+            "Statistics",
+            Color.White,
+            16,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        ReaderStatisticRow("Progress", readerProgressText(currentPage, pageCount))
+        ReaderStatisticRow("Page", "$currentPage / $pageCount")
+        ReaderStatisticRow("Mode", mode.title)
+        ReaderStatisticRow("Scale", scale.title)
+        if (request.chapterQueue.isNotEmpty()) {
+            ReaderStatisticRow(
+                "Chapter",
+                "${(request.chapterIndex + 1).coerceAtLeast(1)} / ${request.chapterQueue.size}",
+            )
+        }
+        previousChapter?.let { ReaderStatisticRow("Previous", it.chapterName) }
+        nextChapter?.let { ReaderStatisticRow("Next", it.chapterName) }
+    }
+}
+
+@Composable
+private fun ReaderStatisticRow(
+    label: String,
+    value: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Label(
+            text = label,
+            color = ReaderPalette.secondaryText,
+            size = 11,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.width(92.dp),
+        )
+        Label(
+            text = value,
+            color = Color.White,
+            size = 12,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun ReaderControlBar(
+    mode: ReaderMode,
+    canvas: ReaderCanvas,
+    currentPage: Int,
+    pageCount: Int,
+    settingsVisible: Boolean,
+    chaptersVisible: Boolean,
+    statsVisible: Boolean,
+    cropActive: Boolean,
+    showPercentage: Boolean,
+    onOpenChapterUrl: (() -> Unit)?,
+    onCycleMode: () -> Unit,
+    onToggleSettings: () -> Unit,
+    onToggleChapters: () -> Unit,
+    onToggleStats: () -> Unit,
+    onToggleCrop: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .background(readerHudBackground(canvas))
+            .padding(horizontal = 16.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Label(
+            text = if (showPercentage) readerProgressText(currentPage, pageCount) else "$currentPage / $pageCount",
+            color = readerHudContent(canvas).copy(alpha = 0.74f),
+            size = 13,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ReaderAction(
+                icon = UiIcon.Chapters,
+                contentDescription = "Chapters",
+                active = chaptersVisible,
+                tint = readerHudContent(canvas),
+                onClick = onToggleChapters,
+            )
+            ReaderAction(
+                icon = UiIcon.Settings,
+                contentDescription = "Appearance",
+                active = settingsVisible,
+                tint = readerHudContent(canvas),
+                onClick = onToggleSettings,
+            )
+            ReaderAction(
+                icon = UiIcon.Statistics,
+                contentDescription = "Statistics",
+                active = statsVisible,
+                tint = readerHudContent(canvas),
+                onClick = onToggleStats,
+            )
+            ReaderAction(
+                icon = UiIcon.Crop,
+                contentDescription = "Crop borders",
+                active = cropActive,
+                tint = readerHudContent(canvas),
+                onClick = onToggleCrop,
+            )
+            onOpenChapterUrl?.let {
+                ReaderAction(
+                    icon = UiIcon.Web,
+                    contentDescription = "Open source page",
+                    tint = readerHudContent(canvas),
+                    onClick = it,
+                )
+            }
+            ReaderAction(
+                icon = UiIcon.Swap,
+                contentDescription = "Reading mode: ${mode.title}",
+                tint = readerHudContent(canvas),
+                onClick = onCycleMode,
+            )
+        }
+    }
+}
+
+@Composable
 private fun ReaderPageImage(
+    request: ChimahonReaderRequest,
     page: ChimahonReaderPage,
     paged: Boolean,
     scale: ReaderScale,
@@ -6158,6 +7113,10 @@ private fun ReaderPageImage(
     onLoadReaderPageImage: suspend (ChimahonReaderPage) -> ByteArray,
 ) {
     var retryKey by remember(page) { mutableIntStateOf(0) }
+    var pageActionsVisible by remember(page) { mutableStateOf(false) }
+    var pageActionBusy by remember(page) { mutableStateOf<String?>(null) }
+    var pageActionMessage by remember(page) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(page, retryKey) {
         if (retryKey == 0 && cachedState is ReaderPageUiState.Ready) return@LaunchedEffect
@@ -6176,8 +7135,11 @@ private fun ReaderPageImage(
         modifier = if (paged) {
             Modifier
                 .fillMaxSize()
-                .background(canvas.color)
-                .padding(if (readerSettings.cropBorders) 0.dp else 12.dp)
+                .background(canvas.readerBackground(readerSettings.pureBlackBackground))
+                .padding(
+                    horizontal = if (readerSettings.cropBorders) 0.dp else readerSettings.horizontalPadding.dp,
+                    vertical = if (readerSettings.cropBorders) 0.dp else readerSettings.verticalPadding.dp,
+                )
         } else {
             Modifier
                 .fillMaxWidth()
@@ -6189,7 +7151,11 @@ private fun ReaderPageImage(
                     },
                 )
                 .heightIn(min = 260.dp)
-                .background(canvas.color)
+                .background(canvas.readerBackground(readerSettings.pureBlackBackground))
+                .padding(
+                    horizontal = if (readerSettings.cropBorders) 0.dp else readerSettings.horizontalPadding.dp,
+                    vertical = if (readerSettings.cropBorders) 0.dp else readerSettings.verticalPadding.dp,
+                )
         },
         contentAlignment = Alignment.Center,
     ) {
@@ -6228,6 +7194,13 @@ private fun ReaderPageImage(
                         else -> Modifier
                             .fillMaxWidth()
                             .aspectRatio(aspectRatio)
+                    }.pointerInput(page) {
+                        detectTapGestures(
+                            onLongPress = {
+                                pageActionMessage = null
+                                pageActionsVisible = true
+                            },
+                        )
                     },
                 )
                 readerSettings.readerBrightnessOverlay()?.let { overlay ->
@@ -6239,6 +7212,50 @@ private fun ReaderPageImage(
                 }
             }
         }
+    }
+    if (pageActionsVisible) {
+        ReaderPageActionsDialog(
+            request = request,
+            page = page,
+            busyAction = pageActionBusy,
+            message = pageActionMessage,
+            onDismiss = {
+                if (pageActionBusy == null) pageActionsVisible = false
+            },
+            onCopyUrl = {
+                pageActionMessage = ChimahonReaderPageActions.copyPageUrlToClipboard(page).message
+            },
+            onCopyInfo = {
+                pageActionMessage = ChimahonReaderPageActions.copyPageTextToClipboard(request, page).message
+            },
+            onShareInfo = {
+                pageActionMessage = ChimahonReaderPageActions.sharePageText(request, page).message
+            },
+            onSaveImage = {
+                if (pageActionBusy == null) {
+                    scope.launch {
+                        pageActionBusy = "save"
+                        pageActionMessage = runCatching {
+                            val bytes = onLoadReaderPageImage(page)
+                            ChimahonReaderPageActions.savePageBytes(request, page, bytes).message
+                        }.getOrElse { it.message ?: "Page image could not be saved." }
+                        pageActionBusy = null
+                    }
+                }
+            },
+            onShareImage = {
+                if (pageActionBusy == null) {
+                    scope.launch {
+                        pageActionBusy = "share"
+                        pageActionMessage = runCatching {
+                            val bytes = onLoadReaderPageImage(page)
+                            ChimahonReaderPageActions.sharePageBytes(request, page, bytes).message
+                        }.getOrElse { it.message ?: "Page image could not be shared." }
+                        pageActionBusy = null
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -6267,6 +7284,132 @@ private fun ChimahonReaderSettings.readerBrightnessOverlay(): Color? {
         Color.White.copy(alpha = alpha)
     } else {
         Color.Black.copy(alpha = alpha)
+    }
+}
+
+@Composable
+private fun ReaderPageActionsDialog(
+    request: ChimahonReaderRequest,
+    page: ChimahonReaderPage,
+    busyAction: String?,
+    message: String?,
+    onDismiss: () -> Unit,
+    onSaveImage: () -> Unit,
+    onShareImage: () -> Unit,
+    onCopyUrl: () -> Unit,
+    onCopyInfo: () -> Unit,
+    onShareInfo: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .widthIn(min = 280.dp, max = 420.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(ReaderPalette.chrome)
+                .border(1.dp, ReaderPalette.divider, RoundedCornerShape(8.dp))
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Label(
+                "Page actions",
+                Color.White,
+                17,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Label(
+                "${request.chapterName} - page ${page.index + 1}",
+                ReaderPalette.secondaryText,
+                11,
+                maxLines = 2,
+            )
+            ReaderPageActionRow(
+                title = if (busyAction == "save") "Saving image" else "Save image",
+                icon = UiIcon.Download,
+                active = busyAction == "save",
+                enabled = busyAction == null,
+                onClick = onSaveImage,
+            )
+            ReaderPageActionRow(
+                title = if (busyAction == "share") "Sharing image" else "Share image",
+                icon = UiIcon.Web,
+                active = busyAction == "share",
+                enabled = busyAction == null,
+                onClick = onShareImage,
+            )
+            ReaderPageActionRow(
+                title = "Copy page URL",
+                icon = UiIcon.Link,
+                enabled = busyAction == null,
+                onClick = onCopyUrl,
+            )
+            ReaderPageActionRow(
+                title = "Copy page info",
+                icon = UiIcon.Info,
+                enabled = busyAction == null,
+                onClick = onCopyInfo,
+            )
+            ReaderPageActionRow(
+                title = "Share page info",
+                icon = UiIcon.Forward,
+                enabled = busyAction == null,
+                onClick = onShareInfo,
+            )
+            message?.let {
+                Label(
+                    it,
+                    if (busyAction == null) ReaderPalette.secondaryText else Color.White,
+                    11,
+                    lineHeight = 16,
+                    maxLines = 3,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                ReaderTextAction(
+                    text = "Close",
+                    onClick = onDismiss,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderPageActionRow(
+    title: String,
+    icon: UiIcon,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(42.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (active) ReaderPalette.selectedControl else ReaderPalette.control)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = title,
+            tint = if (enabled || active) Color.White else ReaderPalette.secondaryText.copy(alpha = 0.45f),
+            modifier = Modifier.size(19.dp),
+        )
+        Label(
+            title,
+            if (enabled || active) Color.White else ReaderPalette.secondaryText.copy(alpha = 0.45f),
+            12,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -7858,6 +9001,9 @@ private fun MangaDetailHome(
     onSetMangaChaptersRead: suspend (Long, Boolean) -> Unit,
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
+    onEnqueueDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    onEnqueueDownloads: suspend (Collection<Long>) -> ChimahonDownloadQueueData,
+    onLoadDownloadSnapshot: suspend () -> ChimahonDownloadSnapshot,
     onSelectBrowse: () -> Unit,
 ) {
     val manga = snapshot.mangaDetails[mangaId]
@@ -7878,7 +9024,14 @@ private fun MangaDetailHome(
     var chapterFiltersVisible by remember(mangaId) { mutableStateOf(false) }
     var chapterQuery by remember(mangaId) { mutableStateOf("") }
     val selectedChapterIds = remember(mangaId) { mutableStateMapOf<Long, Boolean>() }
+    var downloadSnapshot by remember(mangaId) { mutableStateOf<ChimahonDownloadSnapshot?>(null) }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(mangaId) {
+        downloadSnapshot = runCatching { onLoadDownloadSnapshot() }.getOrNull()
+    }
+    val refreshDownloadSnapshot: suspend () -> Unit = {
+        downloadSnapshot = runCatching { onLoadDownloadSnapshot() }.getOrNull() ?: downloadSnapshot
+    }
     val visibleChapters = chapters
         .filter { chapter ->
             chapterQuery.isBlank() ||
@@ -7922,6 +9075,11 @@ private fun MangaDetailHome(
                         onOpenReader = onOpenReader,
                         onSetMangaFavorite = onSetMangaFavorite,
                         onSetMangaChaptersRead = onSetMangaChaptersRead,
+                        onEnqueueDownloads = { chapterIds ->
+                            val result = onEnqueueDownloads(chapterIds)
+                            refreshDownloadSnapshot()
+                            result
+                        },
                         onSelectBrowse = onSelectBrowse,
                         modifier = Modifier.padding(top = 10.dp),
                     )
@@ -7965,6 +9123,12 @@ private fun MangaDetailHome(
                     onOpenReader = onOpenReader,
                     onSetChapterRead = onSetChapterRead,
                     onSetChapterBookmark = onSetChapterBookmark,
+                    onEnqueueDownload = { chapterId ->
+                        val result = onEnqueueDownload(chapterId)
+                        refreshDownloadSnapshot()
+                        result
+                    },
+                    downloadStatuses = downloadSnapshot?.chaptersById.orEmpty(),
                     selectedChapterIds = selectedChapterIds.filterValues { it }.keys,
                     onToggleChapterSelected = { chapterId ->
                         selectedChapterIds[chapterId] = selectedChapterIds[chapterId] != true
@@ -7996,6 +9160,15 @@ private fun MangaDetailHome(
                             selectedChapterIds.clear()
                         }
                     },
+                    onDownloadSelected = {
+                        val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                        scope.launch {
+                            if (runCatching { onEnqueueDownloads(selected.map { it.id }) }.isSuccess) {
+                                refreshDownloadSnapshot()
+                            }
+                            selectedChapterIds.clear()
+                        }
+                    },
                     modifier = Modifier
                         .weight(0.58f)
                         .fillMaxHeight(),
@@ -8021,6 +9194,11 @@ private fun MangaDetailHome(
                         onOpenReader = onOpenReader,
                         onSetMangaFavorite = onSetMangaFavorite,
                         onSetMangaChaptersRead = onSetMangaChaptersRead,
+                        onEnqueueDownloads = { chapterIds ->
+                            val result = onEnqueueDownloads(chapterIds)
+                            refreshDownloadSnapshot()
+                            result
+                        },
                         onSelectBrowse = onSelectBrowse,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     )
@@ -8102,6 +9280,15 @@ private fun MangaDetailHome(
                                         selectedChapterIds.clear()
                                     }
                                 },
+                                SelectionAction("Download", UiIcon.Download) {
+                                    val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                                    scope.launch {
+                                        if (runCatching { onEnqueueDownloads(selected.map { it.id }) }.isSuccess) {
+                                            refreshDownloadSnapshot()
+                                        }
+                                        selectedChapterIds.clear()
+                                    }
+                                },
                             ),
                         )
                     }
@@ -8131,6 +9318,12 @@ private fun MangaDetailHome(
                             },
                             onSetRead = { read -> onSetChapterRead(chapter.id, read) },
                             onSetBookmark = { bookmarked -> onSetChapterBookmark(chapter.id, bookmarked) },
+                            onEnqueueDownload = {
+                                val result = onEnqueueDownload(chapter.id)
+                                refreshDownloadSnapshot()
+                                result
+                            },
+                            downloadStatus = downloadSnapshot?.statusForChapter(chapter.id),
                         )
                     }
                 }
@@ -8155,6 +9348,8 @@ private fun MangaChapterPane(
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
+    onEnqueueDownload: suspend (Long) -> ChimahonDownloadQueueData,
+    downloadStatuses: Map<Long, ChimahonChapterDownloadStatus>,
     selectedChapterIds: Set<Long>,
     onToggleChapterSelected: (Long) -> Unit,
     onSelectAllChapters: () -> Unit,
@@ -8162,6 +9357,7 @@ private fun MangaChapterPane(
     onClearChapterSelection: () -> Unit,
     onMarkSelectedRead: () -> Unit,
     onBookmarkSelected: () -> Unit,
+    onDownloadSelected: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -8199,6 +9395,7 @@ private fun MangaChapterPane(
                     actions = listOf(
                         SelectionAction("Mark read", UiIcon.DoneAll, onMarkSelectedRead),
                         SelectionAction("Bookmark", UiIcon.Bookmark, onBookmarkSelected),
+                        SelectionAction("Download", UiIcon.Download, onDownloadSelected),
                     ),
                 )
             }
@@ -8226,6 +9423,8 @@ private fun MangaChapterPane(
                     },
                     onSetRead = { read -> onSetChapterRead(chapter.id, read) },
                     onSetBookmark = { bookmarked -> onSetChapterBookmark(chapter.id, bookmarked) },
+                    onEnqueueDownload = { onEnqueueDownload(chapter.id) },
+                    downloadStatus = downloadStatuses[chapter.id],
                 )
             }
         }
@@ -8481,6 +9680,7 @@ private fun MangaActionRow(
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onSetMangaFavorite: suspend (Long, Boolean) -> Unit,
     onSetMangaChaptersRead: suspend (Long, Boolean) -> Unit,
+    onEnqueueDownloads: suspend (Collection<Long>) -> ChimahonDownloadQueueData,
     onSelectBrowse: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -8519,6 +9719,21 @@ private fun MangaActionRow(
                         runCatching {
                             onSetMangaChaptersRead(manga.id, unread > 0)
                         }
+                        busyAction = null
+                    }
+                }
+            },
+        )
+        MangaActionButton(
+            icon = UiIcon.Download,
+            title = if (busyAction == "download") "Queued" else "Download",
+            active = busyAction == "download",
+            modifier = Modifier.weight(1f),
+            onClick = {
+                if (chapters.isNotEmpty() && busyAction == null) {
+                    scope.launch {
+                        busyAction = "download"
+                        runCatching { onEnqueueDownloads(chapters.map { it.id }) }
                         busyAction = null
                     }
                 }
@@ -8870,9 +10085,12 @@ private fun MangaChapterListItem(
     onClick: () -> Unit,
     onSetRead: suspend (Boolean) -> Unit,
     onSetBookmark: suspend (Boolean) -> Unit,
+    onEnqueueDownload: suspend () -> ChimahonDownloadQueueData,
+    downloadStatus: ChimahonChapterDownloadStatus? = null,
 ) {
     var busyAction by remember(chapter.id) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val downloadState = downloadStatus?.status
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -8931,6 +10149,25 @@ private fun MangaChapterListItem(
                 size = 11,
                 maxLines = 1,
             )
+            if (downloadStatus != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconGlyph(
+                        icon = downloadState?.statusIcon() ?: UiIcon.Download,
+                        contentDescription = downloadState?.queueTitle() ?: "Download",
+                        tint = downloadState?.statusColor() ?: ChimahonPalette.primary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Label(
+                        downloadStatus.chapterDownloadStatusLabel(),
+                        downloadState?.statusColor() ?: ChimahonPalette.secondaryText,
+                        11,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
         ChapterQuickAction(
             icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
@@ -8961,6 +10198,23 @@ private fun MangaChapterListItem(
                     scope.launch {
                         busyAction = "bookmark"
                         runCatching { onSetBookmark(!chapter.bookmarked) }
+                        busyAction = null
+                    }
+                }
+            },
+        )
+        ChapterQuickAction(
+            icon = downloadState?.statusIcon() ?: UiIcon.Download,
+            contentDescription = downloadState?.queueTitle() ?: "Download chapter",
+            active = busyAction == "download" ||
+                downloadState == ChimahonDownloadState.Queued ||
+                downloadState == ChimahonDownloadState.Downloading ||
+                downloadState == ChimahonDownloadState.Downloaded,
+            onClick = {
+                if (busyAction == null && downloadState != ChimahonDownloadState.Downloaded) {
+                    scope.launch {
+                        busyAction = "download"
+                        runCatching { onEnqueueDownload() }
                         busyAction = null
                     }
                 }
@@ -9006,6 +10260,7 @@ private fun MoreHome(
     onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onProcessNextDownload: suspend () -> ChimahonDownloadQueueData,
     onPauseDownload: suspend (Long) -> ChimahonDownloadQueueData,
     onResumeDownload: suspend (Long) -> ChimahonDownloadQueueData,
     onRetryDownload: suspend (Long) -> ChimahonDownloadQueueData,
@@ -9049,6 +10304,7 @@ private fun MoreHome(
             onLoadDownloadQueue = onLoadDownloadQueue,
             onPauseDownloadQueue = onPauseDownloadQueue,
             onResumeDownloadQueue = onResumeDownloadQueue,
+            onProcessNextDownload = onProcessNextDownload,
             onPauseDownload = onPauseDownload,
             onResumeDownload = onResumeDownload,
             onRetryDownload = onRetryDownload,
@@ -9235,6 +10491,7 @@ private fun MoreDetailPage(
     onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onResumeDownloadQueue: suspend () -> ChimahonDownloadQueueData,
+    onProcessNextDownload: suspend () -> ChimahonDownloadQueueData,
     onPauseDownload: suspend (Long) -> ChimahonDownloadQueueData,
     onResumeDownload: suspend (Long) -> ChimahonDownloadQueueData,
     onRetryDownload: suspend (Long) -> ChimahonDownloadQueueData,
@@ -9265,6 +10522,8 @@ private fun MoreDetailPage(
     var categoryBusy by remember { mutableStateOf(false) }
     var downloadQueue by remember { mutableStateOf<ChimahonDownloadQueueData?>(null) }
     var downloadQueueMessage by remember { mutableStateOf<String?>(null) }
+    var downloadAutoRun by remember { mutableStateOf(true) }
+    var downloadProcessorRunning by remember { mutableStateOf(false) }
     var maintenanceSnapshot by remember { mutableStateOf<ChimahonDataMaintenanceSnapshot?>(null) }
     var maintenanceMessage by remember { mutableStateOf<String?>(null) }
     var maintenanceBusy by remember { mutableStateOf(false) }
@@ -9277,6 +10536,42 @@ private fun MoreDetailPage(
             maintenanceSnapshot = runCatching { onLoadDataMaintenance() }
                 .onFailure { maintenanceMessage = it.message ?: "Could not load storage data" }
                 .getOrNull()
+        }
+    }
+    val downloadQueueSignature = downloadQueue?.entries
+        ?.joinToString("|") { entry -> "${entry.id}:${entry.status}:${entry.progress}" }
+    LaunchedEffect(
+        page,
+        downloadAutoRun,
+        downloadQueue?.paused,
+        downloadQueue?.pendingCount,
+        downloadQueue?.activeCount,
+        downloadQueueSignature,
+    ) {
+        val queue = downloadQueue
+        if (
+            page == MorePage.Downloads &&
+            downloadAutoRun &&
+            queue != null &&
+            !queue.paused &&
+            queue.pendingCount > 0 &&
+            queue.activeCount == 0
+        ) {
+            downloadProcessorRunning = true
+            downloadQueueMessage = "Downloading next chapter..."
+            val result = runCatching { onProcessNextDownload() }
+            downloadQueue = result.getOrElse { error ->
+                downloadQueueMessage = error.message ?: "Could not process next download"
+                runCatching { onLoadDownloadQueue() }.getOrNull() ?: queue
+            }
+            result.getOrNull()?.let { updated ->
+                downloadQueueMessage = when {
+                    updated.pendingCount > 0 -> "Downloaded one chapter. ${updated.pendingCount} waiting."
+                    updated.failedCount > 0 -> "Queue finished with ${updated.failedCount} failed item(s)."
+                    else -> "Download queue finished."
+                }
+            }
+            downloadProcessorRunning = false
         }
     }
     Column(modifier = Modifier.fillMaxSize()) {
@@ -9310,6 +10605,9 @@ private fun MoreDetailPage(
                         DownloadQueueToolbar(
                             queue = queue,
                             message = downloadQueueMessage,
+                            processing = downloadProcessorRunning,
+                            autoRun = downloadAutoRun,
+                            onAutoRunChange = { downloadAutoRun = it },
                             onTogglePaused = {
                                 scope.launch {
                                     downloadQueue = if (downloadQueue?.paused == true) {
@@ -9321,6 +10619,28 @@ private fun MoreDetailPage(
                                             .onFailure { downloadQueueMessage = it.message ?: "Could not pause queue" }
                                             .getOrNull()
                                     } ?: downloadQueue
+                                }
+                            },
+                            onProcessNext = {
+                                if (!downloadProcessorRunning) {
+                                    scope.launch {
+                                        val current = downloadQueue
+                                        downloadProcessorRunning = true
+                                        downloadQueueMessage = "Downloading next chapter..."
+                                        val result = runCatching { onProcessNextDownload() }
+                                        downloadQueue = result.getOrElse { error ->
+                                            downloadQueueMessage = error.message ?: "Could not process next download"
+                                            runCatching { onLoadDownloadQueue() }.getOrNull() ?: current
+                                        }
+                                        result.getOrNull()?.let { updated ->
+                                            downloadQueueMessage = when {
+                                                updated.pendingCount > 0 -> "Downloaded one chapter. ${updated.pendingCount} waiting."
+                                                updated.failedCount > 0 -> "Queue finished with ${updated.failedCount} failed item(s)."
+                                                else -> "Download queue finished."
+                                            }
+                                        }
+                                        downloadProcessorRunning = false
+                                    }
                                 }
                             },
                             onClearCompleted = {
@@ -9766,6 +11086,18 @@ private fun MoreDetailPage(
                             onSelect = { selected ->
                                 ChimahonColorTheme.entries.firstOrNull { it.title == selected }?.let {
                                     onAppearanceSettingsChange(settings.appearance.copy(colorTheme = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "App icon",
+                            options = ChimahonAppIcon.entries.map { it.title },
+                            selected = settings.appearance.appIcon.title,
+                            onSelect = { selected ->
+                                ChimahonAppIcon.entries.firstOrNull { it.title == selected }?.let {
+                                    onAppearanceSettingsChange(settings.appearance.copy(appIcon = it))
                                 }
                             },
                         )
@@ -11074,7 +12406,11 @@ private fun StorageSectionRow(
 private fun DownloadQueueToolbar(
     queue: ChimahonDownloadQueueData?,
     message: String?,
+    processing: Boolean,
+    autoRun: Boolean,
+    onAutoRunChange: (Boolean) -> Unit,
     onTogglePaused: () -> Unit,
+    onProcessNext: () -> Unit,
     onClearCompleted: () -> Unit,
 ) {
     val entries = queue?.entries.orEmpty()
@@ -11117,7 +12453,7 @@ private fun DownloadQueueToolbar(
                     maxLines = 1,
                 )
                 Label(
-                    queue?.downloadQueueSummary() ?: "Loading saved queue",
+                    if (processing) "Processing the next chapter" else queue?.downloadQueueSummary() ?: "Loading saved queue",
                     ChimahonPalette.secondaryText,
                     11,
                     maxLines = 2,
@@ -11154,6 +12490,17 @@ private fun DownloadQueueToolbar(
                 maxLines = 2,
                 modifier = Modifier.weight(1f),
             )
+            if (queue != null && queue.pendingCount > 0 && queue.paused.not()) {
+                TextButtonLike(if (processing) "Working" else "Start next", onClick = onProcessNext)
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            if (queue != null && queue.entries.isNotEmpty()) {
+                QueueTextAction(
+                    if (autoRun) "Auto on" else "Auto off",
+                    onClick = { onAutoRunChange(!autoRun) },
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
             if (completedCount > 0) {
                 TextButtonLike("Clear done", onClick = onClearCompleted)
             }
@@ -12039,12 +13386,13 @@ private fun ReaderAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     active: Boolean = false,
+    tint: Color = Color.White,
 ) {
     Box(
         modifier = modifier
             .size(40.dp)
             .clip(CircleShape)
-            .background(if (active) ReaderPalette.selectedControl else Color.Transparent)
+            .background(if (active) tint.copy(alpha = 0.16f) else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(8.dp),
         contentAlignment = Alignment.Center,
@@ -12052,7 +13400,7 @@ private fun ReaderAction(
         IconGlyph(
             icon = icon,
             contentDescription = contentDescription,
-            tint = Color.White,
+            tint = tint,
             modifier = Modifier.size(21.dp),
         )
     }
@@ -12276,6 +13624,20 @@ private fun ChimahonDownloadState.statusBackground(): Color {
         ChimahonDownloadState.Error -> ChimahonPalette.errorContainer
         ChimahonDownloadState.Paused -> ChimahonPalette.surfaceVariant
         else -> ChimahonPalette.primaryContainer
+    }
+}
+
+private fun ChimahonChapterDownloadStatus.chapterDownloadStatusLabel(): String {
+    if (status == ChimahonDownloadState.Error && !errorMessage.isNullOrBlank()) {
+        return errorMessage
+    }
+    return when (status) {
+        ChimahonDownloadState.Downloading -> progress
+            .takeIf { it in 1..99 }
+            ?.let { "Downloading $it%" }
+            ?: "Downloading"
+        ChimahonDownloadState.Downloaded -> if (downloadedOnDisk) "Downloaded" else "Download complete"
+        else -> status.queueTitle()
     }
 }
 
@@ -12519,6 +13881,9 @@ private fun ChimahonChapterEntry.toReaderChapterRef(): ChimahonReaderChapterRef 
         scanlator = scanlator,
         dateUpload = dateUpload,
         initialPage = lastPageRead.coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+        read = read,
+        bookmarked = bookmarked,
+        lastPageRead = lastPageRead,
     )
 }
 
@@ -12665,6 +14030,8 @@ private enum class UiIcon {
     SkipPrevious,
     SkipNext,
     Delete,
+    Crop,
+    Link,
 }
 
 @Composable
@@ -12721,6 +14088,8 @@ private val UiIcon.imageVector: ImageVector
         UiIcon.SkipPrevious -> Icons.Outlined.SkipPrevious
         UiIcon.SkipNext -> Icons.Outlined.SkipNext
         UiIcon.Delete -> Icons.Outlined.DeleteOutline
+        UiIcon.Crop -> Icons.Outlined.CropFree
+        UiIcon.Link -> Icons.Outlined.Link
     }
 
 @Suppress("unused")
@@ -12880,6 +14249,17 @@ private fun LegacyIconGlyph(
                 line(0.34f, 0.48f, 0.50f, 0.64f)
                 line(0.66f, 0.48f, 0.50f, 0.64f)
                 line(0.24f, 0.78f, 0.76f, 0.78f)
+            }
+            UiIcon.Crop -> {
+                line(0.24f, 0.12f, 0.24f, 0.76f)
+                line(0.24f, 0.76f, 0.88f, 0.76f)
+                line(0.12f, 0.24f, 0.76f, 0.24f)
+                line(0.76f, 0.24f, 0.76f, 0.88f)
+            }
+            UiIcon.Link -> {
+                drawArc(tint, 130f, 250f, false, point(0.16f, 0.28f), Size(w * 0.38f, h * 0.38f), style = stroke)
+                drawArc(tint, -50f, 250f, false, point(0.46f, 0.34f), Size(w * 0.38f, h * 0.38f), style = stroke)
+                line(0.40f, 0.57f, 0.60f, 0.43f)
             }
             UiIcon.Incognito,
             UiIcon.VisibilityOff,
@@ -13198,4 +14578,36 @@ private object ReaderPalette {
     val selectedControl = Color(0xFF5C5A86)
     val divider = Color(0xFF34343B)
     val secondaryText = Color(0xFFB9B6C0)
+}
+
+private fun readerHudBackground(canvas: ReaderCanvas): Color {
+    return when (canvas) {
+        ReaderCanvas.White -> Color(0xFFFFFFFF).copy(alpha = 0.90f)
+        ReaderCanvas.Gray -> Color(0xFF27272B).copy(alpha = 0.92f)
+        ReaderCanvas.Black -> ReaderPalette.chrome.copy(alpha = 0.94f)
+    }
+}
+
+private fun ReaderCanvas.readerBackground(pureBlack: Boolean): Color {
+    return when (this) {
+        ReaderCanvas.Black -> if (pureBlack) Color.Black else ReaderPalette.background
+        ReaderCanvas.Gray,
+        ReaderCanvas.White,
+        -> color
+    }
+}
+
+private fun readerHudContent(canvas: ReaderCanvas): Color {
+    return when (canvas) {
+        ReaderCanvas.White -> Color(0xFF242329)
+        ReaderCanvas.Gray,
+        ReaderCanvas.Black,
+        -> Color.White
+    }
+}
+
+private fun readerProgressText(currentPage: Int, pageCount: Int): String {
+    if (pageCount <= 0) return "0%"
+    val percent = ((currentPage.coerceIn(0, pageCount).toFloat() / pageCount.toFloat()) * 100f).toInt()
+    return "$percent%"
 }

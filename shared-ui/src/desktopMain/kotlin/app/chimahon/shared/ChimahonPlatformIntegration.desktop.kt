@@ -5,8 +5,11 @@ import java.awt.Desktop
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.net.URI
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 
 internal actual object ChimahonPlatformIntegration {
     private val storageDirectories = DesktopPlatformStorageDirectories(APP_NAME)
@@ -47,9 +50,37 @@ internal actual object ChimahonPlatformIntegration {
         }.getOrDefault(false)
     }
 
-    actual fun shareText(text: String, title: String?): Boolean = false
+    actual fun shareText(text: String, title: String?): Boolean {
+        if (text.isBlank()) return false
+        return openMailDraft(
+            subject = title.shareTitle(),
+            body = text,
+        )
+    }
 
-    actual fun shareFile(path: String, title: String?): Boolean = false
+    actual fun shareFile(path: String, title: String?): Boolean {
+        val target = path.localPathOrNull() ?: return false
+        if (!Files.isRegularFile(target)) return false
+
+        return when {
+            isWindows -> launchCommandAndWait(
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Process -FilePath \$args[0] -Verb Share",
+                target.toString(),
+            )
+            isMacOs -> launchCommand("open", "-a", "Mail", target.toString())
+            else -> launchCommand(
+                "xdg-email",
+                "--subject",
+                title.shareTitle(),
+                "--attach",
+                target.toString(),
+            )
+        }
+    }
 
     actual fun platformInfo(): ChimahonPlatformInfo {
         val osName = System.getProperty("os.name").orEmpty()
@@ -119,11 +150,47 @@ private fun launchPlatformCommand(target: String): Boolean {
     }
 }
 
+private fun openMailDraft(subject: String, body: String): Boolean {
+    val mailto = URI("mailto:?subject=${subject.urlEncoded()}&body=${body.urlEncoded()}")
+    return performDesktopAction(Desktop.Action.MAIL) { desktop ->
+        desktop.mail(mailto)
+    } || when {
+        isWindows || isMacOs -> launchPlatformCommand(mailto.toString())
+        else -> launchCommand("xdg-email", "--subject", subject, "--body", body)
+    }
+}
+
+private fun String?.shareTitle(): String {
+    return this
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+        ?: APP_NAME
+}
+
+private fun String.urlEncoded(): String {
+    return URLEncoder
+        .encode(this, StandardCharsets.UTF_8)
+        .replace("+", "%20")
+}
+
 private fun launchCommand(vararg command: String): Boolean {
     return runCatching {
         ProcessBuilder(*command)
             .redirectErrorStream(true)
             .start()
         true
+    }.getOrDefault(false)
+}
+
+private fun launchCommandAndWait(vararg command: String): Boolean {
+    return runCatching {
+        val process = ProcessBuilder(*command)
+            .redirectErrorStream(true)
+            .start()
+        if (process.waitFor(3, TimeUnit.SECONDS)) {
+            process.exitValue() == 0
+        } else {
+            true
+        }
     }.getOrDefault(false)
 }
