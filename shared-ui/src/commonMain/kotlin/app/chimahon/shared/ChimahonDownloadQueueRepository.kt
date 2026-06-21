@@ -24,6 +24,7 @@ internal class ChimahonDownloadQueueRepository(
     private val json = Json {
         ignoreUnknownKeys = true
     }
+    private var activeDownloadsRecovered = false
 
     suspend fun load(): ChimahonDownloadQueueData {
         return mutex.withLock {
@@ -260,6 +261,24 @@ internal class ChimahonDownloadQueueRepository(
     }
 
     private suspend fun loadEntriesUnlocked(): List<ChimahonDownloadQueueEntry> {
+        val entries = loadPersistedEntriesUnlocked()
+        if (activeDownloadsRecovered) return entries
+
+        activeDownloadsRecovered = true
+        val recoveredEntries = entries.map { entry ->
+            if (entry.status == ChimahonDownloadState.Downloading) {
+                entry.copy(status = ChimahonDownloadState.Queued)
+            } else {
+                entry
+            }
+        }
+        if (recoveredEntries != entries) {
+            persistEntriesUnlocked(recoveredEntries)
+        }
+        return recoveredEntries
+    }
+
+    private suspend fun loadPersistedEntriesUnlocked(): List<ChimahonDownloadQueueEntry> {
         val payload = settingsStore.readString(DOWNLOAD_QUEUE_KEY) ?: return emptyList()
         val array = runCatching { json.parseToJsonElement(payload) as? JsonArray }
             .getOrNull()
@@ -336,13 +355,6 @@ internal class ChimahonDownloadQueueRepository(
             chapterUrl = string("chapterUrl").orEmpty(),
             status = string("status")
                 ?.let { stored -> ChimahonDownloadState.entries.firstOrNull { it.name == stored } }
-                ?.let {
-                    if (it == ChimahonDownloadState.Downloading) {
-                        ChimahonDownloadState.Queued
-                    } else {
-                        it
-                    }
-                }
                 ?: ChimahonDownloadState.Queued,
             progress = this["progress"]?.jsonPrimitive?.intOrNull ?: 0,
             downloadedBytes = this["downloadedBytes"]?.jsonPrimitive?.longOrNull ?: 0L,

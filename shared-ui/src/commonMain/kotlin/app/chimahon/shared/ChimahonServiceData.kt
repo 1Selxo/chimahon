@@ -143,6 +143,25 @@ data class ChimahonDownloadQueueData(
         get() = entries.count { it.status == ChimahonDownloadState.Error }
 }
 
+data class ChimahonChapterDownloadStatus(
+    val chapterId: Long,
+    val status: ChimahonDownloadState,
+    val progress: Int,
+    val downloadedBytes: Long,
+    val totalBytes: Long? = null,
+    val downloadedOnDisk: Boolean = false,
+    val errorMessage: String? = null,
+)
+
+data class ChimahonDownloadSnapshot(
+    val chaptersById: Map<Long, ChimahonChapterDownloadStatus>,
+    val queue: ChimahonDownloadQueueData,
+) {
+    fun statusForChapter(chapterId: Long): ChimahonChapterDownloadStatus? {
+        return chaptersById[chapterId]
+    }
+}
+
 data class ChimahonUiSettings(
     val keepReaderControlsVisible: Boolean = false,
     val rightToLeftByDefault: Boolean = false,

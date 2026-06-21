@@ -67,7 +67,7 @@ jobs:
           echo "draft=$draft" >> "$GITHUB_OUTPUT"
 
   android:
-    name: Android APKs
+    name: Signed Android APKs
     runs-on: ubuntu-24.04
     needs: metadata
 
@@ -128,8 +128,7 @@ jobs:
             -PreleaseVersionCode=${{ needs.metadata.outputs.version_code }} \
             --no-daemon --console=plain --max-workers=2
 
-      - name: Check Android signing secrets
-        id: signing
+      - name: Require Android signing secrets
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           ALIAS: ${{ secrets.ALIAS }}
@@ -137,14 +136,20 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         shell: bash
         run: |
-          if [[ -n "${SIGNING_KEY:-}" && -n "${ALIAS:-}" && -n "${KEY_STORE_PASSWORD:-}" && -n "${KEY_PASSWORD:-}" ]]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          missing=()
+          [[ -n "${SIGNING_KEY:-}" ]] || missing+=("SIGNING_KEY")
+          [[ -n "${ALIAS:-}" ]] || missing+=("ALIAS")
+          [[ -n "${KEY_STORE_PASSWORD:-}" ]] || missing+=("KEY_STORE_PASSWORD")
+          [[ -n "${KEY_PASSWORD:-}" ]] || missing+=("KEY_PASSWORD")
+
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::Missing Android signing secret(s): %s\n' "${missing[*]}"
+            exit 1
           fi
 
       - name: Sign APKs
-        if: steps.signing.outputs.available == 'true'
         uses: r0adkll/sign-android-release@f30bdd30588842ac76044ecdbd4b6d0e3e813478
         with:
           releaseDirectory: app/build/outputs/apk/release
@@ -156,7 +161,6 @@ jobs:
           BUILD_TOOLS_VERSION: '35.0.1'
 
       - name: Verify signed APKs
-        if: steps.signing.outputs.available == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -179,17 +183,10 @@ jobs:
           shopt -s nullglob
           mkdir -p release-assets
 
-          signed=(app/build/outputs/apk/release/*-signed.apk)
-          if (( ${#signed[@]} > 0 )); then
-            files=("${signed[@]}")
-            suffix=""
-          else
-            files=(app/build/outputs/apk/release/*-unsigned.apk)
-            suffix="-unsigned"
-          fi
+          files=(app/build/outputs/apk/release/*-signed.apk)
 
           if (( ${#files[@]} == 0 )); then
-            echo "::error::No APK outputs were produced."
+            echo "::error::No signed APK outputs were produced."
             exit 1
           fi
 
@@ -197,11 +194,11 @@ jobs:
             base="$(basename "$apk")"
             abi="${base#app-}"
             abi="${abi%-release-unsigned-signed.apk}"
-            abi="${abi%-release-unsigned.apk}"
+            abi="${abi%-release-signed.apk}"
             if [[ "$abi" == "universal" ]]; then
-              name="chimahon-android-${{ needs.metadata.outputs.tag }}${suffix}.apk"
+              name="chimahon-android-${{ needs.metadata.outputs.tag }}.apk"
             else
-              name="chimahon-android-${abi}-${{ needs.metadata.outputs.tag }}${suffix}.apk"
+              name="chimahon-android-${abi}-${{ needs.metadata.outputs.tag }}.apk"
             fi
             cp "$apk" "release-assets/$name"
           done
@@ -404,7 +401,7 @@ jobs:
             echo "- macOS desktop x64 and arm64 application images with bundled Java runtime"
             echo "- iOS device and simulator shared frameworks"
             echo
-            echo "Android APKs are signed when repository signing secrets are configured. If signing secrets are missing, unsigned APKs are still published for testing."
+            echo "Android APKs are signed during this workflow; the release fails if repository signing secrets are missing."
             echo
             echo "iOS app distribution still requires Apple signing/provisioning; this release includes the compiled shared iOS framework artifacts."
           } > release_notes.md

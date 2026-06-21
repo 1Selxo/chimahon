@@ -23,6 +23,7 @@ data class ChimahonAppearanceSettings(
     val themeMode: ChimahonThemeMode = ChimahonThemeMode.System,
     val appTheme: ChimahonAppTheme = ChimahonAppTheme.Default,
     val colorTheme: ChimahonColorTheme = ChimahonColorTheme.Default,
+    val appIcon: ChimahonAppIcon = ChimahonAppIcon.Default,
     val amoled: Boolean = false,
     val fontScalePercent: Int = 100,
     val compactNavigation: Boolean = false,
@@ -70,10 +71,20 @@ enum class ChimahonColorTheme(val title: String) {
     Teal("Teal"),
 }
 
+enum class ChimahonAppIcon(val title: String) {
+    Default("Default"),
+    Classic("Classic"),
+    Monochrome("Monochrome"),
+    Legacy("Legacy"),
+    Tachiyomi("Tachiyomi"),
+    Mihon("Mihon"),
+}
+
 data class ChimahonReaderSettings(
     val mode: ChimahonReaderMode = ChimahonReaderMode.Webtoon,
     val scale: ChimahonReaderScale = ChimahonReaderScale.FitWidth,
     val canvas: ChimahonReaderCanvas = ChimahonReaderCanvas.Black,
+    val pureBlackBackground: Boolean = true,
     val orientation: ChimahonReaderOrientation = ChimahonReaderOrientation.Free,
     val dualPageMode: ChimahonDualPageMode = ChimahonDualPageMode.Off,
     val splitWidePages: Boolean = false,
@@ -96,6 +107,25 @@ data class ChimahonReaderSettings(
     val cropBorders: Boolean = false,
     val pageTransitions: Boolean = true,
     val showPageNumber: Boolean = true,
+    val verticalWriting: Boolean = true,
+    val continuousMode: Boolean = false,
+    val fontSize: Double = 18.0,
+    val lineHeight: Double = 1.6,
+    val horizontalPadding: Double = 10.0,
+    val verticalPadding: Double = 10.0,
+    val avoidPageBreak: Boolean = true,
+    val justifyText: Boolean = false,
+    val characterSpacing: Double = 0.0,
+    val paragraphSpacing: Double = 0.0,
+    val hideFurigana: Boolean = false,
+    val showTitle: Boolean = true,
+    val showCharacters: Boolean = true,
+    val showPercentage: Boolean = true,
+    val showProgressTop: Boolean = true,
+    val showReadingSpeed: Boolean = true,
+    val showReadingTime: Boolean = true,
+    val tapZonePercent: Int = 20,
+    val chapterSwipeDistance: Int = 96,
 )
 
 enum class ChimahonReaderMode {
@@ -299,6 +329,7 @@ internal class ChimahonSettingsRepository(
             themeMode = readEnum(APPEARANCE_THEME_MODE_KEY, ChimahonThemeMode.System),
             appTheme = readEnum(APPEARANCE_APP_THEME_KEY, ChimahonAppTheme.Default),
             colorTheme = readEnum(APPEARANCE_COLOR_THEME_KEY, ChimahonColorTheme.Default),
+            appIcon = readEnum(APPEARANCE_APP_ICON_KEY, ChimahonAppIcon.Default),
             amoled = settingsStore.readBoolean(APPEARANCE_AMOLED_KEY),
             fontScalePercent = settingsStore.readInt(
                 APPEARANCE_FONT_SCALE_PERCENT_KEY,
@@ -319,6 +350,7 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(APPEARANCE_THEME_MODE_KEY, settings.themeMode.name)
         settingsStore.writeString(APPEARANCE_APP_THEME_KEY, settings.appTheme.name)
         settingsStore.writeString(APPEARANCE_COLOR_THEME_KEY, settings.colorTheme.name)
+        settingsStore.writeString(APPEARANCE_APP_ICON_KEY, settings.appIcon.name)
         settingsStore.writeBoolean(APPEARANCE_AMOLED_KEY, settings.amoled)
         settingsStore.writeInt(APPEARANCE_FONT_SCALE_PERCENT_KEY, settings.fontScalePercent)
         settingsStore.writeBoolean(APPEARANCE_COMPACT_NAVIGATION_KEY, settings.compactNavigation)
@@ -332,6 +364,10 @@ internal class ChimahonSettingsRepository(
             mode = readEnum(READER_MODE_KEY, ChimahonReaderMode.Webtoon),
             scale = readEnum(READER_SCALE_KEY, ChimahonReaderScale.FitWidth),
             canvas = readEnum(READER_CANVAS_KEY, ChimahonReaderCanvas.Black),
+            pureBlackBackground = settingsStore.readBoolean(
+                READER_PURE_BLACK_BACKGROUND_KEY,
+                defaultValue = true,
+            ),
             orientation = readEnum(READER_ORIENTATION_KEY, ChimahonReaderOrientation.Free),
             dualPageMode = readEnum(READER_DUAL_PAGE_MODE_KEY, ChimahonDualPageMode.Off),
             splitWidePages = settingsStore.readBoolean(READER_SPLIT_WIDE_PAGES_KEY),
@@ -363,6 +399,25 @@ internal class ChimahonSettingsRepository(
             cropBorders = settingsStore.readBoolean(READER_CROP_BORDERS_KEY),
             pageTransitions = settingsStore.readBoolean(READER_PAGE_TRANSITIONS_KEY, defaultValue = true),
             showPageNumber = settingsStore.readBoolean(READER_SHOW_PAGE_NUMBER_KEY, defaultValue = true),
+            verticalWriting = settingsStore.readBoolean(READER_VERTICAL_WRITING_KEY, defaultValue = true),
+            continuousMode = settingsStore.readBoolean(READER_CONTINUOUS_MODE_KEY),
+            fontSize = readDouble(READER_FONT_SIZE_KEY, defaultValue = 18.0),
+            lineHeight = readDouble(READER_LINE_HEIGHT_KEY, defaultValue = 1.6),
+            horizontalPadding = readDouble(READER_HORIZONTAL_PADDING_KEY, defaultValue = 10.0),
+            verticalPadding = readDouble(READER_VERTICAL_PADDING_KEY, defaultValue = 10.0),
+            avoidPageBreak = settingsStore.readBoolean(READER_AVOID_PAGE_BREAK_KEY, defaultValue = true),
+            justifyText = settingsStore.readBoolean(READER_JUSTIFY_TEXT_KEY),
+            characterSpacing = readDouble(READER_CHARACTER_SPACING_KEY, defaultValue = 0.0),
+            paragraphSpacing = readDouble(READER_PARAGRAPH_SPACING_KEY, defaultValue = 0.0),
+            hideFurigana = settingsStore.readBoolean(READER_HIDE_FURIGANA_KEY),
+            showTitle = settingsStore.readBoolean(READER_SHOW_TITLE_KEY, defaultValue = true),
+            showCharacters = settingsStore.readBoolean(READER_SHOW_CHARACTERS_KEY, defaultValue = true),
+            showPercentage = settingsStore.readBoolean(READER_SHOW_PERCENTAGE_KEY, defaultValue = true),
+            showProgressTop = settingsStore.readBoolean(READER_SHOW_PROGRESS_TOP_KEY, defaultValue = true),
+            showReadingSpeed = settingsStore.readBoolean(READER_SHOW_READING_SPEED_KEY, defaultValue = true),
+            showReadingTime = settingsStore.readBoolean(READER_SHOW_READING_TIME_KEY, defaultValue = true),
+            tapZonePercent = settingsStore.readInt(READER_TAP_ZONE_PERCENT_KEY, defaultValue = 20),
+            chapterSwipeDistance = settingsStore.readInt(READER_CHAPTER_SWIPE_DISTANCE_KEY, defaultValue = 96),
         )
     }
 
@@ -370,6 +425,7 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(READER_MODE_KEY, settings.mode.name)
         settingsStore.writeString(READER_SCALE_KEY, settings.scale.name)
         settingsStore.writeString(READER_CANVAS_KEY, settings.canvas.name)
+        settingsStore.writeBoolean(READER_PURE_BLACK_BACKGROUND_KEY, settings.pureBlackBackground)
         settingsStore.writeString(READER_ORIENTATION_KEY, settings.orientation.name)
         settingsStore.writeString(READER_DUAL_PAGE_MODE_KEY, settings.dualPageMode.name)
         settingsStore.writeBoolean(READER_SPLIT_WIDE_PAGES_KEY, settings.splitWidePages)
@@ -392,6 +448,25 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(READER_CROP_BORDERS_KEY, settings.cropBorders)
         settingsStore.writeBoolean(READER_PAGE_TRANSITIONS_KEY, settings.pageTransitions)
         settingsStore.writeBoolean(READER_SHOW_PAGE_NUMBER_KEY, settings.showPageNumber)
+        settingsStore.writeBoolean(READER_VERTICAL_WRITING_KEY, settings.verticalWriting)
+        settingsStore.writeBoolean(READER_CONTINUOUS_MODE_KEY, settings.continuousMode)
+        writeDouble(READER_FONT_SIZE_KEY, settings.fontSize)
+        writeDouble(READER_LINE_HEIGHT_KEY, settings.lineHeight)
+        writeDouble(READER_HORIZONTAL_PADDING_KEY, settings.horizontalPadding)
+        writeDouble(READER_VERTICAL_PADDING_KEY, settings.verticalPadding)
+        settingsStore.writeBoolean(READER_AVOID_PAGE_BREAK_KEY, settings.avoidPageBreak)
+        settingsStore.writeBoolean(READER_JUSTIFY_TEXT_KEY, settings.justifyText)
+        writeDouble(READER_CHARACTER_SPACING_KEY, settings.characterSpacing)
+        writeDouble(READER_PARAGRAPH_SPACING_KEY, settings.paragraphSpacing)
+        settingsStore.writeBoolean(READER_HIDE_FURIGANA_KEY, settings.hideFurigana)
+        settingsStore.writeBoolean(READER_SHOW_TITLE_KEY, settings.showTitle)
+        settingsStore.writeBoolean(READER_SHOW_CHARACTERS_KEY, settings.showCharacters)
+        settingsStore.writeBoolean(READER_SHOW_PERCENTAGE_KEY, settings.showPercentage)
+        settingsStore.writeBoolean(READER_SHOW_PROGRESS_TOP_KEY, settings.showProgressTop)
+        settingsStore.writeBoolean(READER_SHOW_READING_SPEED_KEY, settings.showReadingSpeed)
+        settingsStore.writeBoolean(READER_SHOW_READING_TIME_KEY, settings.showReadingTime)
+        settingsStore.writeInt(READER_TAP_ZONE_PERCENT_KEY, settings.tapZonePercent)
+        settingsStore.writeInt(READER_CHAPTER_SWIPE_DISTANCE_KEY, settings.chapterSwipeDistance)
         return settings
     }
 
@@ -668,10 +743,25 @@ internal class ChimahonSettingsRepository(
         return enumValues<T>().firstOrNull { it.name == stored } ?: defaultValue
     }
 
+    private suspend fun readDouble(
+        key: String,
+        defaultValue: Double,
+    ): Double {
+        return settingsStore.readString(key)?.toDoubleOrNull() ?: defaultValue
+    }
+
+    private suspend fun writeDouble(
+        key: String,
+        value: Double,
+    ) {
+        settingsStore.writeString(key, value.toString())
+    }
+
     private companion object {
         const val APPEARANCE_THEME_MODE_KEY = "__APP_STATE_chimahon_theme_mode"
         const val APPEARANCE_APP_THEME_KEY = "__APP_STATE_chimahon_app_theme"
         const val APPEARANCE_COLOR_THEME_KEY = "__APP_STATE_chimahon_color_theme"
+        const val APPEARANCE_APP_ICON_KEY = "__APP_STATE_chimahon_app_icon"
         const val APPEARANCE_AMOLED_KEY = "__APP_STATE_chimahon_theme_amoled"
         const val APPEARANCE_FONT_SCALE_PERCENT_KEY = "__APP_STATE_chimahon_font_scale_percent"
         const val APPEARANCE_COMPACT_NAVIGATION_KEY = "__APP_STATE_chimahon_compact_navigation"
@@ -680,6 +770,8 @@ internal class ChimahonSettingsRepository(
         const val READER_MODE_KEY = "__APP_STATE_chimahon_reader_mode"
         const val READER_SCALE_KEY = "__APP_STATE_chimahon_reader_scale"
         const val READER_CANVAS_KEY = "__APP_STATE_chimahon_reader_canvas"
+        const val READER_PURE_BLACK_BACKGROUND_KEY =
+            "__APP_STATE_chimahon_reader_pure_black_background"
         const val READER_ORIENTATION_KEY = "__APP_STATE_chimahon_reader_orientation"
         const val READER_DUAL_PAGE_MODE_KEY = "__APP_STATE_chimahon_reader_dual_page_mode"
         const val READER_SPLIT_WIDE_PAGES_KEY = "__APP_STATE_chimahon_reader_split_wide_pages"
@@ -703,6 +795,27 @@ internal class ChimahonSettingsRepository(
         const val READER_CROP_BORDERS_KEY = "__APP_STATE_chimahon_reader_crop_borders"
         const val READER_PAGE_TRANSITIONS_KEY = "__APP_STATE_chimahon_reader_page_transitions"
         const val READER_SHOW_PAGE_NUMBER_KEY = "__APP_STATE_chimahon_reader_show_page_number"
+        const val READER_VERTICAL_WRITING_KEY = "__APP_STATE_chimahon_reader_vertical_writing"
+        const val READER_CONTINUOUS_MODE_KEY = "__APP_STATE_chimahon_reader_continuous_mode"
+        const val READER_FONT_SIZE_KEY = "__APP_STATE_chimahon_reader_font_size"
+        const val READER_LINE_HEIGHT_KEY = "__APP_STATE_chimahon_reader_line_height"
+        const val READER_HORIZONTAL_PADDING_KEY = "__APP_STATE_chimahon_reader_horizontal_padding"
+        const val READER_VERTICAL_PADDING_KEY = "__APP_STATE_chimahon_reader_vertical_padding"
+        const val READER_AVOID_PAGE_BREAK_KEY = "__APP_STATE_chimahon_reader_avoid_page_break"
+        const val READER_JUSTIFY_TEXT_KEY = "__APP_STATE_chimahon_reader_justify_text"
+        const val READER_CHARACTER_SPACING_KEY = "__APP_STATE_chimahon_reader_character_spacing"
+        const val READER_PARAGRAPH_SPACING_KEY = "__APP_STATE_chimahon_reader_paragraph_spacing"
+        const val READER_HIDE_FURIGANA_KEY = "__APP_STATE_chimahon_reader_hide_furigana"
+        const val READER_SHOW_TITLE_KEY = "__APP_STATE_chimahon_reader_show_title"
+        const val READER_SHOW_CHARACTERS_KEY = "__APP_STATE_chimahon_reader_show_characters"
+        const val READER_SHOW_PERCENTAGE_KEY = "__APP_STATE_chimahon_reader_show_percentage"
+        const val READER_SHOW_PROGRESS_TOP_KEY = "__APP_STATE_chimahon_reader_show_progress_top"
+        const val READER_SHOW_READING_SPEED_KEY =
+            "__APP_STATE_chimahon_reader_show_reading_speed"
+        const val READER_SHOW_READING_TIME_KEY = "__APP_STATE_chimahon_reader_show_reading_time"
+        const val READER_TAP_ZONE_PERCENT_KEY = "__APP_STATE_chimahon_reader_tap_zone_percent"
+        const val READER_CHAPTER_SWIPE_DISTANCE_KEY =
+            "__APP_STATE_chimahon_reader_chapter_swipe_distance"
         const val LIBRARY_DISPLAY_MODE_KEY = "__APP_STATE_chimahon_library_display_mode"
         const val LIBRARY_GRID_COLUMNS_PORTRAIT_KEY =
             "__APP_STATE_chimahon_library_grid_columns_portrait"

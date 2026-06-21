@@ -20,11 +20,16 @@ internal actual object ChimahonPlatformIntegration {
     }
 
     actual fun openPath(path: String): Boolean {
-        if (!NSFileManager.defaultManager.fileExistsAtPath(path)) return false
-        return UIApplication.sharedApplication.open(NSURL.fileURLWithPath(path))
+        val fileUrl = path.fileUrlOrNull() ?: return false
+        return UIApplication.sharedApplication.open(fileUrl) ||
+            presentShareSheet(listOf(fileUrl), title = null)
     }
 
-    actual fun revealPath(path: String): Boolean = false
+    actual fun revealPath(path: String): Boolean {
+        val fileUrl = path.fileUrlOrNull() ?: return false
+        return UIApplication.sharedApplication.open(fileUrl) ||
+            presentShareSheet(listOf(fileUrl), title = null)
+    }
 
     actual fun copyText(text: String): Boolean {
         UIPasteboard.generalPasteboard.string = text
@@ -36,8 +41,8 @@ internal actual object ChimahonPlatformIntegration {
     }
 
     actual fun shareFile(path: String, title: String?): Boolean {
-        if (!NSFileManager.defaultManager.fileExistsAtPath(path)) return false
-        return presentShareSheet(listOf(NSURL.fileURLWithPath(path)), title)
+        val fileUrl = path.fileUrlOrNull() ?: return false
+        return presentShareSheet(listOf(fileUrl), title)
     }
 
     actual fun platformInfo(): ChimahonPlatformInfo {
@@ -68,6 +73,16 @@ private fun String.httpUrlOrNull(): NSURL? {
     return url.takeIf { it.scheme?.lowercase() in setOf("http", "https") }
 }
 
+private fun String.fileUrlOrNull(): NSURL? {
+    val url = if (startsWith("file:", ignoreCase = true)) {
+        NSURL.URLWithString(this)
+    } else {
+        NSURL.fileURLWithPath(this)
+    } ?: return null
+    val filePath = url.path ?: return null
+    return url.takeIf { NSFileManager.defaultManager.fileExistsAtPath(filePath) }
+}
+
 private fun UIApplication.open(url: NSURL): Boolean {
     if (!canOpenURL(url)) return false
     openURL(url, options = emptyMap<Any?, Any>(), completionHandler = null)
@@ -80,6 +95,8 @@ private fun presentShareSheet(items: List<*>, title: String?): Boolean {
         activityItems = items,
         applicationActivities = null,
     )
+    activityController.title = title
+    activityController.popoverPresentationController?.sourceView = presenter.view
     presenter.presentViewController(activityController, animated = true, completion = null)
     return true
 }

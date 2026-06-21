@@ -13,6 +13,9 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.readRawBytes
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -1428,6 +1431,15 @@ class ChimahonSharedAppServices private constructor(
         return downloadQueueRepository.load()
     }
 
+    suspend fun loadDownloadSnapshot(): ChimahonDownloadSnapshot {
+        val state = loadServiceDatabaseState()
+        val queue = downloadQueueRepository.load()
+        return buildChimahonDownloadSnapshot(
+            queue = queue,
+            downloadedIndex = state.downloadedIndex,
+        )
+    }
+
     suspend fun enqueueDownload(chapterId: Long): ChimahonDownloadQueueData {
         return enqueueDownloads(listOf(chapterId))
     }
@@ -1565,6 +1577,70 @@ class ChimahonSharedAppServices private constructor(
         }
     }
 
+    suspend fun processNextDownload(): ChimahonDownloadQueueData {
+        val claimed = claimNextDownload() ?: return loadDownloadQueue()
+        return try {
+            val context = loadDownloadProcessingContext(claimed)
+            updateDownloadProgress(
+                chapterId = claimed.chapterId,
+                progress = 0,
+                downloadedBytes = 0L,
+                totalBytes = null,
+            )
+
+            val pages = context.source.getPageList(context.chapter)
+            require(pages.isNotEmpty()) {
+                "${context.source.name} returned no pages for ${context.chapter.name}."
+            }
+
+            val payloads = mutableListOf<ChimahonChapterPagePayload>()
+            var downloadedBytes = 0L
+            pages.forEachIndexed { index, page ->
+                currentCoroutineContext().ensureActive()
+                val bytes = fetchSourcePageImage(context.source, page)
+                payloads += ChimahonChapterPagePayload(bytes = bytes)
+                downloadedBytes += bytes.size.toLong()
+                updateDownloadProgress(
+                    chapterId = claimed.chapterId,
+                    progress = downloadPageProgress(index + 1, pages.size),
+                    downloadedBytes = downloadedBytes,
+                    totalBytes = null,
+                )
+            }
+
+            updateDownloadProgress(
+                chapterId = claimed.chapterId,
+                progress = DOWNLOAD_WRITING_PROGRESS_PERCENT,
+                downloadedBytes = downloadedBytes,
+                totalBytes = downloadedBytes.takeIf { it > 0L },
+            )
+            val writer = ChimahonChapterDownloadWriter(
+                downloadsRoot = platformServices.storageDirectories.defaultDownloadsDir(APP_NAME),
+            )
+            when (val result = writer.write(context.metadata, payloads)) {
+                is ChimahonChapterDownloadResult.Success -> {
+                    markDownloadCompleted(
+                        chapterId = claimed.chapterId,
+                        downloadedBytes = result.bytesWritten,
+                    )
+                }
+                is ChimahonChapterDownloadResult.Failure -> {
+                    markDownloadFailed(
+                        chapterId = claimed.chapterId,
+                        message = result.message,
+                    )
+                }
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            markDownloadFailed(
+                chapterId = claimed.chapterId,
+                message = error.downloadFailureMessage(),
+            )
+        }
+    }
+
     suspend fun saveReaderProgress(
         request: ChimahonReaderRequest,
         pageIndex: Int,
@@ -1694,6 +1770,42 @@ class ChimahonSharedAppServices private constructor(
         }.getOrDefault(false)
     }
 
+    private suspend fun loadDownloadProcessingContext(
+        entry: ChimahonDownloadQueueEntry,
+    ): DownloadProcessingContext {
+        val manga = platformServices.databaseHandler.awaitOneOrNull {
+            mangasQueries.getMangaById(entry.mangaId)
+        } ?: error("Manga ${entry.mangaId} is not present in the shared database.")
+        val storedChapter = platformServices.databaseHandler.awaitOneOrNull {
+            chaptersQueries.getChapterById(entry.chapterId)
+        } ?: error("Chapter ${entry.chapterId} is not present in the shared database.")
+        require(storedChapter.manga_id == manga._id) {
+            "Chapter ${entry.chapterId} does not belong to manga ${entry.mangaId}."
+        }
+        val source = platformServices.sourceRegistry
+            .getCatalogueSources()
+            .firstOrNull { it.id == manga.source }
+            ?: error("Source ${manga.source} is not loaded.")
+        val chapter = SChapter(
+            url = storedChapter.url.ifBlank { entry.chapterUrl },
+            name = storedChapter.name.ifBlank { entry.chapterName },
+            date_upload = storedChapter.date_upload,
+            chapter_number = storedChapter.chapter_number.toFloat(),
+            scanlator = storedChapter.scanlator,
+        )
+        return DownloadProcessingContext(
+            source = source,
+            chapter = chapter,
+            metadata = ChimahonChapterDownloadMetadata(
+                sourceName = source.toString(),
+                mangaTitle = manga.title.ifBlank { entry.mangaTitle },
+                chapterName = chapter.name.ifBlank { entry.chapterName },
+                scanlator = chapter.scanlator,
+                collisionSuffix = chapter.url.stableDownloadCollisionSuffix(),
+            ),
+        )
+    }
+
     private suspend fun databaseMaintenanceResult(
         before: ChimahonDatabaseMaintenanceData,
     ): ChimahonDatabaseMaintenanceResult {
@@ -1799,6 +1911,12 @@ class ChimahonSharedAppServices private constructor(
         val categories: List<GetCategories>,
         val libraryCategoryMemberships: Map<Long, List<Long>>,
         val downloadedIndex: ChimahonDownloadedIndex,
+    )
+
+    private data class DownloadProcessingContext(
+        val source: CatalogueSource,
+        val chapter: SChapter,
+        val metadata: ChimahonChapterDownloadMetadata,
     )
 }
 
@@ -2006,6 +2124,53 @@ internal fun repoCatalogUrls(baseUrl: String): List<String> {
     )
 }
 
+internal fun buildChimahonDownloadSnapshot(
+    queue: ChimahonDownloadQueueData,
+    downloadedIndex: ChimahonDownloadedIndex,
+): ChimahonDownloadSnapshot {
+    val chaptersById = linkedMapOf<Long, ChimahonChapterDownloadStatus>()
+    downloadedIndex.chapterPaths.keys.sorted().forEach { chapterId ->
+        val downloadedBytes = downloadedIndex.chapterSizes[chapterId] ?: 0L
+        chaptersById[chapterId] = ChimahonChapterDownloadStatus(
+            chapterId = chapterId,
+            status = ChimahonDownloadState.Downloaded,
+            progress = 100,
+            downloadedBytes = downloadedBytes,
+            totalBytes = downloadedBytes.takeIf { it > 0L },
+            downloadedOnDisk = true,
+        )
+    }
+
+    queue.entries.forEach { entry ->
+        val downloadedStatus = chaptersById[entry.chapterId]
+        val downloadedBytes = when {
+            entry.downloadedBytes > 0L -> entry.downloadedBytes
+            downloadedStatus != null -> downloadedStatus.downloadedBytes
+            else -> 0L
+        }
+        chaptersById[entry.chapterId] = ChimahonChapterDownloadStatus(
+            chapterId = entry.chapterId,
+            status = entry.status,
+            progress = if (entry.status == ChimahonDownloadState.Downloaded) {
+                100
+            } else {
+                entry.progress.coerceIn(0, 100)
+            },
+            downloadedBytes = downloadedBytes,
+            totalBytes = entry.totalBytes
+                ?: downloadedStatus?.totalBytes
+                ?: downloadedBytes.takeIf { entry.status == ChimahonDownloadState.Downloaded && it > 0L },
+            downloadedOnDisk = downloadedStatus?.downloadedOnDisk == true,
+            errorMessage = entry.errorMessage,
+        )
+    }
+
+    return ChimahonDownloadSnapshot(
+        chaptersById = chaptersById.toMap(),
+        queue = queue,
+    )
+}
+
 private fun JsonObject.stringValue(vararg keys: String): String? {
     return keys.firstNotNullOfOrNull { key ->
         runCatching { this[key]?.jsonPrimitive?.content }
@@ -2106,6 +2271,34 @@ private fun String.stableRepoHash(): String {
         hash = (hash * 31) + character.code
     }
     return hash.toString().replace("-", "n")
+}
+
+private fun String.stableDownloadCollisionSuffix(): String {
+    var hash = 1125899906842597L
+    forEach { character ->
+        hash = (hash * 31) + character.code
+    }
+    var value = hash and Long.MAX_VALUE
+    val alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+    return buildString(DOWNLOAD_COLLISION_SUFFIX_LENGTH) {
+        repeat(DOWNLOAD_COLLISION_SUFFIX_LENGTH) {
+            append(alphabet[(value % alphabet.length).toInt()])
+            value /= alphabet.length
+        }
+    }.reversed()
+}
+
+private fun downloadPageProgress(
+    pagesDownloaded: Int,
+    totalPages: Int,
+): Int {
+    if (totalPages <= 0) return 0
+    val progress = pagesDownloaded.coerceAtLeast(0) * DOWNLOAD_PAGE_FETCH_PROGRESS_PERCENT / totalPages
+    return progress.coerceIn(0, DOWNLOAD_PAGE_FETCH_PROGRESS_PERCENT)
+}
+
+private fun Throwable.downloadFailureMessage(): String {
+    return message?.trim()?.takeIf(String::isNotEmpty) ?: "Download failed."
 }
 
 private fun mangaStatus(status: Long): String = when (status) {
@@ -2213,3 +2406,6 @@ private const val DEFAULT_SERVICE_PAGE_SIZE = 50
 private const val DEFAULT_LIBRARY_CATEGORY_ID = 0L
 private const val MAX_THUMBNAIL_CACHE_ENTRIES = 192
 private const val SCRIPT_EXTENSION_SUFFIX = ".js"
+private const val DOWNLOAD_PAGE_FETCH_PROGRESS_PERCENT = 90
+private const val DOWNLOAD_WRITING_PROGRESS_PERCENT = 95
+private const val DOWNLOAD_COLLISION_SUFFIX_LENGTH = 6
