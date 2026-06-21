@@ -1338,6 +1338,18 @@ class ChimahonSharedAppServices private constructor(
         return settingsRepository.saveBrowseSettings(settings)
     }
 
+    suspend fun saveTrackingSettings(settings: ChimahonTrackingSettings): ChimahonTrackingSettings {
+        return settingsRepository.saveTrackingSettings(settings)
+    }
+
+    suspend fun saveConnectionSettings(settings: ChimahonConnectionSettings): ChimahonConnectionSettings {
+        return settingsRepository.saveConnectionSettings(settings)
+    }
+
+    suspend fun saveDictionarySettings(settings: ChimahonDictionarySettings): ChimahonDictionarySettings {
+        return settingsRepository.saveDictionarySettings(settings)
+    }
+
     suspend fun saveSecuritySettings(settings: ChimahonSecuritySettings): ChimahonSecuritySettings {
         return settingsRepository.saveSecuritySettings(settings)
     }

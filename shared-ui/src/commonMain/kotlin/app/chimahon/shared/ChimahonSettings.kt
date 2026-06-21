@@ -12,6 +12,9 @@ data class ChimahonSettings(
     val library: ChimahonLibrarySettings = ChimahonLibrarySettings(),
     val downloads: ChimahonDownloadPreferences = ChimahonDownloadPreferences(),
     val browse: ChimahonBrowseSettings = ChimahonBrowseSettings(),
+    val tracking: ChimahonTrackingSettings = ChimahonTrackingSettings(),
+    val connections: ChimahonConnectionSettings = ChimahonConnectionSettings(),
+    val dictionary: ChimahonDictionarySettings = ChimahonDictionarySettings(),
     val security: ChimahonSecuritySettings = ChimahonSecuritySettings(),
     val appMode: ChimahonAppModeSettings = ChimahonAppModeSettings(),
 )
@@ -229,6 +232,28 @@ enum class ChimahonBrowseSourceDisplayMode {
     Grid,
 }
 
+data class ChimahonTrackingSettings(
+    val autoSyncEnabled: Boolean = false,
+    val updateIntervalHours: Int = 24,
+)
+
+data class ChimahonConnectionSettings(
+    val openingPreference: ChimahonConnectionOpeningPreference =
+        ChimahonConnectionOpeningPreference.InApp,
+)
+
+enum class ChimahonConnectionOpeningPreference {
+    InApp,
+    ExternalBrowser,
+    AskEveryTime,
+}
+
+data class ChimahonDictionarySettings(
+    val enabled: Boolean = false,
+    val enabledLanguages: List<String> = emptyList(),
+    val ocrEnabled: Boolean = false,
+)
+
 data class ChimahonSecuritySettings(
     val secureScreenMode: ChimahonSecureScreenMode = ChimahonSecureScreenMode.Incognito,
     val hideNotificationContent: Boolean = false,
@@ -261,6 +286,9 @@ internal class ChimahonSettingsRepository(
             library = loadLibrarySettings(),
             downloads = loadDownloadSettings(),
             browse = loadBrowseSettings(),
+            tracking = loadTrackingSettings(),
+            connections = loadConnectionSettings(),
+            dictionary = loadDictionarySettings(),
             security = loadSecuritySettings(),
             appMode = loadAppModeSettings(),
         )
@@ -528,6 +556,58 @@ internal class ChimahonSettingsRepository(
         return settings
     }
 
+    suspend fun loadTrackingSettings(): ChimahonTrackingSettings {
+        return ChimahonTrackingSettings(
+            autoSyncEnabled = settingsStore.readBoolean(TRACKING_AUTO_SYNC_ENABLED_KEY),
+            updateIntervalHours = settingsStore.readInt(
+                TRACKING_UPDATE_INTERVAL_HOURS_KEY,
+                defaultValue = 24,
+            ),
+        )
+    }
+
+    suspend fun saveTrackingSettings(settings: ChimahonTrackingSettings): ChimahonTrackingSettings {
+        settingsStore.writeBoolean(TRACKING_AUTO_SYNC_ENABLED_KEY, settings.autoSyncEnabled)
+        settingsStore.writeInt(TRACKING_UPDATE_INTERVAL_HOURS_KEY, settings.updateIntervalHours)
+        return settings
+    }
+
+    suspend fun loadConnectionSettings(): ChimahonConnectionSettings {
+        return ChimahonConnectionSettings(
+            openingPreference = readEnum(
+                CONNECTIONS_OPENING_PREFERENCE_KEY,
+                ChimahonConnectionOpeningPreference.InApp,
+            ),
+        )
+    }
+
+    suspend fun saveConnectionSettings(settings: ChimahonConnectionSettings): ChimahonConnectionSettings {
+        settingsStore.writeString(CONNECTIONS_OPENING_PREFERENCE_KEY, settings.openingPreference.name)
+        return settings
+    }
+
+    suspend fun loadDictionarySettings(): ChimahonDictionarySettings {
+        return ChimahonDictionarySettings(
+            enabled = settingsStore.readBoolean(DICTIONARY_ENABLED_KEY),
+            enabledLanguages = settingsStore.readString(DICTIONARY_ENABLED_LANGUAGES_KEY)
+                ?.split(',')
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                .orEmpty(),
+            ocrEnabled = settingsStore.readBoolean(DICTIONARY_OCR_ENABLED_KEY),
+        )
+    }
+
+    suspend fun saveDictionarySettings(settings: ChimahonDictionarySettings): ChimahonDictionarySettings {
+        settingsStore.writeBoolean(DICTIONARY_ENABLED_KEY, settings.enabled)
+        settingsStore.writeString(
+            DICTIONARY_ENABLED_LANGUAGES_KEY,
+            settings.enabledLanguages.joinToString(","),
+        )
+        settingsStore.writeBoolean(DICTIONARY_OCR_ENABLED_KEY, settings.ocrEnabled)
+        return settings
+    }
+
     suspend fun loadSecuritySettings(): ChimahonSecuritySettings {
         return ChimahonSecuritySettings(
             secureScreenMode = readEnum(SECURITY_SECURE_SCREEN_KEY, ChimahonSecureScreenMode.Incognito),
@@ -670,6 +750,16 @@ internal class ChimahonSettingsRepository(
             "__APP_STATE_chimahon_browse_show_source_language"
         const val BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY =
             "__APP_STATE_chimahon_browse_extension_update_notifications"
+        const val TRACKING_AUTO_SYNC_ENABLED_KEY =
+            "__APP_STATE_chimahon_tracking_auto_sync_enabled"
+        const val TRACKING_UPDATE_INTERVAL_HOURS_KEY =
+            "__APP_STATE_chimahon_tracking_update_interval_hours"
+        const val CONNECTIONS_OPENING_PREFERENCE_KEY =
+            "__APP_STATE_chimahon_connections_opening_preference"
+        const val DICTIONARY_ENABLED_KEY = "__APP_STATE_chimahon_dictionary_enabled"
+        const val DICTIONARY_ENABLED_LANGUAGES_KEY =
+            "__APP_STATE_chimahon_dictionary_enabled_languages"
+        const val DICTIONARY_OCR_ENABLED_KEY = "__APP_STATE_chimahon_dictionary_ocr_enabled"
         const val SECURITY_SECURE_SCREEN_KEY = "__APP_STATE_chimahon_security_secure_screen"
         const val SECURITY_HIDE_NOTIFICATION_CONTENT_KEY =
             "__APP_STATE_chimahon_security_hide_notification_content"
