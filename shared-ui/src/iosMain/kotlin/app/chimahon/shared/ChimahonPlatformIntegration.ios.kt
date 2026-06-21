@@ -6,6 +6,7 @@ import platform.Foundation.NSURL
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIApplication
 import platform.UIKit.UIDevice
+import platform.UIKit.UIModalPresentationFullScreen
 import platform.UIKit.UIPasteboard
 import platform.UIKit.UIViewController
 import platform.UIKit.UIWindow
@@ -96,7 +97,7 @@ private fun presentShareSheet(items: List<*>, title: String?): Boolean {
         applicationActivities = null,
     )
     activityController.title = title
-    activityController.popoverPresentationController?.sourceView = presenter.view
+    activityController.modalPresentationStyle = UIModalPresentationFullScreen
     presenter.presentViewController(activityController, animated = true, completion = null)
     return true
 }
