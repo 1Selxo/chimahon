@@ -2,6 +2,7 @@ package app.chimahon.shared
 
 import tachiyomi.core.platform.storage.DesktopPlatformStorageDirectories
 import java.awt.Desktop
+import java.awt.GraphicsEnvironment
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.net.URI
@@ -14,12 +15,22 @@ import java.util.concurrent.TimeUnit
 internal actual object ChimahonPlatformIntegration {
     private val storageDirectories = DesktopPlatformStorageDirectories(APP_NAME)
 
+    init {
+        storageDirectories.ensureChimahonDirectories()
+    }
+
     actual fun openExternalUrl(url: String): Boolean {
-        val uri = url.httpUriOrNull() ?: return false
+        val uri = url.externalUriOrNull() ?: return false
+        val scheme = uri.scheme.lowercase()
+        if (scheme == "mailto") {
+            return performDesktopAction(Desktop.Action.MAIL) { desktop ->
+                desktop.mail(uri)
+            } || launchUrlCommand(uri.toString())
+        }
 
         return performDesktopAction(Desktop.Action.BROWSE) { desktop ->
             desktop.browse(uri)
-        } || launchPlatformCommand(uri.toString())
+        } || launchUrlCommand(uri.toString())
     }
 
     actual fun openPath(path: String): Boolean {
@@ -28,7 +39,7 @@ internal actual object ChimahonPlatformIntegration {
 
         return performDesktopAction(Desktop.Action.OPEN) { desktop ->
             desktop.open(target.toFile())
-        } || launchPlatformCommand(target.toString())
+        } || launchPathCommand(target.toString())
     }
 
     actual fun revealPath(path: String): Boolean {
@@ -39,15 +50,13 @@ internal actual object ChimahonPlatformIntegration {
         return when {
             isWindows -> launchCommand("explorer.exe", "/select,$target")
             isMacOs -> launchCommand("open", "-R", target.toString())
-            else -> target.parent?.let { openPath(it.toString()) } ?: false
+            else -> revealPathWithFileManagerPortal(target) ||
+                target.parent?.let { openPath(it.toString()) } == true
         }
     }
 
     actual fun copyText(text: String): Boolean {
-        return runCatching {
-            Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
-            true
-        }.getOrDefault(false)
+        return copyTextWithToolkit(text) || copyTextWithCommand(text)
     }
 
     actual fun shareText(text: String, title: String?): Boolean {
@@ -55,14 +64,14 @@ internal actual object ChimahonPlatformIntegration {
         return openMailDraft(
             subject = title.shareTitle(),
             body = text,
-        )
+        ) || copyText(text)
     }
 
     actual fun shareFile(path: String, title: String?): Boolean {
         val target = path.localPathOrNull() ?: return false
         if (!Files.isRegularFile(target)) return false
 
-        return when {
+        val shared = when {
             isWindows -> launchCommandAndWait(
                 "powershell.exe",
                 "-NoProfile",
@@ -80,6 +89,7 @@ internal actual object ChimahonPlatformIntegration {
                 target.toString(),
             )
         }
+        return shared || revealPath(target.toString()) || copyText(target.toString())
     }
 
     actual fun platformInfo(): ChimahonPlatformInfo {
@@ -99,6 +109,7 @@ internal actual object ChimahonPlatformIntegration {
     }
 
     actual fun storagePaths(): ChimahonStoragePaths {
+        storageDirectories.ensureChimahonDirectories()
         return ChimahonStoragePaths(
             filesDir = storageDirectories.filesDir.toString(),
             cacheDir = storageDirectories.cacheDir.toString(),
@@ -111,18 +122,24 @@ internal actual object ChimahonPlatformIntegration {
 private val osName = System.getProperty("os.name").lowercase()
 private val isWindows = osName.contains("win")
 private val isMacOs = osName.contains("mac")
+private val allowedExternalSchemes = setOf("http", "https", "mailto")
 
-private fun String.httpUriOrNull(): URI? {
-    val uri = runCatching { URI(this) }.getOrNull() ?: return null
-    return uri.takeIf { it.scheme?.lowercase() in setOf("http", "https") }
+private fun String.externalUriOrNull(): URI? {
+    val candidate = trim()
+    if (candidate.isBlank() || candidate.any(Char::isWhitespace)) return null
+    val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
+    return uri.takeIf { it.scheme?.lowercase() in allowedExternalSchemes }
 }
 
 private fun String.localPathOrNull(): Path? {
+    val candidate = trim()
+    if (candidate.isBlank()) return null
+
     return runCatching {
-        val path = if (startsWith("file:", ignoreCase = true)) {
-            Path.of(URI(this))
+        val path = if (candidate.startsWith("file:", ignoreCase = true)) {
+            Path.of(URI(candidate))
         } else {
-            Path.of(this)
+            Path.of(candidate.expandUserHome())
         }
         path.toAbsolutePath().normalize()
     }.getOrNull()
@@ -142,7 +159,47 @@ private inline fun performDesktopAction(
     }.getOrDefault(false)
 }
 
-private fun launchPlatformCommand(target: String): Boolean {
+private fun revealPathWithFileManagerPortal(target: Path): Boolean {
+    return launchCommand(
+        "dbus-send",
+        "--session",
+        "--dest=org.freedesktop.FileManager1",
+        "--type=method_call",
+        "/org/freedesktop/FileManager1",
+        "org.freedesktop.FileManager1.ShowItems",
+        "array:string:${target.toUri()}",
+        "string:",
+    )
+}
+
+private fun copyTextWithToolkit(text: String): Boolean {
+    if (GraphicsEnvironment.isHeadless()) return false
+
+    return runCatching {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+        true
+    }.getOrDefault(false)
+}
+
+private fun copyTextWithCommand(text: String): Boolean {
+    return when {
+        isWindows -> launchCommandWithInput(text, "clip.exe")
+        isMacOs -> launchCommandWithInput(text, "pbcopy")
+        else -> launchCommandWithInput(text, "wl-copy") ||
+            launchCommandWithInput(text, "xclip", "-selection", "clipboard") ||
+            launchCommandWithInput(text, "xsel", "--clipboard", "--input")
+    }
+}
+
+private fun launchUrlCommand(target: String): Boolean {
+    return when {
+        isWindows -> launchCommand("rundll32.exe", "url.dll,FileProtocolHandler", target)
+        isMacOs -> launchCommand("open", target)
+        else -> launchCommand("xdg-open", target)
+    }
+}
+
+private fun launchPathCommand(target: String): Boolean {
     return when {
         isWindows -> launchCommand("explorer.exe", target)
         isMacOs -> launchCommand("open", target)
@@ -155,7 +212,7 @@ private fun openMailDraft(subject: String, body: String): Boolean {
     return performDesktopAction(Desktop.Action.MAIL) { desktop ->
         desktop.mail(mailto)
     } || when {
-        isWindows || isMacOs -> launchPlatformCommand(mailto.toString())
+        isWindows || isMacOs -> launchUrlCommand(mailto.toString())
         else -> launchCommand("xdg-email", "--subject", subject, "--body", body)
     }
 }
@@ -173,12 +230,35 @@ private fun String.urlEncoded(): String {
         .replace("+", "%20")
 }
 
+private fun String.expandUserHome(): String {
+    if (this == "~") return System.getProperty("user.home").orEmpty()
+    if (startsWith("~/") || startsWith("~\\")) {
+        return System.getProperty("user.home").orEmpty() + substring(1)
+    }
+    return this
+}
+
 private fun launchCommand(vararg command: String): Boolean {
     return runCatching {
         ProcessBuilder(*command)
             .redirectErrorStream(true)
             .start()
         true
+    }.getOrDefault(false)
+}
+
+private fun launchCommandWithInput(
+    input: String,
+    vararg command: String,
+): Boolean {
+    return runCatching {
+        val process = ProcessBuilder(*command)
+            .redirectErrorStream(true)
+            .start()
+        process.outputStream.use { output ->
+            output.write(input.toByteArray(StandardCharsets.UTF_8))
+        }
+        process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0
     }.getOrDefault(false)
 }
 

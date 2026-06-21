@@ -3,9 +3,9 @@ package app.chimahon.shared
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceRegistry
 import eu.kanade.tachiyomi.source.model.SManga
-import kotlinx.cinterop.ExperimentalForeignApi
+import eu.kanade.tachiyomi.source.online.HttpSource
 import okio.FileSystem
-import platform.posix.time
+import platform.Foundation.NSDate
 import tachiyomi.core.database.NativeDatabaseDriverFactory
 import tachiyomi.core.platform.javascript.IosJavaScriptRuntimeFactory
 import tachiyomi.core.platform.javascript.JavaScriptRuntimeFactory
@@ -17,8 +17,13 @@ import tachiyomi.data.NativeDatabaseHandler
 
 internal actual class ChimahonPlatformServices actual constructor() {
     actual val platformName: String = "iOS"
-    actual val backgroundState: String = "BGTaskScheduler bridge ready"
+    actual val backgroundState: String = "Foreground scheduler; iOS background work follows system limits"
     actual val storageDirectories: PlatformStorageDirectories = IosPlatformStorageDirectories(APP_NAME)
+
+    init {
+        storageDirectories.ensureChimahonDirectories()
+    }
+
     actual val sourceRegistry: SourceRegistry = SourceRegistry()
     actual val apkExtensionManager = ChimahonPlatformApkExtensionManager(storageDirectories, sourceRegistry)
     private val databaseDirectory = storageDirectories.filesDir / DATABASE_DIRECTORY
@@ -33,18 +38,23 @@ internal actual class ChimahonPlatformServices actual constructor() {
     actual val databaseHandler: DatabaseHandler = NativeDatabaseHandler(database, databaseDriver)
     actual val javaScriptRuntimeFactory: JavaScriptRuntimeFactory = IosJavaScriptRuntimeFactory
 
-    @OptIn(ExperimentalForeignApi::class)
     actual fun currentTimeMillis(): Long {
-        return time(null) * 1_000L
+        return (NSDate().timeIntervalSince1970 * 1_000.0).toLong()
     }
 
-    actual fun resolveExternalMangaUrl(source: CatalogueSource, manga: SManga): String? = manga.url
+    actual fun resolveExternalMangaUrl(source: CatalogueSource, manga: SManga): String? {
+        return when (source) {
+            is HttpSource -> runCatching { source.getMangaUrl(manga) }.getOrNull() ?: manga.url
+            else -> manga.url
+        }
+    }
 
     actual fun openExternalUrl(url: String): Boolean {
         return ChimahonPlatformIntegration.openExternalUrl(url)
     }
 
     actual fun close() {
+        apkExtensionManager.close()
         databaseDriver.close()
     }
 }

@@ -67,7 +67,7 @@ jobs:
           echo "draft=$draft" >> "$GITHUB_OUTPUT"
 
   android:
-    name: Signed Android APKs
+    name: Signed Android APKs and AAB
     runs-on: ubuntu-24.04
     needs: metadata
 
@@ -118,10 +118,10 @@ jobs:
         shell: bash
         run: rm -rf app/.cxx chimahon/.cxx
 
-      - name: Build release APKs
+      - name: Build Android release artifacts
         shell: bash
         run: |
-          ./gradlew :app:assembleRelease \
+          ./gradlew :app:assembleRelease :app:bundleRelease \
             -Penable-updater \
             -Pdisable-code-shrink \
             -PreleaseVersionName=${{ needs.metadata.outputs.version_name }} \
@@ -149,59 +149,165 @@ jobs:
             exit 1
           fi
 
-      - name: Sign APKs
-        uses: r0adkll/sign-android-release@f30bdd30588842ac76044ecdbd4b6d0e3e813478
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-          alias: ${{ secrets.ALIAS }}
-          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
+      - name: Sign Android release artifacts
         env:
-          BUILD_TOOLS_VERSION: '35.0.1'
-
-      - name: Verify signed APKs
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
 
-          signed=(app/build/outputs/apk/release/*-signed.apk)
-          if (( ${#signed[@]} == 0 )); then
-            echo "::error::Android signing was enabled, but no signed APKs were produced."
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          if [[ -z "$build_tools" || ! -x "$build_tools/apksigner" ]]; then
+            echo "::error::Unable to locate Android apksigner."
             exit 1
           fi
 
-          for apk in "${signed[@]}"; do
-            "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify --verbose "$apk"
+          keystore="$RUNNER_TEMP/chimahon-release.jks"
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$keystore"
+
+          mkdir -p app/build/outputs/apk/release/signed
+          mkdir -p app/build/outputs/bundle/release/signed
+
+          apks=(app/build/outputs/apk/release/*-release-unsigned.apk)
+          if (( ${#apks[@]} == 0 )); then
+            apks=(app/build/outputs/apk/release/*-release.apk)
+          fi
+          aabs=(app/build/outputs/bundle/release/*.aab)
+
+          if (( ${#apks[@]} == 0 )); then
+            echo "::error::No release APKs were produced to sign."
+            exit 1
+          fi
+          if (( ${#aabs[@]} == 0 )); then
+            echo "::error::No release AAB was produced to sign."
+            exit 1
+          fi
+
+          for apk in "${apks[@]}"; do
+            base="$(basename "$apk")"
+            if [[ "$base" == *debug* || "$base" == *Debug* ]]; then
+              echo "::error::Refusing to sign non-release APK: $base"
+              exit 1
+            fi
+
+            signed_base="${base%-unsigned.apk}"
+            if [[ "$signed_base" == "$base" ]]; then
+              signed_base="${base%.apk}"
+            fi
+            signed_apk="app/build/outputs/apk/release/signed/${signed_base}-signed.apk"
+
+            "$build_tools/apksigner" sign \
+              --ks "$keystore" \
+              --ks-key-alias "$ALIAS" \
+              --ks-pass "pass:$KEY_STORE_PASSWORD" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --out "$signed_apk" \
+              "$apk"
           done
 
-      - name: Collect APK assets
+          for aab in "${aabs[@]}"; do
+            base="$(basename "$aab")"
+            if [[ "$base" == *debug* || "$base" == *Debug* ]]; then
+              echo "::error::Refusing to sign non-release AAB: $base"
+              exit 1
+            fi
+
+            signed_base="${base%-unsigned.aab}"
+            if [[ "$signed_base" == "$base" ]]; then
+              signed_base="${base%.aab}"
+            fi
+
+            jarsigner \
+              -keystore "$keystore" \
+              -storepass "$KEY_STORE_PASSWORD" \
+              -keypass "$KEY_PASSWORD" \
+              -signedjar "app/build/outputs/bundle/release/signed/${signed_base}-signed.aab" \
+              "$aab" \
+              "$ALIAS"
+          done
+
+      - name: Verify signed Android release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          signed_apks=(app/build/outputs/apk/release/signed/*.apk)
+          signed_aabs=(app/build/outputs/bundle/release/signed/*.aab)
+
+          if (( ${#signed_apks[@]} == 0 )); then
+            echo "::error::Android signing was enabled, but no signed APKs were produced."
+            exit 1
+          fi
+          if (( ${#signed_aabs[@]} == 0 )); then
+            echo "::error::Android signing was enabled, but no signed AAB was produced."
+            exit 1
+          fi
+
+          for apk in "${signed_apks[@]}"; do
+            if [[ "$(basename "$apk")" == *unsigned* ]]; then
+              echo "::error::Refusing to verify an unsigned-labeled APK as release-signed: $apk"
+              exit 1
+            fi
+            "$build_tools/apksigner" verify --verbose "$apk"
+          done
+
+          for aab in "${signed_aabs[@]}"; do
+            if [[ "$(basename "$aab")" == *unsigned* ]]; then
+              echo "::error::Refusing to verify an unsigned-labeled AAB as release-signed: $aab"
+              exit 1
+            fi
+            jarsigner -verify "$aab"
+          done
+
+      - name: Collect Android release assets
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
           mkdir -p release-assets
 
-          files=(app/build/outputs/apk/release/*-signed.apk)
+          signed_apks=(app/build/outputs/apk/release/signed/*.apk)
+          signed_aabs=(app/build/outputs/bundle/release/signed/*.aab)
 
-          if (( ${#files[@]} == 0 )); then
+          if (( ${#signed_apks[@]} == 0 )); then
             echo "::error::No signed APK outputs were produced."
             exit 1
           fi
+          if (( ${#signed_aabs[@]} != 1 )); then
+            echo "::error::Expected exactly one signed AAB output, found ${#signed_aabs[@]}."
+            exit 1
+          fi
+          if [[ "$(basename "${signed_aabs[0]}")" == *unsigned* ]]; then
+            echo "::error::Refusing to collect unsigned-labeled AAB as a release asset: ${signed_aabs[0]}"
+            exit 1
+          fi
 
-          for apk in "${files[@]}"; do
+          for apk in "${signed_apks[@]}"; do
             base="$(basename "$apk")"
-            abi="${base#app-}"
-            abi="${abi%-release-unsigned-signed.apk}"
-            abi="${abi%-release-signed.apk}"
-            if [[ "$abi" == "universal" ]]; then
+            if [[ "$base" == *unsigned* ]]; then
+              echo "::error::Refusing to collect unsigned-labeled APK as a release asset: $base"
+              exit 1
+            fi
+
+            abi="${base%.apk}"
+            abi="${abi%-signed}"
+            abi="${abi%-release}"
+            abi="${abi#app-}"
+            if [[ "$abi" == "app" || "$abi" == "universal" ]]; then
               name="chimahon-android-${{ needs.metadata.outputs.tag }}.apk"
             else
               name="chimahon-android-${abi}-${{ needs.metadata.outputs.tag }}.apk"
             fi
             cp "$apk" "release-assets/$name"
           done
+
+          cp "${signed_aabs[0]}" "release-assets/chimahon-android-${{ needs.metadata.outputs.tag }}.aab"
 
       - name: Upload Android assets
         uses: actions/upload-artifact@v4
@@ -256,49 +362,117 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Windows desktop installer
+      - name: Build Windows desktop installers
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          .\gradlew.bat :desktop-app:packageExe `
+          .\gradlew.bat :desktop-app:packageExe :desktop-app:packageMsi `
             '-PreleaseVersionName=${{ needs.metadata.outputs.version_name }}' `
+            '-PreleaseBuildNumber=${{ needs.metadata.outputs.version_code }}' `
             --no-daemon --console=plain --max-workers=2
 
-      - name: Build Unix desktop application image
-        if: runner.os != 'Windows'
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          ./gradlew :desktop-app:createDistributable \
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y fakeroot rpm
+
+      - name: Build Linux desktop packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ./gradlew :desktop-app:packageDeb :desktop-app:packageRpm \
             -PreleaseVersionName=${{ needs.metadata.outputs.version_name }} \
+            -PreleaseBuildNumber=${{ needs.metadata.outputs.version_code }} \
             --no-daemon --console=plain --max-workers=2
 
-      - name: Collect Windows desktop installer
+      - name: Build macOS desktop disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ./gradlew :desktop-app:packageDmg \
+            -PreleaseVersionName=${{ needs.metadata.outputs.version_name }} \
+            -PreleaseBuildNumber=${{ needs.metadata.outputs.version_code }} \
+            --no-daemon --console=plain --max-workers=2
+
+      - name: Collect Windows desktop installers
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          $installers = @(
-            Get-ChildItem `
-              -Path "desktop-app\build\compose\binaries\main\exe" `
-              -Filter "*.exe" `
-              -File
+
+          $assets = @(
+            @{
+              Path = "desktop-app\build\compose\binaries\main\exe"
+              Filter = "*.exe"
+              Suffix = "installer.exe"
+            },
+            @{
+              Path = "desktop-app\build\compose\binaries\main\msi"
+              Filter = "*.msi"
+              Suffix = "installer.msi"
+            }
           )
 
-          if ($installers.Count -ne 1) {
-            throw "Expected exactly one Windows EXE installer, found $($installers.Count)."
+          foreach ($asset in $assets) {
+            $installers = @(
+              Get-ChildItem `
+                -Path $asset.Path `
+                -Filter $asset.Filter `
+                -File
+            )
+
+            if ($installers.Count -ne 1) {
+              throw "Expected exactly one Windows $($asset.Filter) installer, found $($installers.Count)."
+            }
+
+            Copy-Item `
+              -LiteralPath $installers[0].FullName `
+              -Destination "release-assets\chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}-$($asset.Suffix)"
           }
 
-          Copy-Item `
-            -LiteralPath $installers[0].FullName `
-            -Destination "release-assets\chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}-installer.exe"
-
-      - name: Package Unix desktop
-        if: runner.os != 'Windows'
+      - name: Collect Linux desktop packages
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s nullglob
           mkdir -p release-assets
-          (cd desktop-app/build/compose/binaries/main && zip -qry "../../../../../release-assets/chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.zip" app)
+
+          debs=(desktop-app/build/compose/binaries/main/deb/*.deb)
+          rpms=(desktop-app/build/compose/binaries/main/rpm/*.rpm)
+
+          if (( ${#debs[@]} != 1 )); then
+            echo "::error::Expected exactly one Linux DEB package, found ${#debs[@]}."
+            exit 1
+          fi
+
+          if (( ${#rpms[@]} != 1 )); then
+            echo "::error::Expected exactly one Linux RPM package, found ${#rpms[@]}."
+            exit 1
+          fi
+
+          cp "${debs[0]}" "release-assets/chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.deb"
+          cp "${rpms[0]}" "release-assets/chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.rpm"
+
+      - name: Collect macOS desktop disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release-assets
+
+          dmgs=(desktop-app/build/compose/binaries/main/dmg/*.dmg)
+
+          if (( ${#dmgs[@]} != 1 )); then
+            echo "::error::Expected exactly one macOS DMG package, found ${#dmgs[@]}."
+            exit 1
+          fi
+
+          cp "${dmgs[0]}" "release-assets/chimahon-desktop-${{ matrix.platform }}-${{ needs.metadata.outputs.tag }}.dmg"
 
       - name: Upload desktop asset
         uses: actions/upload-artifact@v4
@@ -395,13 +569,13 @@ jobs:
             echo
             echo "Kotlin Multiplatform release assets are attached for:"
             echo
-            echo "- Android APKs"
-            echo "- Windows desktop EXE installer with bundled Java runtime"
-            echo "- Linux desktop application image with bundled Java runtime"
-            echo "- macOS desktop x64 and arm64 application images with bundled Java runtime"
+            echo "- Android APKs and AAB"
+            echo "- Windows desktop EXE and MSI installers with bundled Java runtime"
+            echo "- Linux desktop DEB and RPM packages with bundled Java runtime"
+            echo "- macOS desktop x64 and arm64 DMG packages with bundled Java runtime"
             echo "- iOS device and simulator shared frameworks"
             echo
-            echo "Android APKs are signed during this workflow; the release fails if repository signing secrets are missing."
+            echo "Android APKs and the AAB are signed during this workflow; the release fails if repository signing secrets are missing."
             echo
             echo "iOS app distribution still requires Apple signing/provisioning; this release includes the compiled shared iOS framework artifacts."
           } > release_notes.md
@@ -429,19 +603,19 @@ jobs:
           done < <(
             gh release view "$RELEASE_TAG" \
               --json assets \
-              --jq '.assets[].name | select(startswith("chimahon-desktop-windows-") and endswith(".zip"))'
+              --jq '.assets[].name | select(startswith("chimahon-desktop-") and endswith(".zip"))'
           )
 
           shopt -s nullglob
-          android_apks=(release-assets/chimahon-android-*.apk)
-          signed_apks=()
-          for apk in "${android_apks[@]}"; do
-            if [[ "$apk" != *-unsigned.apk ]]; then
-              signed_apks+=("$apk")
+          android_artifacts=(release-assets/chimahon-android-*.apk release-assets/chimahon-android-*.aab)
+          signed_android_artifacts=()
+          for artifact in "${android_artifacts[@]}"; do
+            if [[ "$artifact" != *-unsigned.apk && "$artifact" != *-unsigned.aab ]]; then
+              signed_android_artifacts+=("$artifact")
             fi
           done
 
-          if (( ${#signed_apks[@]} > 0 )); then
+          if (( ${#signed_android_artifacts[@]} > 0 )); then
             while IFS= read -r asset; do
               if [[ -n "$asset" ]]; then
                 gh release delete-asset "$RELEASE_TAG" "$asset" --yes
@@ -449,7 +623,7 @@ jobs:
             done < <(
               gh release view "$RELEASE_TAG" \
                 --json assets \
-                --jq '.assets[].name | select(endswith("-unsigned.apk"))'
+                --jq '.assets[].name | select(startswith("chimahon-android-") and (endswith("-unsigned.apk") or endswith("-unsigned.aab")))'
             )
           fi
 

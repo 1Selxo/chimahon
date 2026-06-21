@@ -1,11 +1,19 @@
 package app.chimahon.shared
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -49,15 +57,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.CollectionsBookmark
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -69,7 +77,7 @@ import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.MoreHoriz
-import androidx.compose.material.icons.outlined.NewReleases
+import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.QueryStats
@@ -83,6 +91,8 @@ import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.TravelExplore
+import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -98,7 +108,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -108,30 +120,44 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.decodeToImageBitmap
+import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.time.TimeSource
 
 sealed interface ChimahonUiState {
     data object Loading : ChimahonUiState
@@ -201,16 +227,24 @@ enum class ChimahonSourceBrowseMode(val title: String) {
 
 private enum class LibraryFilter(val title: String) {
     All("All"),
+    Downloaded("Downloaded"),
     Unread("Unread"),
     Started("Started"),
     Bookmarked("Bookmarked"),
+    Completed("Completed"),
 }
 
 private enum class LibrarySort(val title: String) {
     Alphabetical("Alphabetical"),
     DateAdded("Date added"),
     LastUpdated("Last updated"),
+    LastRead("Last read"),
     UnreadCount("Unread count"),
+    TotalChapters("Total chapters"),
+    LatestChapter("Latest chapter"),
+    ChapterFetchDate("Fetch date"),
+    Source("Source"),
+    Random("Random"),
 }
 
 private enum class LibraryDisplayMode(val title: String) {
@@ -218,6 +252,18 @@ private enum class LibraryDisplayMode(val title: String) {
     CompactGrid("Compact"),
     List("List"),
 }
+
+private data class LibraryMangaFacts(
+    val chapters: List<ChimahonChapterEntry>,
+    val unreadCount: Int,
+    val downloadedCount: Int,
+    val started: Boolean,
+    val bookmarked: Boolean,
+    val completed: Boolean,
+    val lastReadAt: Long,
+    val latestChapter: Double,
+    val chapterFetchDate: Long,
+)
 
 private fun ChimahonLibraryDisplayMode.toUiLibraryDisplayMode(): LibraryDisplayMode = when (this) {
     ChimahonLibraryDisplayMode.ComfortableGrid -> LibraryDisplayMode.ComfortableGrid
@@ -234,13 +280,28 @@ private fun LibraryDisplayMode.toSettingsLibraryDisplayMode(): ChimahonLibraryDi
 private enum class UpdatesFilter(val title: String) {
     All("All"),
     Unread("Unread"),
+    Started("Started"),
     Bookmarked("Bookmarked"),
+}
+
+private enum class UpdatesSort(val title: String) {
+    Newest("Newest"),
+    Oldest("Oldest"),
+    Manga("Manga"),
 }
 
 private enum class HistoryFilter(val title: String) {
     All("All"),
-    Unfinished("Unfinished"),
+    UnfinishedManga("Unfinished manga"),
+    UnfinishedChapter("Unfinished chapter"),
+    NonLibrary("Non-library"),
     Completed("Completed"),
+}
+
+private enum class HistorySort(val title: String) {
+    Recent("Recent"),
+    Oldest("Oldest"),
+    Title("Title"),
 }
 
 private enum class ExtensionFilter(val title: String) {
@@ -250,12 +311,60 @@ private enum class ExtensionFilter(val title: String) {
     Nsfw("NSFW"),
 }
 
+private enum class SourceQuickFilter(val title: String) {
+    All("All"),
+    Latest("Latest"),
+    PopularOnly("Popular only"),
+}
+
+private enum class SourceSort(val title: String) {
+    Name("Name"),
+    Language("Language"),
+    Capability("Capability"),
+}
+
 private enum class ChapterFilter(val title: String) {
     All("All"),
     Unread("Unread"),
     Started("Started"),
     Bookmarked("Bookmarked"),
 }
+
+private enum class ChapterSort(val title: String) {
+    SourceOrder("Source order"),
+    ChapterNumber("Chapter number"),
+    UploadDate("Upload date"),
+    Name("Name"),
+    Scanlator("Scanlator"),
+}
+
+private data class ChapterListSummary(
+    val readCount: Int,
+    val unreadCount: Int,
+    val startedCount: Int,
+    val bookmarkedCount: Int,
+    val downloadedCount: Int,
+    val scanlatorCount: Int,
+)
+
+private data class ReadingProgressSummary(
+    val libraryManga: Int,
+    val totalChapters: Int,
+    val readChapters: Int,
+    val unreadChapters: Int,
+    val startedChapters: Int,
+    val bookmarkedChapters: Int,
+    val completedManga: Int,
+    val inProgressManga: Int,
+    val untouchedManga: Int,
+    val historyEntries: Int,
+    val historyManga: Int,
+    val readDuration: Long,
+    val lastReadAt: Long?,
+)
+
+private val ReadingProgressSummary.readProgressFraction: Float
+    get() = if (totalChapters <= 0) 0f else readChapters.toFloat() / totalChapters.toFloat()
 
 private enum class MorePage(val title: String) {
     Main("More"),
@@ -274,6 +383,7 @@ private enum class MorePage(val title: String) {
     DictionarySettings("Dictionary"),
     SecuritySettings("Security"),
     AdvancedSettings("Advanced"),
+    BackupSettings("Backup and restore"),
     About("About"),
     Help("Help"),
 }
@@ -449,6 +559,23 @@ data class ChimahonUpdateIssue(
     val lastUpdate: String,
 )
 
+private data class UpdateIssueRow(
+    val issue: ChimahonUpdateIssue,
+    val sourceName: String,
+    val categoryName: String,
+)
+
+private data class UpdateIssueGroupKey(
+    val sourceName: String,
+    val categoryName: String,
+)
+
+private data class UpdateIssueGroup(
+    val sourceName: String,
+    val categoryName: String,
+    val rows: List<UpdateIssueRow>,
+)
+
 data class ChimahonRuntimeInfo(
     val platformName: String,
     val filesDir: String,
@@ -503,6 +630,13 @@ private enum class ReaderMode(
     Vertical("Vertical", paged = false),
     LeftToRight("Left to right", paged = true),
     RightToLeft("Right to left", paged = true, rightToLeft = true),
+}
+
+private fun ReaderMode.nextDesktopMode(): ReaderMode = when (this) {
+    ReaderMode.Webtoon -> ReaderMode.Vertical
+    ReaderMode.Vertical -> ReaderMode.LeftToRight
+    ReaderMode.LeftToRight -> ReaderMode.RightToLeft
+    ReaderMode.RightToLeft -> ReaderMode.Webtoon
 }
 
 private enum class ReaderScale(val title: String) {
@@ -562,9 +696,78 @@ private sealed interface ExtensionRepoCatalogUiState {
     data class Failed(val message: String) : ExtensionRepoCatalogUiState
 }
 
+private data class ExtensionInstallKey(
+    val id: String,
+    val packageType: ChimahonExtensionPackageType,
+)
+
+private const val EXTENSION_CATALOG_PAGE_SIZE = 40
+
+data class ChimahonDesktopCommandRequest(
+    val id: Long,
+    val command: ChimahonDesktopCommand,
+)
+
+enum class ChimahonDesktopCommand {
+    Back,
+    Search,
+    ToggleFilters,
+    Refresh,
+    Library,
+    Updates,
+    History,
+    BrowseSources,
+    BrowseExtensions,
+    BrowseFeed,
+    BrowseMigrate,
+    More,
+    Settings,
+    DownloadQueue,
+    ReaderPreviousPage,
+    ReaderNextPage,
+    ReaderFirstPage,
+    ReaderLastPage,
+    ReaderPreviousChapter,
+    ReaderNextChapter,
+    ReaderToggleControls,
+    ReaderCycleMode,
+    ReaderOpenSettings,
+    ReaderOpenChapters,
+    ReaderToggleStats,
+    ReaderToggleCrop,
+    ReaderBookmarkChapter,
+    ReaderDownloadChapter,
+    ReaderMarkChapterRead,
+    ReaderOpenChapterUrl,
+}
+
+private val ChimahonDesktopCommand.readerScoped: Boolean
+    get() = when (this) {
+        ChimahonDesktopCommand.ReaderPreviousPage,
+        ChimahonDesktopCommand.ReaderNextPage,
+        ChimahonDesktopCommand.ReaderFirstPage,
+        ChimahonDesktopCommand.ReaderLastPage,
+        ChimahonDesktopCommand.ReaderPreviousChapter,
+        ChimahonDesktopCommand.ReaderNextChapter,
+        ChimahonDesktopCommand.ReaderToggleControls,
+        ChimahonDesktopCommand.ReaderCycleMode,
+        ChimahonDesktopCommand.ReaderOpenSettings,
+        ChimahonDesktopCommand.ReaderOpenChapters,
+        ChimahonDesktopCommand.ReaderToggleStats,
+        ChimahonDesktopCommand.ReaderToggleCrop,
+        ChimahonDesktopCommand.ReaderBookmarkChapter,
+        ChimahonDesktopCommand.ReaderDownloadChapter,
+        ChimahonDesktopCommand.ReaderMarkChapterRead,
+        ChimahonDesktopCommand.ReaderOpenChapterUrl,
+        -> true
+        else -> false
+    }
+
 @Composable
 fun ChimahonServiceApp(
     services: ChimahonSharedAppServices,
+    desktopCommandRequest: ChimahonDesktopCommandRequest? = null,
+    onDesktopCommandHandled: (Long) -> Unit = {},
 ) {
     var refreshKey by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf<ChimahonUiState>(ChimahonUiState.Loading) }
@@ -581,6 +784,8 @@ fun ChimahonServiceApp(
     ChimahonApp(
         state = state,
         onRefresh = { refreshKey++ },
+        desktopCommandRequest = desktopCommandRequest,
+        onDesktopCommandHandled = onDesktopCommandHandled,
         onLoadSourcePreview = services::loadSourcePreview,
         onLoadRemoteMangaDetail = services::loadRemoteMangaDetail,
         onLoadReaderChapter = services::loadReaderChapter,
@@ -605,7 +810,11 @@ fun ChimahonServiceApp(
         onRefreshManga = services::refreshManga,
         onCreateCategory = services::createCategory,
         onDeleteCategory = services::deleteCategory,
+        onRenameCategory = services::renameCategory,
+        onSetCategoryHidden = services::setCategoryHidden,
+        onMoveCategory = services::moveCategory,
         onSetMangaCategories = services::setMangaCategories,
+        onSetMangasCategories = services::setMangasCategories,
         onSetMangaFavorite = services::setMangaFavorite,
         onSetMangasFavorite = services::setMangasFavorite,
         onSetMangaNotes = services::setMangaNotes,
@@ -645,9 +854,11 @@ fun ChimahonServiceApp(
 }
 
 @Composable
-fun ChimahonApp(
+internal fun ChimahonApp(
     state: ChimahonUiState = ChimahonUiState.Ready(nativeCheckpointSnapshot()),
     onRefresh: () -> Unit = {},
+    desktopCommandRequest: ChimahonDesktopCommandRequest? = null,
+    onDesktopCommandHandled: (Long) -> Unit = {},
     onLoadSourcePreview: suspend (Long, ChimahonSourceBrowseMode, String, Int) -> ChimahonSourcePreview = {
             sourceId,
             mode,
@@ -713,7 +924,13 @@ fun ChimahonApp(
     onRefreshManga: suspend (Long) -> Unit = {},
     onCreateCategory: suspend (String) -> Long = { 0L },
     onDeleteCategory: suspend (Long) -> Unit = {},
+    onRenameCategory: suspend (Long, String) -> Unit = { _, _ -> },
+    onSetCategoryHidden: suspend (Long, Boolean) -> Unit = { _, _ -> },
+    onMoveCategory: suspend (Long, Int) -> Unit = { _, _ -> },
     onSetMangaCategories: suspend (Long, Set<Long>) -> Unit = { _, _ -> },
+    onSetMangasCategories: suspend (Set<Long>, Set<Long>) -> ChimahonLibraryBulkActionResult = { mangaIds, categories ->
+        ChimahonLibraryBulkActionResult(mangaCount = mangaIds.size, categoryCount = categories.size)
+    },
     onSetMangaFavorite: suspend (Long, Boolean) -> Unit = { _, _ -> },
     onSetMangasFavorite: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult = { mangaIds, _ ->
         ChimahonLibraryBulkActionResult(mangaCount = mangaIds.size)
@@ -809,6 +1026,8 @@ fun ChimahonApp(
     var feedManageMode by remember { mutableStateOf(false) }
     var migrateHelpVisible by remember { mutableStateOf(false) }
     var extensionRepoRequestKey by remember { mutableIntStateOf(0) }
+    var requestedMorePage by remember { mutableStateOf<MorePage?>(null) }
+    var moreBackRequestId by remember { mutableStateOf<Long?>(null) }
     var persistedSettings by remember { mutableStateOf(ChimahonSettings()) }
     var downloadedOnlyMode by remember { mutableStateOf(false) }
     var incognitoMode by remember { mutableStateOf(false) }
@@ -831,9 +1050,123 @@ fun ChimahonApp(
         runCatching { onLoadSettings() }
             .onSuccess { settings ->
                 persistedSettings = settings
+                selectedTab = settings.appearance.startScreen.toHomeTab()
                 downloadedOnlyMode = settings.appMode.downloadedOnly
                 incognitoMode = settings.appMode.incognitoMode
             }
+    }
+
+    fun clearHomeChrome() {
+        homeSearchActive = false
+        homeSearchQuery = ""
+        homeFiltersVisible = false
+        feedManageMode = false
+        migrateHelpVisible = false
+    }
+
+    fun closeContentScreens(refreshReaderState: Boolean = false) {
+        val wasReaderOpen = selectedReader != null
+        selectedReader = null
+        selectedRemoteManga = null
+        selectedMangaId = null
+        selectedSourceId = null
+        if (refreshReaderState && wasReaderOpen) onRefresh()
+    }
+
+    fun selectHomeTab(tab: HomeTab) {
+        closeContentScreens()
+        selectedTab = tab
+        clearHomeChrome()
+        if (tab == HomeTab.More) requestedMorePage = MorePage.Main
+    }
+
+    fun openBrowseSection(section: BrowseSection) {
+        closeContentScreens()
+        selectedTab = HomeTab.Browse
+        selectedBrowseSection = section
+        clearHomeChrome()
+    }
+
+    LaunchedEffect(desktopCommandRequest?.id) {
+        val request = desktopCommandRequest ?: return@LaunchedEffect
+        if (request.command.readerScoped) {
+            if (selectedReader == null) onDesktopCommandHandled(request.id)
+            return@LaunchedEffect
+        }
+        when (request.command) {
+            ChimahonDesktopCommand.Back -> when {
+                selectedReader != null -> closeContentScreens(refreshReaderState = true)
+                selectedRemoteManga != null -> selectedRemoteManga = null
+                selectedMangaId != null -> selectedMangaId = null
+                selectedSourceId != null -> {
+                    selectedRemoteManga = null
+                    selectedSourceId = null
+                }
+                selectedTab == HomeTab.More -> moreBackRequestId = request.id
+                selectedTab != HomeTab.Library -> selectHomeTab(HomeTab.Library)
+                else -> Unit
+            }
+            ChimahonDesktopCommand.Search -> {
+                when {
+                    selectedSourceId != null -> sourceSearchKey++
+                    selectedReader != null || selectedRemoteManga != null || selectedMangaId != null -> Unit
+                    selectedTab == HomeTab.Library || selectedTab == HomeTab.History -> homeSearchActive = true
+                    selectedTab == HomeTab.Browse -> {
+                        if (selectedBrowseSection !in listOf(BrowseSection.Sources, BrowseSection.Extensions)) {
+                            selectedBrowseSection = BrowseSection.Sources
+                        }
+                        homeSearchActive = true
+                    }
+                    else -> Unit
+                }
+            }
+            ChimahonDesktopCommand.ToggleFilters -> {
+                if (
+                    selectedReader == null &&
+                    selectedRemoteManga == null &&
+                    selectedMangaId == null &&
+                    selectedSourceId == null
+                ) {
+                    when (selectedTab) {
+                        HomeTab.Library,
+                        HomeTab.Updates,
+                        HomeTab.History,
+                        -> homeFiltersVisible = !homeFiltersVisible
+                        HomeTab.Browse -> when (selectedBrowseSection) {
+                            BrowseSection.Extensions -> homeFiltersVisible = !homeFiltersVisible
+                            BrowseSection.Feed -> feedManageMode = !feedManageMode
+                            BrowseSection.Migrate -> migrateHelpVisible = !migrateHelpVisible
+                            BrowseSection.Sources -> Unit
+                        }
+                        HomeTab.More -> Unit
+                    }
+                }
+            }
+            ChimahonDesktopCommand.Refresh -> {
+                selectedMangaId?.let { mangaId ->
+                    runCatching { onRefreshManga(mangaId) }
+                }
+                onRefresh()
+            }
+            ChimahonDesktopCommand.Library -> selectHomeTab(HomeTab.Library)
+            ChimahonDesktopCommand.Updates -> selectHomeTab(HomeTab.Updates)
+            ChimahonDesktopCommand.History -> selectHomeTab(HomeTab.History)
+            ChimahonDesktopCommand.BrowseSources -> openBrowseSection(BrowseSection.Sources)
+            ChimahonDesktopCommand.BrowseExtensions -> openBrowseSection(BrowseSection.Extensions)
+            ChimahonDesktopCommand.BrowseFeed -> openBrowseSection(BrowseSection.Feed)
+            ChimahonDesktopCommand.BrowseMigrate -> openBrowseSection(BrowseSection.Migrate)
+            ChimahonDesktopCommand.More -> selectHomeTab(HomeTab.More)
+            ChimahonDesktopCommand.Settings -> {
+                selectHomeTab(HomeTab.More)
+                requestedMorePage = MorePage.Settings
+            }
+            ChimahonDesktopCommand.DownloadQueue -> {
+                selectHomeTab(HomeTab.More)
+                requestedMorePage = MorePage.Downloads
+            }
+            else -> Unit
+        }
+        onDesktopCommandHandled(request.id)
     }
 
     CompositionLocalProvider(LocalThumbnailLoader provides onLoadThumbnailImage) {
@@ -843,11 +1176,16 @@ fun ChimahonApp(
                 .background(ChimahonPalette.background)
                 .safeDrawingPadding(),
         ) {
-            val wide = maxWidth >= 840.dp
+            val useNavigationRail = when (persistedSettings.appearance.tabletUiMode) {
+                ChimahonTabletUiMode.Automatic -> maxWidth >= 840.dp
+                ChimahonTabletUiMode.Always -> true
+                ChimahonTabletUiMode.Landscape -> maxWidth > maxHeight
+                ChimahonTabletUiMode.Never -> false
+            }
 
             Row(modifier = Modifier.fillMaxSize()) {
                 if (
-                    wide &&
+                    useNavigationRail &&
                     selectedMangaId == null &&
                     selectedSourceId == null &&
                     selectedRemoteManga == null &&
@@ -858,6 +1196,7 @@ fun ChimahonApp(
                         state = state,
                         compact = persistedSettings.appearance.compactNavigation,
                         appIcon = persistedSettings.appearance.appIcon,
+                        showBadges = persistedSettings.appearance.showNavigationBadges,
                         onSelect = {
                             selectedTab = it
                             homeSearchActive = false
@@ -975,7 +1314,14 @@ fun ChimahonApp(
                                                 onClick = { migrateHelpVisible = !migrateHelpVisible },
                                             ),
                                         )
-                                        BrowseSection.Sources -> Unit
+                                        BrowseSection.Sources -> add(
+                                            HomeToolbarAction(
+                                                icon = UiIcon.Filter,
+                                                contentDescription = "Filter sources",
+                                                active = homeFiltersVisible,
+                                                onClick = { homeFiltersVisible = !homeFiltersVisible },
+                                            ),
+                                        )
                                     }
                                     HomeTab.More -> Unit
                                 }
@@ -1010,6 +1356,7 @@ fun ChimahonApp(
                                 },
                                 onSearchQueryChange = { homeSearchQuery = it },
                                 actions = toolbarActions,
+                                showSubtitle = persistedSettings.appearance.showTopBarSubtitle,
                             )
                         }
                     }
@@ -1057,6 +1404,8 @@ fun ChimahonApp(
                                             selectedReader = null
                                             onRefresh()
                                         },
+                                        desktopCommandRequest = desktopCommandRequest,
+                                        onDesktopCommandHandled = onDesktopCommandHandled,
                                     )
                                 } else if (detailRemoteManga != null) {
                                     val existingMangaId = state.snapshot.mangaDetails.values
@@ -1158,6 +1507,9 @@ fun ChimahonApp(
                                         feedManageMode = feedManageMode,
                                         migrateHelpVisible = migrateHelpVisible,
                                         extensionRepoRequestKey = extensionRepoRequestKey,
+                                        requestedMorePage = requestedMorePage,
+                                        onRequestedMorePageConsumed = { requestedMorePage = null },
+                                        moreBackRequestId = moreBackRequestId,
                                         onLoadSourcePreview = onLoadSourcePreview,
                                         onLoadRemoteMangaDetail = onLoadRemoteMangaDetail,
                                         onOpenManga = { selectedMangaId = it },
@@ -1172,7 +1524,11 @@ fun ChimahonApp(
                                         onSetMangasFavorite = onSetMangasFavorite,
                                         onCreateCategory = onCreateCategory,
                                         onDeleteCategory = onDeleteCategory,
+                                        onRenameCategory = onRenameCategory,
+                                        onSetCategoryHidden = onSetCategoryHidden,
+                                        onMoveCategory = onMoveCategory,
                                         onSetMangaCategories = onSetMangaCategories,
+                                        onSetMangasCategories = onSetMangasCategories,
                                         onResetHistoryEntry = onResetHistoryEntry,
                                         onResetHistoryForManga = onResetHistoryForManga,
                                         onClearHistory = onClearHistory,
@@ -1185,6 +1541,7 @@ fun ChimahonApp(
                                         onSetChapterRead = onSetChapterRead,
                                         onSetChapterBookmark = onSetChapterBookmark,
                                         onSetMangasChaptersRead = onSetMangasChaptersRead,
+                                        onEnqueueDownloads = onEnqueueDownloads,
                                         onLoadDownloadSnapshot = onLoadDownloadSnapshot,
                                         onLoadDownloadQueue = onLoadDownloadQueue,
                                         onPauseDownloadQueue = onPauseDownloadQueue,
@@ -1280,7 +1637,7 @@ fun ChimahonApp(
                     }
 
                     if (
-                        !wide &&
+                        !useNavigationRail &&
                         selectedMangaId == null &&
                         selectedSourceId == null &&
                         selectedRemoteManga == null &&
@@ -1290,6 +1647,8 @@ fun ChimahonApp(
                             selected = selectedTab,
                             state = state,
                             compact = persistedSettings.appearance.compactNavigation,
+                            showLabels = persistedSettings.appearance.bottomBarLabels,
+                            showBadges = persistedSettings.appearance.showNavigationBadges,
                             onSelect = {
                                 selectedTab = it
                                 homeSearchActive = false
@@ -1316,13 +1675,34 @@ private fun HomeTopBar(
     onSearchActiveChange: (Boolean) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     actions: List<HomeToolbarAction>,
+    showSubtitle: Boolean,
 ) {
+    val searchFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(searchActive) {
+        if (searchActive) {
+            searchFocusRequester.requestFocus()
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp)
+            .height(if (showSubtitle) 64.dp else 56.dp)
             .background(ChimahonPalette.surface)
             .border(1.dp, ChimahonPalette.divider)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when {
+                    searchActive && event.key == Key.Escape -> {
+                        onSearchActiveChange(false)
+                        true
+                    }
+                    !searchActive && event.key == Key.F && (event.isCtrlPressed || event.isMetaPressed) -> {
+                        onSearchActiveChange(true)
+                        true
+                    }
+                    else -> false
+                }
+            }
             .padding(start = 20.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1331,6 +1711,14 @@ private fun HomeTopBar(
                 icon = UiIcon.Back,
                 contentDescription = "Close search",
                 onClick = { onSearchActiveChange(false) },
+            )
+            IconGlyph(
+                icon = UiIcon.Search,
+                contentDescription = "Search",
+                tint = ChimahonPalette.secondaryText,
+                modifier = Modifier
+                    .padding(start = 2.dp, end = 10.dp)
+                    .size(20.dp),
             )
             Box(
                 modifier = Modifier
@@ -1355,7 +1743,17 @@ private fun HomeTopBar(
                         fontSize = 15.sp,
                         lineHeight = 20.sp,
                     ),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(searchFocusRequester),
+                )
+            }
+            if (searchQuery.isNotBlank()) {
+                TopAction(
+                    icon = UiIcon.Close,
+                    contentDescription = "Clear search",
+                    tint = ChimahonPalette.secondaryText,
+                    onClick = { onSearchQueryChange("") },
                 )
             }
         } else {
@@ -1367,13 +1765,15 @@ private fun HomeTopBar(
                     weight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
-                Label(
-                    text = selected.subtitle(state),
-                    color = ChimahonPalette.secondaryText,
-                    size = 12,
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+                if (showSubtitle) {
+                    Label(
+                        text = selected.subtitle(state),
+                        color = ChimahonPalette.secondaryText,
+                        size = 12,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
             }
             actions.forEach { action ->
                 TopAction(
@@ -1540,48 +1940,69 @@ private fun ReaderTopBar(
     readBusy: Boolean = false,
     onMarkChapterRead: (() -> Unit)? = null,
 ) {
+    val hudBackground = readerHudBackground(canvas)
+    val hudContent = readerHudContent(canvas)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp)
-            .background(readerHudBackground(canvas))
-            .clickable(onClick = onToggleHud)
-            .padding(start = 8.dp, end = 14.dp),
+            .height(60.dp)
+            .background(hudBackground.copy(alpha = 0.96f))
+            .border(1.dp, hudContent.copy(alpha = 0.08f))
+            .clickable(role = Role.Button, onClick = onToggleHud)
+            .padding(start = 4.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ReaderAction(
             icon = UiIcon.Back,
             contentDescription = "Back",
-            tint = readerHudContent(canvas),
+            tint = hudContent,
             onClick = onBack,
         )
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 2.dp, end = 6.dp),
+        ) {
             if (showTitle) {
                 Label(
                     text = request.mangaTitle,
-                    color = readerHudContent(canvas),
-                    size = 16,
+                    color = hudContent,
+                    size = 14,
                     weight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
             }
-            Label(
-                text = request.chapterName,
-                color = readerHudContent(canvas).copy(alpha = 0.68f),
-                size = if (showTitle) 11 else 16,
-                weight = if (showTitle) FontWeight.Normal else FontWeight.SemiBold,
-                maxLines = 1,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            Row(
+                modifier = Modifier.padding(top = if (showTitle) 2.dp else 0.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Label(
+                    text = request.chapterName,
+                    color = hudContent.copy(alpha = 0.70f),
+                    size = if (showTitle) 11 else 14,
+                    weight = if (showTitle) FontWeight.Normal else FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                ReaderTinyHudPill(
+                    text = request.readerChapterMarker(),
+                    canvas = canvas,
+                )
+                request.scanlator?.takeIf { it.isNotBlank() }?.let { scanlator ->
+                    ReaderTinyHudPill(
+                        text = scanlator,
+                        canvas = canvas,
+                        subdued = true,
+                    )
+                }
+            }
         }
         if (pageCount > 0) {
-            Label(
+            ReaderTinyHudPill(
                 text = "$currentPage / $pageCount",
-                color = readerHudContent(canvas).copy(alpha = 0.68f),
-                size = 11,
-                weight = FontWeight.SemiBold,
-                maxLines = 1,
-                modifier = Modifier.padding(horizontal = 8.dp),
+                canvas = canvas,
+                modifier = Modifier.padding(horizontal = 2.dp),
             )
         }
         onDownloadChapter?.let {
@@ -1589,7 +2010,8 @@ private fun ReaderTopBar(
                 icon = UiIcon.Download,
                 contentDescription = "Download chapter",
                 active = downloadBusy,
-                tint = readerHudContent(canvas),
+                enabled = !downloadBusy,
+                tint = hudContent,
                 onClick = it,
             )
         }
@@ -1598,7 +2020,8 @@ private fun ReaderTopBar(
                 icon = UiIcon.DoneAll,
                 contentDescription = "Mark chapter read",
                 active = readBusy,
-                tint = readerHudContent(canvas),
+                enabled = !readBusy,
+                tint = hudContent,
                 onClick = it,
             )
         }
@@ -1607,11 +2030,32 @@ private fun ReaderTopBar(
                 icon = if (bookmarked) UiIcon.Bookmark else UiIcon.BookmarkBorder,
                 contentDescription = if (bookmarked) "Unbookmark chapter" else "Bookmark chapter",
                 active = bookmarked || bookmarkBusy,
-                tint = readerHudContent(canvas),
+                enabled = !bookmarkBusy,
+                tint = hudContent,
                 onClick = it,
             )
         }
     }
+}
+
+@Composable
+private fun ReaderTinyHudPill(
+    text: String,
+    canvas: ReaderCanvas,
+    modifier: Modifier = Modifier,
+    subdued: Boolean = false,
+) {
+    Label(
+        text = text,
+        color = readerHudContent(canvas).copy(alpha = if (subdued) 0.66f else 0.84f),
+        size = 8,
+        weight = FontWeight.SemiBold,
+        maxLines = 1,
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(readerHudContent(canvas).copy(alpha = if (subdued) 0.08f else 0.12f))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
 
 @Composable
@@ -1620,24 +2064,25 @@ private fun HomeNavigationRail(
     state: ChimahonUiState,
     compact: Boolean,
     appIcon: ChimahonAppIcon,
+    showBadges: Boolean,
     onSelect: (HomeTab) -> Unit,
 ) {
     Column(
         modifier = Modifier
-            .width(if (compact) 74.dp else 92.dp)
+            .width(if (compact) 72.dp else 88.dp)
             .fillMaxHeight()
             .background(ChimahonPalette.surface)
             .border(1.dp, ChimahonPalette.divider)
-            .padding(vertical = 14.dp),
+            .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         AppMark(appIcon = appIcon)
-        Spacer(Modifier.height(if (compact) 10.dp else 18.dp))
+        Spacer(Modifier.height(if (compact) 12.dp else 20.dp))
         HomeTab.entries.forEach { tab ->
             RailItem(
                 tab = tab,
                 selected = tab == selected,
-                badge = state.badgeFor(tab),
+                badge = if (showBadges) state.badgeFor(tab) else null,
                 compact = compact,
                 onClick = { onSelect(tab) },
             )
@@ -1655,10 +2100,16 @@ private fun RailItem(
 ) {
     Column(
         modifier = Modifier
-            .width(if (compact) 64.dp else 76.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = if (compact) 6.dp else 8.dp),
+            .width(if (compact) 62.dp else 72.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.74f) else Color.Transparent)
+            .semantics(mergeDescendants = true) {
+                contentDescription = tab.title
+                this.selected = selected
+                stateDescription = if (selected) "Selected" else "Not selected"
+            }
+            .clickable(role = Role.Tab, onClick = onClick)
+            .padding(vertical = if (compact) 7.dp else 9.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         NavIcon(
@@ -1683,40 +2134,57 @@ private fun HomeNavigationBar(
     selected: HomeTab,
     state: ChimahonUiState,
     compact: Boolean,
+    showLabels: Boolean,
+    showBadges: Boolean,
     onSelect: (HomeTab) -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (compact) 58.dp else 72.dp)
+            .height(
+                when {
+                    !showLabels -> 58.dp
+                    compact -> 62.dp
+                    else -> 74.dp
+                },
+            )
             .background(ChimahonPalette.surface)
             .border(1.dp, ChimahonPalette.divider)
-            .padding(horizontal = 6.dp, vertical = 5.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
         HomeTab.entries.forEach { tab ->
+            val selectedTab = tab == selected
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(18.dp))
-                    .clickable { onSelect(tab) }
-                    .padding(vertical = if (compact) 2.dp else 5.dp),
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(20.dp))
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = tab.title
+                        this.selected = selectedTab
+                        stateDescription = if (selectedTab) "Selected" else "Not selected"
+                    }
+                    .clickable(role = Role.Tab, onClick = { onSelect(tab) })
+                    .padding(vertical = if (compact) 3.dp else 5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 NavIcon(
                     icon = tab.icon,
                     contentDescription = tab.title,
-                    selected = tab == selected,
-                    badge = state.badgeFor(tab),
+                    selected = selectedTab,
+                    badge = if (showBadges) state.badgeFor(tab) else null,
                 )
-                Label(
-                    text = tab.title,
-                    color = if (tab == selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                    size = if (compact) 9 else 10,
-                    weight = if (tab == selected) FontWeight.SemiBold else FontWeight.Normal,
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = 3.dp),
-                )
+                if (showLabels) {
+                    Label(
+                        text = tab.title,
+                        color = if (selectedTab) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                        size = if (compact) 9 else 10,
+                        weight = if (selectedTab) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
             }
         }
     }
@@ -1730,35 +2198,38 @@ private fun NavIcon(
     badge: Int?,
 ) {
     Box(
-        modifier = Modifier.size(width = 54.dp, height = 34.dp),
+        modifier = Modifier.size(width = 52.dp, height = 32.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
                 .width(46.dp)
                 .height(30.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(if (selected) ChimahonPalette.primaryContainer else Color.Transparent),
+                .clip(RoundedCornerShape(20.dp))
+                .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.96f) else Color.Transparent),
             contentAlignment = Alignment.Center,
         ) {
             IconGlyph(
                 icon = icon,
                 contentDescription = contentDescription,
-                tint = if (selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                modifier = Modifier.size(if (selected) 22.dp else 21.dp),
+                tint = if (selected) ChimahonPalette.onPrimaryContainer else ChimahonPalette.secondaryText,
+                modifier = Modifier.size(22.dp),
             )
         }
         if (badge != null && badge > 0) {
+            val badgeLabel = if (badge > 99) "99+" else badge.toString()
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .size(17.dp)
+                    .height(17.dp)
+                    .widthIn(min = 17.dp)
                     .clip(CircleShape)
-                    .background(ChimahonPalette.error),
+                    .background(ChimahonPalette.error)
+                    .padding(horizontal = 4.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Label(
-                    text = badge.coerceAtMost(99).toString(),
+                    text = badgeLabel,
                     color = Color.White,
                     size = 8,
                     weight = FontWeight.Bold,
@@ -1781,6 +2252,9 @@ private fun HomeContent(
     feedManageMode: Boolean,
     migrateHelpVisible: Boolean,
     extensionRepoRequestKey: Int,
+    requestedMorePage: MorePage?,
+    onRequestedMorePageConsumed: () -> Unit,
+    moreBackRequestId: Long?,
     onLoadSourcePreview: suspend (Long, ChimahonSourceBrowseMode, String, Int) -> ChimahonSourcePreview,
     onLoadRemoteMangaDetail: suspend (ChimahonRemoteMangaEntry) -> ChimahonRemoteMangaDetail,
     onOpenManga: (Long) -> Unit,
@@ -1792,7 +2266,11 @@ private fun HomeContent(
     onSetMangasFavorite: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
     onCreateCategory: suspend (String) -> Long,
     onDeleteCategory: suspend (Long) -> Unit,
+    onRenameCategory: suspend (Long, String) -> Unit,
+    onSetCategoryHidden: suspend (Long, Boolean) -> Unit,
+    onMoveCategory: suspend (Long, Int) -> Unit,
     onSetMangaCategories: suspend (Long, Set<Long>) -> Unit,
+    onSetMangasCategories: suspend (Set<Long>, Set<Long>) -> ChimahonLibraryBulkActionResult,
     onResetHistoryEntry: suspend (Long) -> Unit,
     onResetHistoryForManga: suspend (Long) -> Unit,
     onClearHistory: suspend () -> Unit,
@@ -1805,6 +2283,7 @@ private fun HomeContent(
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
     onSetMangasChaptersRead: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
+    onEnqueueDownloads: suspend (Collection<Long>) -> ChimahonDownloadQueueData,
     onLoadDownloadSnapshot: suspend () -> ChimahonDownloadSnapshot,
     onLoadDownloadQueue: suspend () -> ChimahonDownloadQueueData,
     onPauseDownloadQueue: suspend () -> ChimahonDownloadQueueData,
@@ -1849,6 +2328,7 @@ private fun HomeContent(
             onOpenReader = onOpenReader,
             onSetMangasFavorite = onSetMangasFavorite,
             onSetMangasChaptersRead = onSetMangasChaptersRead,
+            onSetMangasCategories = onSetMangasCategories,
             onLoadDownloadSnapshot = onLoadDownloadSnapshot,
             onRefresh = onRepoSaved,
             settings = settings.library,
@@ -1861,6 +2341,7 @@ private fun HomeContent(
             onOpenReader = onOpenReader,
             onSetChapterRead = onSetChapterRead,
             onSetChapterBookmark = onSetChapterBookmark,
+            onEnqueueDownloads = onEnqueueDownloads,
             onDismissUpdateIssue = onDismissUpdateIssue,
             onClearUpdateIssues = onClearUpdateIssues,
             onRefresh = onRepoSaved,
@@ -1871,6 +2352,7 @@ private fun HomeContent(
             filtersVisible = homeFiltersVisible,
             onOpenManga = onOpenManga,
             onOpenReader = onOpenReader,
+            onSetMangaFavorite = onSetMangaFavorite,
             onResetHistoryEntry = onResetHistoryEntry,
             onResetHistoryForManga = onResetHistoryForManga,
             onClearHistory = onClearHistory,
@@ -1899,12 +2381,16 @@ private fun HomeContent(
             onInstallExtension = onInstallExtension,
             onUninstallExtension = onUninstallExtension,
             onRepoSaved = onRepoSaved,
+            onOpenExternalUrl = onOpenExternalUrl,
         )
         HomeTab.More -> MoreHome(
             snapshot = snapshot,
             onSelectTab = onSelectTab,
             onCreateCategory = onCreateCategory,
             onDeleteCategory = onDeleteCategory,
+            onRenameCategory = onRenameCategory,
+            onSetCategoryHidden = onSetCategoryHidden,
+            onMoveCategory = onMoveCategory,
             onCategoriesChanged = onRepoSaved,
             onLoadDataMaintenance = onLoadDataMaintenance,
             onClearThumbnailCache = onClearThumbnailCache,
@@ -1936,6 +2422,9 @@ private fun HomeContent(
             onOpenExternalUrl = onOpenExternalUrl,
             onDownloadedOnlyModeChange = onDownloadedOnlyModeChange,
             onIncognitoModeChange = onIncognitoModeChange,
+            requestedPage = requestedMorePage,
+            onRequestedPageConsumed = onRequestedMorePageConsumed,
+            backRequestId = moreBackRequestId,
             onOpenBrowseSection = { section ->
                 onBrowseSectionChange(section)
                 onSelectTab(HomeTab.Browse)
@@ -1954,6 +2443,7 @@ private fun LibraryHome(
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onSetMangasFavorite: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
     onSetMangasChaptersRead: suspend (Set<Long>, Boolean) -> ChimahonLibraryBulkActionResult,
+    onSetMangasCategories: suspend (Set<Long>, Set<Long>) -> ChimahonLibraryBulkActionResult,
     onLoadDownloadSnapshot: suspend () -> ChimahonDownloadSnapshot,
     onRefresh: () -> Unit,
     settings: ChimahonLibrarySettings,
@@ -1972,15 +2462,15 @@ private fun LibraryHome(
         return
     }
 
+    val focusRequester = remember { FocusRequester() }
     var selectedCategoryId by remember { mutableStateOf(ALL_LIBRARY_CATEGORY_ID) }
-    val categories = snapshot.libraryCategoryTabs()
-    val categoryKey = categories.joinToString(separator = ",") { it.id.toString() }
-    LaunchedEffect(categoryKey) {
-        if (categories.none { it.id == selectedCategoryId }) {
-            selectedCategoryId = ALL_LIBRARY_CATEGORY_ID
-        }
-    }
-    var selectedFilter by remember(settings.downloadedFilter, settings.unreadFilter, settings.startedFilter, settings.bookmarkedFilter) {
+    var selectedFilter by remember(
+        settings.downloadedFilter,
+        settings.unreadFilter,
+        settings.startedFilter,
+        settings.bookmarkedFilter,
+        settings.completedFilter,
+    ) {
         mutableStateOf(settings.toInitialLibraryFilter())
     }
     var selectedSort by remember(settings.sort) {
@@ -1992,46 +2482,77 @@ private fun LibraryHome(
     val selectedMangaIds = remember { mutableStateMapOf<Long, Boolean>() }
     var downloadSnapshot by remember { mutableStateOf<ChimahonDownloadSnapshot?>(null) }
     var bulkMessage by remember { mutableStateOf<String?>(null) }
+    var bulkCategoryDialogVisible by remember { mutableStateOf(false) }
+    var bulkCategorySelection by remember { mutableStateOf(setOf(DEFAULT_LIBRARY_CATEGORY_ID)) }
     val scope = rememberCoroutineScope()
-    val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId } ?: categories.first()
+    val categories = snapshot.libraryCategoryTabs()
+    val factsByMangaId = remember(snapshot.chaptersByMangaId, snapshot.history, downloadSnapshot) {
+        library.associate { entry ->
+            entry.id to entry.libraryFacts(snapshot, downloadSnapshot)
+        }
+    }
+    val queryText = query.trim()
+    val categoryCounts = categories.associate { category ->
+        category.id to snapshot.libraryForCategory(category.id).count { entry ->
+            entry.matchesLibrarySearch(queryText, snapshot.sourceName(entry.sourceId))
+        }
+    }
+    val visibleCategories = if (queryText.isBlank() || settings.showEmptyCategoriesSearch) {
+        categories
+    } else {
+        categories.filter { it.id == ALL_LIBRARY_CATEGORY_ID || (categoryCounts[it.id] ?: 0) > 0 }
+    }.ifEmpty { categories.take(1) }
+    val categoryKey = visibleCategories.joinToString(separator = ",") { it.id.toString() }
+    LaunchedEffect(categoryKey) {
+        if (visibleCategories.none { it.id == selectedCategoryId }) {
+            selectedCategoryId = visibleCategories.firstOrNull()?.id ?: ALL_LIBRARY_CATEGORY_ID
+        }
+    }
+    val selectedCategory = visibleCategories.firstOrNull { it.id == selectedCategoryId } ?: visibleCategories.first()
     val categoryLibrary = snapshot.libraryForCategory(selectedCategory.id)
     val selectedLibrary = categoryLibrary
         .filter { entry ->
-            query.isBlank() ||
-                entry.title.contains(query, ignoreCase = true) ||
-                entry.author.orEmpty().contains(query, ignoreCase = true) ||
-                entry.artist.orEmpty().contains(query, ignoreCase = true)
+            entry.matchesLibrarySearch(queryText, snapshot.sourceName(entry.sourceId))
         }
         .filter { entry ->
-            val chapters = snapshot.chaptersByMangaId[entry.id].orEmpty()
-            settings.unreadFilter.matches(chapters.any { !it.read }) &&
-                settings.startedFilter.matches(chapters.any { it.lastPageRead > 0L && !it.read }) &&
-                settings.bookmarkedFilter.matches(chapters.any { it.bookmarked }) &&
-                settings.completedFilter.matches(chapters.isNotEmpty() && chapters.all { it.read })
+            val facts = factsByMangaId.getValue(entry.id)
+            settings.downloadedFilter.matches(facts.downloadedCount > 0) &&
+                settings.unreadFilter.matches(facts.unreadCount > 0) &&
+                settings.startedFilter.matches(facts.started) &&
+                settings.bookmarkedFilter.matches(facts.bookmarked) &&
+                settings.completedFilter.matches(facts.completed)
         }
         .filter { entry ->
-            val chapters = snapshot.chaptersByMangaId[entry.id].orEmpty()
-            when (selectedFilter) {
-                LibraryFilter.All -> true
-                LibraryFilter.Unread -> chapters.any { !it.read }
-                LibraryFilter.Started -> chapters.any { it.lastPageRead > 0L && !it.read }
-                LibraryFilter.Bookmarked -> chapters.any { it.bookmarked }
-            }
+            selectedFilter.matches(factsByMangaId.getValue(entry.id))
         }
         .let { entries ->
             val sorted = when (selectedSort) {
                 LibrarySort.Alphabetical -> entries.sortedBy { it.title.lowercase() }
                 LibrarySort.DateAdded -> entries.sortedByDescending { it.dateAdded }
                 LibrarySort.LastUpdated -> entries.sortedByDescending { it.lastUpdate ?: 0L }
-                LibrarySort.UnreadCount -> entries.sortedByDescending { entry ->
-                    snapshot.chaptersByMangaId[entry.id].orEmpty().count { !it.read }
+                LibrarySort.LastRead -> entries.sortedByDescending { factsByMangaId.getValue(it.id).lastReadAt }
+                LibrarySort.UnreadCount -> entries.sortedByDescending {
+                    factsByMangaId.getValue(it.id).unreadCount
+                }
+                LibrarySort.TotalChapters -> entries.sortedByDescending {
+                    factsByMangaId.getValue(it.id).chapters.size
+                }
+                LibrarySort.LatestChapter -> entries.sortedByDescending {
+                    factsByMangaId.getValue(it.id).latestChapter
+                }
+                LibrarySort.ChapterFetchDate -> entries.sortedByDescending {
+                    factsByMangaId.getValue(it.id).chapterFetchDate
+                }
+                LibrarySort.Source -> entries.sortedWith(
+                    compareBy<ChimahonMangaEntry> { snapshot.sourceName(it.sourceId).lowercase() }
+                        .thenBy { it.title.lowercase() },
+                )
+                LibrarySort.Random -> entries.sortedBy {
+                    ((it.id * 1_103_515_245L) xor it.title.hashCode().toLong()) and Long.MAX_VALUE
                 }
             }
             if (settings.sortAscending) sorted else sorted.asReversed()
         }
-    val categoryCounts = categories.associate { category ->
-        category.id to snapshot.libraryForCategory(category.id).size
-    }
     LaunchedEffect(selectedLibrary.map { it.id }.joinToString()) {
         selectedMangaIds.keys
             .filterNot { mangaId -> selectedLibrary.any { it.id == mangaId } }
@@ -2040,175 +2561,105 @@ private fun LibraryHome(
     LaunchedEffect(library.map { it.id }.joinToString()) {
         downloadSnapshot = runCatching { onLoadDownloadSnapshot() }.getOrNull()
     }
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+    val selectedMangaCount = selectedMangaIds.count { it.value }
+    val unreadVisible = selectedLibrary.sumOf { factsByMangaId.getValue(it.id).unreadCount }
+    val downloadedVisible = selectedLibrary.count { factsByMangaId.getValue(it.id).downloadedCount > 0 }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        if (settings.showCategoryTabs) {
-            LibraryCategoryTabs(
-                categories = categories,
-                selectedCategoryId = selectedCategory.id,
-                categoryCounts = categoryCounts,
-                onSelectCategory = { selectedCategoryId = it },
-            )
-        }
-        if (filtersVisible) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(ChimahonPalette.surface)
-                    .padding(vertical = 8.dp),
-            ) {
-                Label(
-                    "Filter",
-                    ChimahonPalette.secondaryText,
-                    11,
-                    weight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-                FilterChips(
-                    chips = LibraryFilter.entries.map { it.title },
-                    selected = selectedFilter.title,
-                    onSelect = { selected ->
-                        selectedFilter = LibraryFilter.entries.firstOrNull { it.title == selected } ?: LibraryFilter.All
-                    },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                )
-                Label(
-                    "Sort",
-                    ChimahonPalette.secondaryText,
-                    11,
-                    weight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp),
-                )
-                FilterChips(
-                    chips = LibrarySort.entries.map { it.title },
-                    selected = selectedSort.title,
-                    onSelect = { selected ->
-                        selectedSort = LibrarySort.entries.firstOrNull { it.title == selected }
-                            ?: LibrarySort.Alphabetical
-                    },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                )
-                Label(
-                    "Display",
-                    ChimahonPalette.secondaryText,
-                    11,
-                    weight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp),
-                )
-                FilterChips(
-                    chips = LibraryDisplayMode.entries.map { it.title },
-                    selected = displayMode.title,
-                    onSelect = { selected ->
-                        displayMode = LibraryDisplayMode.entries.firstOrNull { it.title == selected }
-                            ?: LibraryDisplayMode.ComfortableGrid
-                        onSettingsChange(
-                            settings.copy(displayMode = displayMode.toSettingsLibraryDisplayMode()),
-                        )
-                    },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                )
-            }
-        }
-        if (selectedLibrary.isNotEmpty()) {
-            MultiSelectionBar(
-                selectedCount = selectedMangaIds.count { it.value },
-                totalCount = selectedLibrary.size,
-                onSelectAll = {
-                    selectedLibrary.forEach { selectedMangaIds[it.id] = true }
-                },
-                onInvert = {
-                    selectedLibrary.forEach { manga ->
-                        selectedMangaIds[manga.id] = selectedMangaIds[manga.id] != true
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when {
+                    event.key == Key.Escape && selectedMangaCount > 0 -> {
+                        selectedMangaIds.clear()
+                        bulkMessage = null
+                        true
                     }
-                },
-                onClear = {
-                    selectedMangaIds.clear()
-                    bulkMessage = null
-                },
-                actions = listOf(
-                    SelectionAction("Favorite", UiIcon.Favorite) {
-                        val selected = selectedMangaIds.filterValues { it }.keys
-                        if (selected.isNotEmpty()) {
-                            scope.launch {
-                                runCatching { onSetMangasFavorite(selected, true) }
-                                    .onSuccess { bulkMessage = it.libraryBulkSummary("favorited") }
-                                    .onFailure { bulkMessage = it.message ?: "Could not update favorites" }
-                                selectedMangaIds.clear()
-                                onRefresh()
-                            }
-                        }
-                    },
-                    SelectionAction("Unfavorite", UiIcon.FavoriteBorder) {
-                        val selected = selectedMangaIds.filterValues { it }.keys
-                        if (selected.isNotEmpty()) {
-                            scope.launch {
-                                runCatching { onSetMangasFavorite(selected, false) }
-                                    .onSuccess { bulkMessage = it.libraryBulkSummary("unfavorited") }
-                                    .onFailure { bulkMessage = it.message ?: "Could not update favorites" }
-                                selectedMangaIds.clear()
-                                onRefresh()
-                            }
-                        }
-                    },
-                    SelectionAction("Read", UiIcon.DoneAll) {
-                        val selected = selectedMangaIds.filterValues { it }.keys
-                        if (selected.isNotEmpty()) {
-                            scope.launch {
-                                runCatching { onSetMangasChaptersRead(selected, true) }
-                                    .onSuccess { bulkMessage = it.libraryBulkSummary("marked read") }
-                                    .onFailure { bulkMessage = it.message ?: "Could not mark chapters read" }
-                                selectedMangaIds.clear()
-                                onRefresh()
-                            }
-                        }
-                    },
-                    SelectionAction("Unread", UiIcon.Circle) {
-                        val selected = selectedMangaIds.filterValues { it }.keys
-                        if (selected.isNotEmpty()) {
-                            scope.launch {
-                                runCatching { onSetMangasChaptersRead(selected, false) }
-                                    .onSuccess { bulkMessage = it.libraryBulkSummary("marked unread") }
-                                    .onFailure { bulkMessage = it.message ?: "Could not mark chapters unread" }
-                                selectedMangaIds.clear()
-                                onRefresh()
-                            }
-                        }
-                    },
-                ),
-            )
-        }
-        bulkMessage?.let { message ->
-            ExtensionStatusRow(
-                title = if (message.startsWith("Could not")) "Library action failed" else "Library action complete",
-                subtitle = message,
-                error = message.startsWith("Could not"),
-            )
-        }
-        if (selectedLibrary.isEmpty()) {
-            EmptyListPanel(
-                marker = "L",
-                title = "No matching manga",
-                detail = "Try another category, filter, or search term.",
-            )
-        } else if (displayMode == LibraryDisplayMode.List) {
+                    event.key == Key.A && (event.isCtrlPressed || event.isMetaPressed) -> {
+                        selectedLibrary.forEach { selectedMangaIds[it.id] = true }
+                        true
+                    }
+                    else -> false
+                }
+            },
+    ) {
+        if (displayMode == LibraryDisplayMode.List) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = 4.dp),
+                contentPadding = PaddingValues(
+                    bottom = if (selectedMangaCount > 0) 112.dp else 12.dp,
+                ),
             ) {
-                items(selectedLibrary, key = { it.id }) { entry ->
-                    val chapters = snapshot.chaptersByMangaId[entry.id].orEmpty()
-                    val continueChapter = chapters.nextReadableChapter()
-                    val downloadedCount = chapters.count { chapter ->
-                        downloadSnapshot?.statusForChapter(chapter.id)?.status == ChimahonDownloadState.Downloaded
+                item {
+                    LibraryHeaderContent(
+                        settings = settings,
+                        showCategoryTabs = settings.showCategoryTabs,
+                        categories = visibleCategories,
+                        selectedCategory = selectedCategory,
+                        categoryCounts = categoryCounts,
+                        categoryLibraryCount = categoryLibrary.size,
+                        selectedLibraryCount = selectedLibrary.size,
+                        unreadVisible = unreadVisible,
+                        downloadedVisible = downloadedVisible,
+                        query = queryText,
+                        filtersVisible = filtersVisible,
+                        selectedFilter = selectedFilter,
+                        selectedSort = selectedSort,
+                        displayMode = displayMode,
+                        onSelectCategory = { selectedCategoryId = it },
+                        onFilterChange = { selectedFilter = it },
+                        onSortChange = { selectedSort = it },
+                        onDisplayModeChange = {
+                            displayMode = it
+                            onSettingsChange(settings.copy(displayMode = it.toSettingsLibraryDisplayMode()))
+                        },
+                        onToggleSortDirection = {
+                            onSettingsChange(settings.copy(sortAscending = !settings.sortAscending))
+                        },
+                    )
+                }
+                bulkMessage?.let { message ->
+                    item {
+                        ExtensionStatusRow(
+                            title = if (message.startsWith("Could not")) {
+                                "Library action failed"
+                            } else {
+                                "Library action complete"
+                            },
+                            subtitle = message,
+                            error = message.startsWith("Could not"),
+                        )
                     }
+                }
+                if (selectedLibrary.isEmpty()) {
+                    item {
+                        LibraryEmptyState(
+                            query = queryText,
+                            hasActiveFilters = selectedFilter != LibraryFilter.All ||
+                                settings.libraryActiveFilterLabels().isNotEmpty(),
+                        )
+                    }
+                }
+                items(selectedLibrary, key = { it.id }) { entry ->
+                    val facts = factsByMangaId.getValue(entry.id)
+                    val chapters = facts.chapters
+                    val continueChapter = chapters.nextReadableChapter()
                     LibraryMangaListItem(
                         entry = entry,
                         chapterCount = chapters.size,
-                        unreadCount = chapters.count { !it.read }.takeIf { settings.showUnreadBadges } ?: 0,
-                        downloadedCount = downloadedCount.takeIf { settings.showDownloadedBadges } ?: 0,
+                        unreadCount = facts.unreadCount.takeIf { settings.showUnreadBadges } ?: 0,
+                        downloadedCount = facts.downloadedCount.takeIf { settings.showDownloadedBadges } ?: 0,
                         sourceLanguage = snapshot.sourceLanguage(entry.sourceId)
                             .takeIf { settings.showLanguageBadges },
+                        favorite = entry.favorite,
                         selected = selectedMangaIds[entry.id] == true,
+                        selectionActive = selectedMangaCount > 0,
                         onToggleSelected = {
                             selectedMangaIds[entry.id] = selectedMangaIds[entry.id] != true
                             bulkMessage = null
@@ -2236,24 +2687,79 @@ private fun LibraryHome(
                     )
                 },
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(
+                    start = 10.dp,
+                    top = 0.dp,
+                    end = 10.dp,
+                    bottom = if (selectedMangaCount > 0) 116.dp else 12.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(selectedLibrary, key = { it.id }) { entry ->
-                    val chapters = snapshot.chaptersByMangaId[entry.id].orEmpty()
-                    val continueChapter = chapters.nextReadableChapter()
-                    val downloadedCount = chapters.count { chapter ->
-                        downloadSnapshot?.statusForChapter(chapter.id)?.status == ChimahonDownloadState.Downloaded
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    LibraryHeaderContent(
+                        settings = settings,
+                        showCategoryTabs = settings.showCategoryTabs,
+                        categories = visibleCategories,
+                        selectedCategory = selectedCategory,
+                        categoryCounts = categoryCounts,
+                        categoryLibraryCount = categoryLibrary.size,
+                        selectedLibraryCount = selectedLibrary.size,
+                        unreadVisible = unreadVisible,
+                        downloadedVisible = downloadedVisible,
+                        query = queryText,
+                        filtersVisible = filtersVisible,
+                        selectedFilter = selectedFilter,
+                        selectedSort = selectedSort,
+                        displayMode = displayMode,
+                        onSelectCategory = { selectedCategoryId = it },
+                        onFilterChange = { selectedFilter = it },
+                        onSortChange = { selectedSort = it },
+                        onDisplayModeChange = {
+                            displayMode = it
+                            onSettingsChange(settings.copy(displayMode = it.toSettingsLibraryDisplayMode()))
+                        },
+                        onToggleSortDirection = {
+                            onSettingsChange(settings.copy(sortAscending = !settings.sortAscending))
+                        },
+                    )
+                }
+                bulkMessage?.let { message ->
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        ExtensionStatusRow(
+                            title = if (message.startsWith("Could not")) {
+                                "Library action failed"
+                            } else {
+                                "Library action complete"
+                            },
+                            subtitle = message,
+                            error = message.startsWith("Could not"),
+                        )
                     }
+                }
+                if (selectedLibrary.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        LibraryEmptyState(
+                            query = queryText,
+                            hasActiveFilters = selectedFilter != LibraryFilter.All ||
+                                settings.libraryActiveFilterLabels().isNotEmpty(),
+                        )
+                    }
+                }
+                items(selectedLibrary, key = { it.id }) { entry ->
+                    val facts = factsByMangaId.getValue(entry.id)
+                    val chapters = facts.chapters
+                    val continueChapter = chapters.nextReadableChapter()
                     LibraryMangaCard(
                         entry = entry,
                         chapterCount = chapters.size,
-                        unreadCount = chapters.count { !it.read }.takeIf { settings.showUnreadBadges } ?: 0,
-                        downloadedCount = downloadedCount.takeIf { settings.showDownloadedBadges } ?: 0,
+                        unreadCount = facts.unreadCount.takeIf { settings.showUnreadBadges } ?: 0,
+                        downloadedCount = facts.downloadedCount.takeIf { settings.showDownloadedBadges } ?: 0,
                         sourceLanguage = snapshot.sourceLanguage(entry.sourceId)
                             .takeIf { settings.showLanguageBadges },
                         selected = selectedMangaIds[entry.id] == true,
+                        selectionActive = selectedMangaCount > 0,
+                        coverAspectRatio = settings.coverAspectRatio.libraryCoverAspectRatio(),
                         onToggleSelected = {
                             selectedMangaIds[entry.id] = selectedMangaIds[entry.id] != true
                             bulkMessage = null
@@ -2272,9 +2778,472 @@ private fun LibraryHome(
                 }
             }
         }
+        LibrarySelectionBottomActionBar(
+            selectedCount = selectedMangaCount,
+            totalCount = selectedLibrary.size,
+            onSelectAll = {
+                selectedLibrary.forEach { selectedMangaIds[it.id] = true }
+            },
+            onInvert = {
+                selectedLibrary.forEach { manga ->
+                    selectedMangaIds[manga.id] = selectedMangaIds[manga.id] != true
+                }
+            },
+            onClear = {
+                selectedMangaIds.clear()
+                bulkMessage = null
+            },
+            actions = listOf(
+                SelectionAction("Categories", UiIcon.Tag) {
+                    val selected = selectedMangaIds.filterValues { it }.keys.toSet()
+                    if (selected.isNotEmpty()) {
+                        val assignedSets = selected.map { mangaId ->
+                            snapshot.libraryCategoryMemberships[mangaId]
+                                .orEmpty()
+                                .ifEmpty { listOf(DEFAULT_LIBRARY_CATEGORY_ID) }
+                                .toSet()
+                        }
+                        bulkCategorySelection = assignedSets
+                            .reduceOrNull { common, next -> common.intersect(next) }
+                            .orEmpty()
+                            .ifEmpty { setOf(DEFAULT_LIBRARY_CATEGORY_ID) }
+                        bulkCategoryDialogVisible = true
+                    }
+                },
+                SelectionAction("Favorite", UiIcon.Favorite) {
+                    val selected = selectedMangaIds.filterValues { it }.keys.toSet()
+                    if (selected.isNotEmpty()) {
+                        scope.launch {
+                            runCatching { onSetMangasFavorite(selected, true) }
+                                .onSuccess { bulkMessage = it.libraryBulkSummary("favorited") }
+                                .onFailure { bulkMessage = it.message ?: "Could not update favorites" }
+                            selectedMangaIds.clear()
+                            onRefresh()
+                        }
+                    }
+                },
+                SelectionAction("Unfavorite", UiIcon.FavoriteBorder) {
+                    val selected = selectedMangaIds.filterValues { it }.keys.toSet()
+                    if (selected.isNotEmpty()) {
+                        scope.launch {
+                            runCatching { onSetMangasFavorite(selected, false) }
+                                .onSuccess { bulkMessage = it.libraryBulkSummary("unfavorited") }
+                                .onFailure { bulkMessage = it.message ?: "Could not update favorites" }
+                            selectedMangaIds.clear()
+                            onRefresh()
+                        }
+                    }
+                },
+                SelectionAction("Read", UiIcon.DoneAll) {
+                    val selected = selectedMangaIds.filterValues { it }.keys.toSet()
+                    if (selected.isNotEmpty()) {
+                        scope.launch {
+                            runCatching { onSetMangasChaptersRead(selected, true) }
+                                .onSuccess { bulkMessage = it.libraryBulkSummary("marked read") }
+                                .onFailure { bulkMessage = it.message ?: "Could not mark chapters read" }
+                            selectedMangaIds.clear()
+                            onRefresh()
+                        }
+                    }
+                },
+                SelectionAction("Unread", UiIcon.Circle) {
+                    val selected = selectedMangaIds.filterValues { it }.keys.toSet()
+                    if (selected.isNotEmpty()) {
+                        scope.launch {
+                            runCatching { onSetMangasChaptersRead(selected, false) }
+                                .onSuccess { bulkMessage = it.libraryBulkSummary("marked unread") }
+                                .onFailure { bulkMessage = it.message ?: "Could not mark chapters unread" }
+                            selectedMangaIds.clear()
+                            onRefresh()
+                        }
+                    }
+                },
+            ),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+        if (bulkCategoryDialogVisible) {
+            LibraryBulkCategoryDialog(
+                selectedCount = selectedMangaCount,
+                categories = categories.filterNot { it.id == ALL_LIBRARY_CATEGORY_ID },
+                selectedCategoryIds = bulkCategorySelection,
+                onToggleCategory = { categoryId ->
+                    bulkCategorySelection = toggledCategoryIds(bulkCategorySelection, categoryId)
+                },
+                onDismiss = { bulkCategoryDialogVisible = false },
+                onApply = {
+                    val selected = selectedMangaIds.filterValues { it }.keys.toSet()
+                    if (selected.isNotEmpty()) {
+                        scope.launch {
+                            runCatching { onSetMangasCategories(selected, bulkCategorySelection) }
+                                .onSuccess { bulkMessage = it.libraryBulkSummary("recategorized") }
+                                .onFailure { bulkMessage = it.message ?: "Could not update categories" }
+                            selectedMangaIds.clear()
+                            bulkCategoryDialogVisible = false
+                            onRefresh()
+                        }
+                    } else {
+                        bulkCategoryDialogVisible = false
+                    }
+                },
+            )
+        }
     }
 }
 
+@Composable
+private fun LibraryBulkCategoryDialog(
+    selectedCount: Int,
+    categories: List<ChimahonLibraryCategory>,
+    selectedCategoryIds: Set<Long>,
+    onToggleCategory: (Long) -> Unit,
+    onDismiss: () -> Unit,
+    onApply: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 520.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(ChimahonPalette.surface)
+                .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(28.dp))
+                .padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 16.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 12.dp)
+                    .width(38.dp)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(ChimahonPalette.divider),
+            )
+            Label("Set categories", ChimahonPalette.onSurface, 18, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(
+                "$selectedCount selected manga will use the checked categories.",
+                ChimahonPalette.secondaryText,
+                12,
+                lineHeight = 18,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp)
+                    .padding(top = 14.dp),
+            ) {
+                items(categories, key = { it.id }) { category ->
+                    LibraryBulkCategoryOption(
+                        category = category,
+                        selected = category.id in selectedCategoryIds,
+                        onToggle = { onToggleCategory(category.id) },
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButtonLike("Cancel", onClick = onDismiss)
+                TextButtonLike(
+                    "Apply",
+                    onClick = onApply,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryBulkCategoryOption(
+    category: ChimahonLibraryCategory,
+    selected: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.52f) else Color.Transparent)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconGlyph(
+            icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+            contentDescription = category.displayName(),
+            tint = if (selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            modifier = Modifier.size(22.dp),
+        )
+        Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+            Label(
+                category.displayName(),
+                ChimahonPalette.onSurface,
+                13,
+                weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+            )
+            Label(
+                if (category.id == DEFAULT_LIBRARY_CATEGORY_ID) {
+                    "Uncategorized/default library tab"
+                } else if (category.hidden) {
+                    "Hidden category"
+                } else {
+                    "Visible category"
+                },
+                ChimahonPalette.secondaryText,
+                10,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryHeaderContent(
+    settings: ChimahonLibrarySettings,
+    showCategoryTabs: Boolean,
+    categories: List<ChimahonLibraryCategory>,
+    selectedCategory: ChimahonLibraryCategory,
+    categoryCounts: Map<Long, Int>,
+    categoryLibraryCount: Int,
+    selectedLibraryCount: Int,
+    unreadVisible: Int,
+    downloadedVisible: Int,
+    query: String,
+    filtersVisible: Boolean,
+    selectedFilter: LibraryFilter,
+    selectedSort: LibrarySort,
+    displayMode: LibraryDisplayMode,
+    onSelectCategory: (Long) -> Unit,
+    onFilterChange: (LibraryFilter) -> Unit,
+    onSortChange: (LibrarySort) -> Unit,
+    onDisplayModeChange: (LibraryDisplayMode) -> Unit,
+    onToggleSortDirection: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (showCategoryTabs) {
+            LibraryCategoryTabs(
+                categories = categories,
+                selectedCategoryId = selectedCategory.id,
+                categoryCounts = categoryCounts,
+                onSelectCategory = onSelectCategory,
+            )
+        }
+        LibraryResultSummaryRow(
+            category = selectedCategory,
+            visibleCount = selectedLibraryCount,
+            categoryCount = categoryLibraryCount,
+            unreadCount = unreadVisible,
+            downloadedCount = downloadedVisible,
+            query = query,
+            activeFilters = settings.libraryActiveFilterLabels(),
+        )
+        if (filtersVisible) {
+            LibraryFilterSortPanel(
+                selectedFilter = selectedFilter,
+                selectedSort = selectedSort,
+                displayMode = displayMode,
+                sortAscending = settings.sortAscending,
+                onFilterChange = onFilterChange,
+                onSortChange = onSortChange,
+                onDisplayModeChange = onDisplayModeChange,
+                onToggleSortDirection = onToggleSortDirection,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryResultSummaryRow(
+    category: ChimahonLibraryCategory,
+    visibleCount: Int,
+    categoryCount: Int,
+    unreadCount: Int,
+    downloadedCount: Int,
+    query: String,
+    activeFilters: List<String>,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .border(width = 1.dp, color = ChimahonPalette.divider.copy(alpha = 0.55f))
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Label(category.displayName(), ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                Label(
+                    text = buildString {
+                        append(visibleCount).append('/').append(categoryCount).append(" manga")
+                        if (unreadCount > 0) append(" - ").append(unreadCount).append(" unread")
+                        if (downloadedCount > 0) append(" - ").append(downloadedCount).append(" downloaded")
+                    },
+                    color = ChimahonPalette.secondaryText,
+                    size = 11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            if (downloadedCount > 0) {
+                LibraryInlineBadge(downloadedCount.toString(), UiIcon.Download)
+            }
+            if (unreadCount > 0) {
+                LibraryInlineBadge(
+                    label = unreadCount.toString(),
+                    icon = UiIcon.Chapters,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
+            if (query.isNotBlank()) {
+                LibraryInlineBadge("Search", UiIcon.Search, modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+        if (activeFilters.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier.padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(activeFilters, key = { it }) { filter ->
+                    LibraryInlineBadge(filter, UiIcon.Filter)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryEmptyState(
+    query: String,
+    hasActiveFilters: Boolean,
+) {
+    val title = when {
+        query.isNotBlank() -> "No search results"
+        hasActiveFilters -> "No manga match the filters"
+        else -> "No manga in this category"
+    }
+    val detail = when {
+        query.isNotBlank() -> "Try a shorter title, author, genre, or source name."
+        hasActiveFilters -> "Clear filters or switch to another category."
+        else -> "Add manga to this category from the Library selection menu."
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 260.dp)
+            .padding(horizontal = 20.dp, vertical = 22.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(54.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(ChimahonPalette.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = if (query.isNotBlank()) UiIcon.Search else UiIcon.Library,
+                contentDescription = title,
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(26.dp),
+            )
+        }
+        Label(
+            title,
+            ChimahonPalette.onSurface,
+            16,
+            weight = FontWeight.SemiBold,
+            maxLines = 2,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Label(
+            detail,
+            ChimahonPalette.secondaryText,
+            12,
+            lineHeight = 18,
+            maxLines = 3,
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .widthIn(max = 360.dp),
+        )
+    }
+}
+
+@Composable
+private fun LibraryFilterSortPanel(
+    selectedFilter: LibraryFilter,
+    selectedSort: LibrarySort,
+    displayMode: LibraryDisplayMode,
+    sortAscending: Boolean,
+    onFilterChange: (LibraryFilter) -> Unit,
+    onSortChange: (LibrarySort) -> Unit,
+    onDisplayModeChange: (LibraryDisplayMode) -> Unit,
+    onToggleSortDirection: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.background)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(ChimahonPalette.surface)
+                .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(14.dp))
+                .padding(vertical = 10.dp),
+        ) {
+            FilterPanelLabel("Filter")
+            ScrollableFilterChips(
+                chips = LibraryFilter.entries.map { it.title },
+                selected = selectedFilter.title,
+                onSelect = { selected ->
+                    onFilterChange(LibraryFilter.entries.firstOrNull { it.title == selected } ?: LibraryFilter.All)
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, top = 10.dp, end = 12.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilterPanelLabel("Sort", modifier = Modifier.weight(1f))
+                TextButtonLike(if (sortAscending) "Ascending" else "Descending", onClick = onToggleSortDirection)
+            }
+            ScrollableFilterChips(
+                chips = LibrarySort.entries.map { it.title },
+                selected = selectedSort.title,
+                onSelect = { selected ->
+                    onSortChange(LibrarySort.entries.firstOrNull { it.title == selected } ?: LibrarySort.Alphabetical)
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+            FilterPanelLabel("Display", modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp))
+            ScrollableFilterChips(
+                chips = LibraryDisplayMode.entries.map { it.title },
+                selected = displayMode.title,
+                onSelect = { selected ->
+                    onDisplayModeChange(
+                        LibraryDisplayMode.entries.firstOrNull { it.title == selected }
+                            ?: LibraryDisplayMode.ComfortableGrid,
+                    )
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryMangaListItem(
     entry: ChimahonMangaEntry,
@@ -2282,92 +3251,181 @@ private fun LibraryMangaListItem(
     unreadCount: Int,
     downloadedCount: Int,
     sourceLanguage: String?,
+    favorite: Boolean,
     selected: Boolean,
+    selectionActive: Boolean,
     onToggleSelected: () -> Unit,
     onClick: () -> Unit,
     onContinue: (() -> Unit)?,
 ) {
+    val contentColor = if (selected) ChimahonPalette.onPrimaryContainer else ChimahonPalette.onSurface
+    val selectedContainer = ChimahonPalette.primaryContainer.copy(alpha = 0.78f)
+    val subtitle = listOfNotNull(
+        entry.author ?: entry.artist,
+        chapterCount.takeIf { it > 0 }?.let { "$it chapters" },
+        entry.status.takeIf { it.isNotBlank() },
+    ).joinToString("  \u00b7  ")
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(92.dp)
-            .background(ChimahonPalette.surface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .heightIn(min = 72.dp)
+            .background(if (selected) selectedContainer else ChimahonPalette.surface)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onToggleSelected,
+            )
+            .padding(start = 12.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MangaCoverTile(
-            manga = entry,
-            showStatus = false,
-            showLibraryBadge = false,
-            modifier = Modifier
-                .width(52.dp)
-                .fillMaxHeight(),
-        )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 14.dp),
-        ) {
-            Label(entry.title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 2)
-            Label(
-                entry.author ?: entry.artist ?: entry.status,
-                ChimahonPalette.secondaryText,
-                11,
-                maxLines = 1,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            Label(
-                "$chapterCount chapters",
-                ChimahonPalette.secondaryText,
-                10,
-                maxLines = 1,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-            if (downloadedCount > 0 || !sourceLanguage.isNullOrBlank()) {
-                Row(
-                    modifier = Modifier.padding(top = 5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (downloadedCount > 0) {
-                        LibraryInlineBadge("$downloadedCount downloaded", UiIcon.Download)
-                    }
-                    sourceLanguage?.takeIf { it.isNotBlank() }?.let {
-                        LibraryInlineBadge(it, UiIcon.Web)
-                    }
-                }
-            }
-        }
-        if (unreadCount > 0) {
-            Box(
+        Box {
+            MangaCoverTile(
+                manga = entry,
+                showStatus = false,
+                showLibraryBadge = false,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(ChimahonPalette.primaryContainer)
-                    .padding(horizontal = 9.dp, vertical = 5.dp),
-            ) {
-                Label(
-                    unreadCount.coerceAtMost(999).toString(),
-                    ChimahonPalette.primary,
-                    11,
-                    weight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    .width(44.dp)
+                    .height(62.dp),
+            )
+            if (selected) {
+                LibrarySelectedCoverOverlay(
+                    modifier = Modifier
+                        .width(44.dp)
+                        .height(62.dp),
                 )
             }
         }
-        ChapterQuickAction(
-            icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
-            contentDescription = if (selected) "Deselect manga" else "Select manga",
-            active = selected,
-            onClick = onToggleSelected,
-        )
-        onContinue?.let {
-            ChapterQuickAction(
-                icon = UiIcon.Play,
-                contentDescription = "Continue reading",
-                active = false,
-                onClick = it,
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp, end = 8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (unreadCount > 0 && !selected) {
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 7.dp)
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(ChimahonPalette.primary),
+                    )
+                }
+                Label(
+                    entry.title,
+                    contentColor,
+                    13,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Label(
+                subtitle.ifBlank { "Unknown source" },
+                if (selected) ChimahonPalette.onPrimaryContainer else ChimahonPalette.secondaryText,
+                11,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 3.dp),
             )
+        }
+        LibraryBadgeGroup(
+            unreadCount = unreadCount,
+            downloadedCount = downloadedCount,
+            sourceLanguage = sourceLanguage,
+            favorite = favorite,
+        )
+        if (selectionActive) {
+            ChapterQuickAction(
+                icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+                contentDescription = if (selected) "Deselect manga" else "Select manga",
+                active = selected,
+                onClick = onToggleSelected,
+            )
+        }
+        if (!selectionActive) {
+            onContinue?.let {
+                ChapterQuickAction(
+                    icon = UiIcon.Play,
+                    contentDescription = "Continue reading",
+                    active = false,
+                    onClick = it,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryBadgeGroup(
+    unreadCount: Int,
+    downloadedCount: Int,
+    sourceLanguage: String?,
+    favorite: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (downloadedCount > 0) {
+            LibraryBadgeChip(
+                label = downloadedCount.coerceAtMost(999).toString(),
+                icon = UiIcon.Download,
+                containerColor = ChimahonPalette.surfaceVariant,
+                contentColor = ChimahonPalette.primary,
+            )
+        }
+        if (unreadCount > 0) {
+            LibraryBadgeChip(
+                label = unreadCount.coerceAtMost(999).toString(),
+                containerColor = ChimahonPalette.primaryContainer,
+                contentColor = ChimahonPalette.primary,
+            )
+        }
+        if (favorite) {
+            LibraryBadgeChip(
+                label = "",
+                icon = UiIcon.Favorite,
+                containerColor = ChimahonPalette.surfaceVariant,
+                contentColor = ChimahonPalette.primary,
+            )
+        }
+        sourceLanguage?.takeIf { it.isNotBlank() }?.let {
+            LibraryBadgeChip(
+                label = it.uppercase(),
+                icon = UiIcon.Web,
+                containerColor = ChimahonPalette.surfaceVariant,
+                contentColor = ChimahonPalette.secondaryText,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryBadgeChip(
+    label: String,
+    icon: UiIcon? = null,
+    containerColor: Color,
+    contentColor: Color,
+) {
+    Row(
+        modifier = Modifier
+            .height(22.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(containerColor)
+            .padding(horizontal = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = label.ifBlank { "Badge" },
+                tint = contentColor,
+                modifier = Modifier.size(11.dp),
+            )
+        }
+        if (label.isNotBlank()) {
+            Label(label, contentColor, 9, weight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
@@ -2405,9 +3463,10 @@ private fun LibrarySummaryRow(
 private fun LibraryInlineBadge(
     label: String,
     icon: UiIcon,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(10.dp))
             .background(ChimahonPalette.surfaceVariant)
             .padding(horizontal = 6.dp, vertical = 3.dp),
@@ -2474,7 +3533,8 @@ private fun LibraryCategoryTabs(
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, ChimahonPalette.divider),
+            .background(ChimahonPalette.surface)
+            .border(width = 1.dp, color = ChimahonPalette.divider.copy(alpha = 0.55f)),
         contentPadding = PaddingValues(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -2482,16 +3542,23 @@ private fun LibraryCategoryTabs(
             val isSelected = category.id == selectedCategoryId
             Column(
                 modifier = Modifier
-                    .clickable { onSelectCategory(category.id) }
-                    .padding(horizontal = 12.dp),
+                    .height(46.dp)
+                    .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Tab
+                        this.selected = isSelected
+                        contentDescription = category.displayName()
+                    }
+                    .clickable(role = Role.Tab) { onSelectCategory(category.id) }
+                    .padding(horizontal = 9.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(
                     modifier = Modifier
-                        .height(46.dp)
-                        .padding(horizontal = 2.dp),
+                        .weight(1f)
+                        .padding(horizontal = 1.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Label(
                         text = category.displayName(),
@@ -2500,24 +3567,23 @@ private fun LibraryCategoryTabs(
                         weight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = 1,
                     )
-                    Box(
+                    Label(
+                        text = (categoryCounts[category.id] ?: 0).toString(),
+                        color = if (isSelected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                        size = 10,
+                        weight = FontWeight.SemiBold,
+                        maxLines = 1,
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
-                            .background(ChimahonPalette.surfaceVariant)
+                            .background(if (isSelected) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant)
                             .padding(horizontal = 6.dp, vertical = 2.dp),
-                    ) {
-                        Label(
-                            text = (categoryCounts[category.id] ?: 0).toString(),
-                            color = ChimahonPalette.secondaryText,
-                            size = 10,
-                            maxLines = 1,
-                        )
-                    }
+                    )
                 }
                 Box(
                     modifier = Modifier
-                        .height(3.dp)
+                        .height(4.dp)
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
                         .background(if (isSelected) ChimahonPalette.primary else Color.Transparent),
                 )
             }
@@ -2525,6 +3591,7 @@ private fun LibraryCategoryTabs(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryMangaCard(
     entry: ChimahonMangaEntry,
@@ -2533,58 +3600,149 @@ private fun LibraryMangaCard(
     downloadedCount: Int,
     sourceLanguage: String?,
     selected: Boolean,
+    selectionActive: Boolean,
+    coverAspectRatio: Float,
     onToggleSelected: () -> Unit,
     onClick: () -> Unit,
     onContinue: (() -> Unit)?,
 ) {
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onToggleSelected,
+            )
+            .padding(2.dp),
     ) {
-        MangaCoverTile(
-            manga = entry,
-            topStartLabels = listOfNotNull(
-                unreadCount.takeIf { it > 0 }?.let { "$it unread" },
-                downloadedCount.takeIf { it > 0 }?.let { "$it down" },
-                sourceLanguage?.takeIf { it.isNotBlank() },
-            ),
-            showStatus = false,
-            showLibraryBadge = selected,
-            bottomEndAction = onContinue,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(0.68f),
-        )
+        Box {
+            MangaCoverTile(
+                manga = entry,
+                topStartBadges = listOfNotNull(
+                    unreadCount.takeIf { it > 0 }?.let {
+                        CoverBadgeSpec(it.coerceAtMost(999).toString(), ChimahonPalette.primary, Color.White)
+                    },
+                    downloadedCount.takeIf { it > 0 }?.let {
+                        CoverBadgeSpec(
+                            it.coerceAtMost(999).toString(),
+                            Color.Black.copy(alpha = 0.56f),
+                            Color.White,
+                            UiIcon.Download,
+                        )
+                    },
+                ),
+                topEndBadges = listOfNotNull(
+                    entry.favorite.takeIf { it }?.let {
+                        CoverBadgeSpec("", Color.Black.copy(alpha = 0.56f), Color.White, UiIcon.Favorite)
+                    },
+                    sourceLanguage?.takeIf { it.isNotBlank() }?.let {
+                        CoverBadgeSpec(it.uppercase(), Color.Black.copy(alpha = 0.50f), Color.White)
+                    },
+                ),
+                showStatus = false,
+                showLibraryBadge = false,
+                bottomEndAction = onContinue.takeUnless { selectionActive },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(coverAspectRatio)
+                    .border(
+                        width = if (selected) 3.dp else 1.dp,
+                        color = when {
+                            selected -> ChimahonPalette.primary
+                            selectionActive -> ChimahonPalette.divider
+                            else -> Color.Black.copy(alpha = 0.18f)
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                    ),
+            )
+            if (selected || selectionActive) {
+                LibraryGridSelectionOverlay(
+                    selected = selected,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(coverAspectRatio),
+                )
+            }
+        }
         Row(
-            modifier = Modifier.padding(top = 7.dp),
+            modifier = Modifier.padding(top = 6.dp, start = 1.dp, end = 1.dp),
             verticalAlignment = Alignment.Top,
         ) {
             Label(
                 text = entry.title,
-                color = ChimahonPalette.onSurface,
-                size = 13,
+                color = if (selected) ChimahonPalette.primary else ChimahonPalette.onSurface,
+                size = 12,
                 weight = FontWeight.SemiBold,
                 maxLines = 2,
                 modifier = Modifier.weight(1f),
-            )
-            ChapterQuickAction(
-                icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
-                contentDescription = if (selected) "Deselect manga" else "Select manga",
-                active = selected,
-                onClick = onToggleSelected,
             )
         }
         Label(
             text = if (chapterCount > 0) "$chapterCount chapters" else entry.author ?: "Unknown author",
             color = ChimahonPalette.secondaryText,
-            size = 11,
+            size = 10,
             maxLines = 1,
-            modifier = Modifier.padding(top = 2.dp),
+            modifier = Modifier.padding(start = 1.dp, top = 2.dp, end = 1.dp),
         )
     }
 }
 
+@Composable
+private fun LibrarySelectedCoverOverlay(
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(ChimahonPalette.primary.copy(alpha = 0.22f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = UiIcon.CheckCircle,
+                contentDescription = "Selected",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryGridSelectionOverlay(
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (selected) ChimahonPalette.primary.copy(alpha = 0.24f) else Color.Transparent)
+            .padding(8.dp),
+        contentAlignment = Alignment.TopEnd,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(if (selected) ChimahonPalette.primary else Color.Black.copy(alpha = 0.52f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+                contentDescription = if (selected) "Selected" else "Select manga",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun UpdatesHome(
     snapshot: ChimahonSnapshot,
@@ -2593,72 +3751,69 @@ private fun UpdatesHome(
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
+    onEnqueueDownloads: suspend (Collection<Long>) -> ChimahonDownloadQueueData,
     onDismissUpdateIssue: suspend (Long) -> Unit,
     onClearUpdateIssues: suspend () -> Unit,
     onRefresh: () -> Unit,
 ) {
     var selectedFilter by remember { mutableStateOf(UpdatesFilter.All) }
+    var selectedSort by remember { mutableStateOf(UpdatesSort.Newest) }
     val selectedChapterIds = remember { mutableStateMapOf<Long, Boolean>() }
     val scope = rememberCoroutineScope()
-    val updates = snapshot.updates.filter { update ->
-        when (selectedFilter) {
-            UpdatesFilter.All -> true
-            UpdatesFilter.Unread -> !update.read
-            UpdatesFilter.Bookmarked -> update.bookmarked
+    val updates = snapshot.updates
+        .filter { update ->
+            when (selectedFilter) {
+                UpdatesFilter.All -> true
+                UpdatesFilter.Unread -> !update.read
+                UpdatesFilter.Started -> update.lastPageRead > 0L && !update.read
+                UpdatesFilter.Bookmarked -> update.bookmarked
+            }
         }
-    }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 16.dp),
-    ) {
-        if (filtersVisible) {
-            item {
-                FilterChips(
-                    chips = UpdatesFilter.entries.map { it.title },
-                    selected = selectedFilter.title,
-                    onSelect = { title ->
-                        selectedFilter = UpdatesFilter.entries.firstOrNull { it.title == title } ?: UpdatesFilter.All
-                    },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        .let { entries ->
+            when (selectedSort) {
+                UpdatesSort.Newest -> entries.sortedWith(
+                    compareByDescending<ChimahonRecentUpdateEntry> { it.dateFetch }
+                        .thenBy { it.mangaTitle.lowercase() }
+                        .thenBy { it.chapterName.lowercase() },
+                )
+                UpdatesSort.Oldest -> entries.sortedWith(
+                    compareBy<ChimahonRecentUpdateEntry> { it.dateFetch }
+                        .thenBy { it.mangaTitle.lowercase() }
+                        .thenBy { it.chapterName.lowercase() },
+                )
+                UpdatesSort.Manga -> entries.sortedWith(
+                    compareBy<ChimahonRecentUpdateEntry> { it.mangaTitle.lowercase() }
+                        .thenByDescending { it.dateFetch }
+                        .thenBy { it.chapterName.lowercase() },
                 )
             }
         }
-        if (updates.isNotEmpty()) {
+    val selectedUpdates = updates.filter { selectedChapterIds[it.chapterId] == true }
+    val selectedUpdateCount = selectedUpdates.size
+    val groupedUpdates = updates.groupBy { it.dateFetch.toDateBucket("Fetched") }
+        .toList()
+        .let { groups ->
+            if (selectedSort == UpdatesSort.Oldest) {
+                groups.sortedBy { (_, entries) -> entries.maxOf { it.dateFetch } }
+            } else {
+                groups.sortedByDescending { (_, entries) -> entries.maxOf { it.dateFetch } }
+            }
+        }
+    val groupedUpdateIssues = snapshot.groupedUpdateIssues()
+    Box(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = if (selectedUpdateCount > 0) 132.dp else 16.dp),
+    ) {
+        if (filtersVisible) {
             item {
-                MultiSelectionBar(
-                    selectedCount = selectedChapterIds.count { it.value },
-                    totalCount = updates.size,
-                    onSelectAll = {
-                        updates.forEach { selectedChapterIds[it.chapterId] = true }
-                    },
-                    onInvert = {
-                        updates.forEach { update ->
-                            selectedChapterIds[update.chapterId] = selectedChapterIds[update.chapterId] != true
-                        }
-                    },
-                    onClear = { selectedChapterIds.clear() },
-                    actions = listOf(
-                        SelectionAction("Read", UiIcon.DoneAll) {
-                            val selected = updates.filter { selectedChapterIds[it.chapterId] == true }
-                            scope.launch {
-                                selected.forEach { update ->
-                                    runCatching { onSetChapterRead(update.chapterId, true) }
-                                }
-                                selectedChapterIds.clear()
-                                onRefresh()
-                            }
-                        },
-                        SelectionAction("Bookmark", UiIcon.Bookmark) {
-                            val selected = updates.filter { selectedChapterIds[it.chapterId] == true }
-                            scope.launch {
-                                selected.forEach { update ->
-                                    runCatching { onSetChapterBookmark(update.chapterId, true) }
-                                }
-                                selectedChapterIds.clear()
-                                onRefresh()
-                            }
-                        },
-                    ),
+                UpdatesFilterSortPanel(
+                    selectedFilter = selectedFilter,
+                    selectedSort = selectedSort,
+                    visibleCount = updates.size,
+                    totalCount = snapshot.updates.size,
+                    onFilterChange = { selectedFilter = it },
+                    onSortChange = { selectedSort = it },
                 )
             }
         }
@@ -2671,26 +3826,44 @@ private fun UpdatesHome(
                     detail = if (snapshot.updates.isEmpty()) {
                         "Chapter updates from favorited manga will appear here from the shared database."
                     } else {
-                        "Change the update filter to show more chapters."
+                        "Change the update filter or sort to show more chapters."
                     },
                 )
             }
         } else {
-            updates.groupBy { it.dateFetch.toDateBucket("Fetched") }.forEach { (date, dateUpdates) ->
-                item {
-                    ListGroupHeader(date)
+            groupedUpdates.forEach { (date, dateUpdates) ->
+                stickyHeader {
+                    val mangaCount = dateUpdates.map { it.mangaId }.distinct().size
+                    UpdateHistoryDateHeader(
+                        title = date,
+                        detail = "$mangaCount manga - ${dateUpdates.size} chapter(s)",
+                    )
                 }
-                dateUpdates.groupBy { it.mangaId }.forEach { (mangaId, mangaUpdates) ->
+                val dateUpdatesForDisplay = when (selectedSort) {
+                    UpdatesSort.Newest -> dateUpdates.sortedWith(
+                        compareByDescending<ChimahonRecentUpdateEntry> { it.dateFetch }
+                            .thenBy { it.mangaTitle.lowercase() },
+                    )
+                    UpdatesSort.Oldest -> dateUpdates.sortedWith(
+                        compareBy<ChimahonRecentUpdateEntry> { it.dateFetch }
+                            .thenBy { it.mangaTitle.lowercase() },
+                    )
+                    UpdatesSort.Manga -> dateUpdates.sortedWith(
+                        compareBy<ChimahonRecentUpdateEntry> { it.mangaTitle.lowercase() }
+                            .thenByDescending { it.dateFetch },
+                    )
+                }
+                dateUpdatesForDisplay.groupBy { it.mangaId }.forEach { (mangaId, mangaUpdates) ->
                     mangaUpdates.forEachIndexed { index, update ->
                         item(key = "${update.mangaId}:${update.chapterId}") {
                             val manga = snapshot.mangaDetails[mangaId]
-                            val chapter = snapshot.chaptersByMangaId[mangaId]
-                                .orEmpty()
-                                .firstOrNull { it.id == update.chapterId }
+                            val chapters = snapshot.chaptersByMangaId[mangaId].orEmpty()
+                            val chapter = chapters.firstOrNull { it.id == update.chapterId }
                             RecentUpdateListItem(
                                 update = update,
                                 manga = manga,
                                 isLeader = index == 0,
+                                selectionActive = selectedUpdateCount > 0,
                                 selected = selectedChapterIds[update.chapterId] == true,
                                 onToggleSelected = {
                                     selectedChapterIds[update.chapterId] = selectedChapterIds[update.chapterId] != true
@@ -2701,7 +3874,7 @@ private fun UpdatesHome(
                                         onOpenReader(
                                             chapter.toReaderRequest(
                                                 manga,
-                                                snapshot.chaptersByMangaId[mangaId].orEmpty(),
+                                                chapters,
                                             ),
                                         )
                                     }
@@ -2712,233 +3885,639 @@ private fun UpdatesHome(
                                 onSetBookmark = { bookmarked ->
                                     onSetChapterBookmark(update.chapterId, bookmarked)
                                 },
+                                onEnqueueDownload = {
+                                    onEnqueueDownloads(listOf(update.chapterId))
+                                },
                             )
                         }
                     }
                 }
             }
         }
-        if (snapshot.updateIssues.isNotEmpty()) {
+        if (snapshot.updateIssues.isEmpty()) {
             item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(ChimahonPalette.background)
-                        .padding(start = 16.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Label(
-                        "Library update issues",
-                        ChimahonPalette.secondaryText,
-                        12,
-                        weight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButtonLike("Clear", onClick = {
+                UpdateIssueEmptyRow()
+            }
+        } else {
+            item {
+                UpdateIssueSectionHeader(
+                    issueCount = snapshot.updateIssues.size,
+                    groupCount = groupedUpdateIssues.size,
+                    onClear = {
                         scope.launch {
                             runCatching { onClearUpdateIssues() }
-                            onRefresh()
-                        }
-                    })
-                }
-            }
-            items(snapshot.updateIssues) { issue ->
-                UpdateIssueListItem(
-                    issue = issue,
-                    onClick = { onOpenManga(issue.mangaId) },
-                    onDismiss = {
-                        scope.launch {
-                            runCatching { onDismissUpdateIssue(issue.id) }
                             onRefresh()
                         }
                     },
                 )
             }
+            groupedUpdateIssues.forEach { group ->
+                item(key = "issue-group:${group.sourceName}:${group.categoryName}") {
+                    UpdateIssueGroupWarningRow(group = group)
+                }
+                items(group.rows, key = { "issue:${it.issue.id}" }) { row ->
+                    UpdateIssueListItem(
+                        row = row,
+                        onClick = { onOpenManga(row.issue.mangaId) },
+                        onDismiss = {
+                            scope.launch {
+                                runCatching { onDismissUpdateIssue(row.issue.id) }
+                                onRefresh()
+                            }
+                        },
+                    )
+                }
+            }
         }
+    }
+    UpdateHistorySelectionBar(
+        selectedCount = selectedUpdateCount,
+        totalCount = updates.size,
+        onSelectAll = {
+            updates.forEach { selectedChapterIds[it.chapterId] = true }
+        },
+        onInvert = {
+            updates.forEach { update ->
+                selectedChapterIds[update.chapterId] = selectedChapterIds[update.chapterId] != true
+            }
+        },
+        onClear = { selectedChapterIds.clear() },
+        actions = buildList {
+            if (selectedUpdates.any { !it.read }) {
+                add(
+                    SelectionAction("Read", UiIcon.DoneAll) {
+                        val selected = updates.filter { selectedChapterIds[it.chapterId] == true }
+                        scope.launch {
+                            selected.forEach { update ->
+                                runCatching { onSetChapterRead(update.chapterId, true) }
+                            }
+                            selectedChapterIds.clear()
+                            onRefresh()
+                        }
+                    },
+                )
+            }
+            if (selectedUpdates.any { it.read || it.lastPageRead > 0L }) {
+                add(
+                    SelectionAction("Unread", UiIcon.Circle) {
+                        val selected = updates.filter { selectedChapterIds[it.chapterId] == true }
+                        scope.launch {
+                            selected.forEach { update ->
+                                runCatching { onSetChapterRead(update.chapterId, false) }
+                            }
+                            selectedChapterIds.clear()
+                            onRefresh()
+                        }
+                    },
+                )
+            }
+            if (selectedUpdates.any { !it.bookmarked }) {
+                add(
+                    SelectionAction("Bookmark", UiIcon.Bookmark) {
+                        val selected = updates.filter { selectedChapterIds[it.chapterId] == true }
+                        scope.launch {
+                            selected.forEach { update ->
+                                runCatching { onSetChapterBookmark(update.chapterId, true) }
+                            }
+                            selectedChapterIds.clear()
+                            onRefresh()
+                        }
+                    },
+                )
+            }
+            if (selectedUpdates.any { it.bookmarked }) {
+                add(
+                    SelectionAction("Remove", UiIcon.BookmarkBorder) {
+                        val selected = updates.filter { selectedChapterIds[it.chapterId] == true }
+                        scope.launch {
+                            selected.forEach { update ->
+                                runCatching { onSetChapterBookmark(update.chapterId, false) }
+                            }
+                            selectedChapterIds.clear()
+                            onRefresh()
+                        }
+                    },
+                )
+            }
+            add(
+                SelectionAction("Download", UiIcon.Download) {
+                    val selected = updates.filter { selectedChapterIds[it.chapterId] == true }
+                    if (selected.isNotEmpty()) {
+                        scope.launch {
+                            runCatching { onEnqueueDownloads(selected.map { it.chapterId }) }
+                            selectedChapterIds.clear()
+                            onRefresh()
+                        }
+                    }
+                },
+            )
+        },
+        modifier = Modifier.align(Alignment.BottomCenter),
+    )
+}
+}
+
+@Composable
+private fun UpdatesFilterSortPanel(
+    selectedFilter: UpdatesFilter,
+    selectedSort: UpdatesSort,
+    visibleCount: Int,
+    totalCount: Int,
+    onFilterChange: (UpdatesFilter) -> Unit,
+    onSortChange: (UpdatesSort) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp))
+            .background(ChimahonPalette.surface)
+            .border(
+                1.dp,
+                ChimahonPalette.divider.copy(alpha = 0.6f),
+                RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
+            )
+            .padding(top = 7.dp, bottom = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Label(
+                "$visibleCount / $totalCount updates",
+                ChimahonPalette.secondaryText,
+                11,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            UpdateHistoryStatusChip(selectedFilter.title, active = selectedFilter != UpdatesFilter.All)
+            UpdateHistoryStatusChip(
+                selectedSort.title,
+                active = selectedSort != UpdatesSort.Newest,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+        FilterPanelLabel("Filter")
+        ScrollableFilterChips(
+            chips = UpdatesFilter.entries.map { it.title },
+            selected = selectedFilter.title,
+            onSelect = { title ->
+                onFilterChange(UpdatesFilter.entries.firstOrNull { it.title == title } ?: UpdatesFilter.All)
+            },
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+        FilterPanelLabel("Sort", modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp))
+        ScrollableFilterChips(
+            chips = UpdatesSort.entries.map { it.title },
+            selected = selectedSort.title,
+            onSelect = { title ->
+                onSortChange(UpdatesSort.entries.firstOrNull { it.title == title } ?: UpdatesSort.Newest)
+            },
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+        Label(
+            "Showing matching recent chapters from the shared update table",
+            ChimahonPalette.secondaryText,
+            10,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp),
+        )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecentUpdateListItem(
     update: ChimahonRecentUpdateEntry,
     manga: ChimahonMangaEntry?,
     isLeader: Boolean,
+    selectionActive: Boolean,
     selected: Boolean,
     onToggleSelected: () -> Unit,
     onOpenManga: () -> Unit,
     onOpenChapter: (() -> Unit)?,
     onSetRead: suspend (Boolean) -> Unit,
     onSetBookmark: suspend (Boolean) -> Unit,
+    onEnqueueDownload: suspend () -> Unit,
 ) {
     var busyAction by remember(update.chapterId) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    Row(
+    val primaryAction = onOpenChapter ?: onOpenManga
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ChimahonPalette.surface)
-            .clickable(onClick = onOpenChapter ?: onOpenManga)
-            .padding(
-                start = 16.dp,
-                top = if (isLeader) 12.dp else 4.dp,
-                end = 8.dp,
-                bottom = if (isLeader) 8.dp else 6.dp,
+            .background(if (selected) ChimahonPalette.primaryContainer else ChimahonPalette.surface)
+            .border(
+                width = if (selected) 1.dp else 0.dp,
+                color = if (selected) ChimahonPalette.primary.copy(alpha = 0.42f) else Color.Transparent,
+            )
+            .combinedClickable(
+                onClick = {
+                    if (selectionActive) {
+                        onToggleSelected()
+                    } else {
+                        primaryAction()
+                    }
+                },
+                onLongClick = onToggleSelected,
             ),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (isLeader) {
-            Box(
-                modifier = Modifier
-                .width(48.dp)
-                .height(72.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .clickable(onClick = onOpenManga),
-            ) {
-                ThumbnailArtwork(
-                    url = manga?.thumbnailUrl,
-                    title = update.mangaTitle,
-                    fallbackColor = coverColor(update.mangaId, update.mangaTitle),
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        } else {
-            Spacer(Modifier.width(48.dp))
-        }
-        Column(
+        Row(
             modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+                .fillMaxWidth()
+                .heightIn(min = if (isLeader) 80.dp else 50.dp)
+                .padding(
+                    start = 16.dp,
+                    top = if (isLeader) 7.dp else 3.dp,
+                    end = 8.dp,
+                    bottom = if (isLeader) 7.dp else 3.dp,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (isLeader) {
-                Label(
-                    text = update.mangaTitle,
-                    color = if (update.read) ChimahonPalette.secondaryText else ChimahonPalette.onSurface,
-                    size = 13,
-                    maxLines = 1,
+                Box(
+                    modifier = Modifier
+                        .width(48.dp)
+                        .height(70.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable(onClick = onOpenManga),
+                    contentAlignment = Alignment.BottomEnd,
+                ) {
+                    ThumbnailArtwork(
+                        url = manga?.thumbnailUrl,
+                        title = update.mangaTitle,
+                        fallbackColor = coverColor(update.mangaId, update.mangaTitle),
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (selected) {
+                        Box(
+                            modifier = Modifier
+                                .padding(4.dp)
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(ChimahonPalette.primary),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            IconGlyph(
+                                icon = UiIcon.CheckCircle,
+                                contentDescription = "",
+                                tint = ChimahonPalette.surface,
+                                modifier = Modifier.size(15.dp),
+                            )
+                        }
+                    }
+                }
+            } else {
+                Spacer(Modifier.width(48.dp))
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 14.dp, end = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (isLeader) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Label(
+                            text = update.mangaTitle,
+                            color = if (update.read) ChimahonPalette.secondaryText else ChimahonPalette.onSurface,
+                            size = 13,
+                            weight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
+                        UpdateHistoryStatusChip(
+                            text = update.updateStateLabel(),
+                            active = !update.read || update.lastPageRead > 0L,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!update.read) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(18.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(ChimahonPalette.primary),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Label(
+                        text = update.updateChapterSubtitle(),
+                        color = if (update.read) ChimahonPalette.secondaryText else ChimahonPalette.onSurface,
+                        size = 12,
+                        weight = if (update.read) FontWeight.Normal else FontWeight.SemiBold,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (!isLeader) {
+                        UpdateHistoryStatusChip(
+                            text = update.updateStateLabel(),
+                            active = !update.read || update.lastPageRead > 0L,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+                if (update.bookmarked || update.lastPageRead > 0L || !update.scanlator.isNullOrBlank()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        update.scanlator?.takeIf { it.isNotBlank() }?.let {
+                            UpdateHistoryStatusChip(it, active = false)
+                        }
+                        if (update.bookmarked) {
+                            UpdateHistoryStatusChip("Bookmarked", active = true)
+                        }
+                        if (update.lastPageRead > 0L) {
+                            UpdateHistoryStatusChip("Page ${update.lastPageRead + 1}", active = true)
+                        }
+                    }
+                }
+            }
+            if (selectionActive || selected) {
+                UpdateHistoryQuickAction(
+                    icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+                    contentDescription = if (selected) "Deselect chapter" else "Select chapter",
+                    active = selected,
+                    onClick = onToggleSelected,
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (!update.read) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(ChimahonPalette.primary),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
-                if (update.bookmarked) {
-                    IconGlyph(
-                        icon = UiIcon.Bookmark,
-                        contentDescription = "Bookmarked",
-                        tint = ChimahonPalette.primary,
-                        modifier = Modifier.size(15.dp),
-                    )
-                    Spacer(Modifier.width(5.dp))
-                }
-                Label(
-                    text = buildString {
-                        append(update.chapterName)
-                        if (update.lastPageRead > 0L) append("  \u00b7  Page ${update.lastPageRead + 1}")
+            if (!selectionActive) {
+                UpdateHistoryQuickAction(
+                    icon = if (update.read) UiIcon.Circle else UiIcon.CheckCircle,
+                    contentDescription = if (update.read) "Mark unread" else "Mark read",
+                    active = busyAction == "read",
+                    onClick = {
+                        if (busyAction == null) {
+                            scope.launch {
+                                busyAction = "read"
+                                runCatching { onSetRead(!update.read) }
+                                busyAction = null
+                            }
+                        }
                     },
-                    color = if (update.read) ChimahonPalette.secondaryText else ChimahonPalette.onSurface,
-                    size = 11,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
+                )
+                UpdateHistoryQuickAction(
+                    icon = if (update.bookmarked) UiIcon.Bookmark else UiIcon.BookmarkBorder,
+                    contentDescription = if (update.bookmarked) "Unbookmark" else "Bookmark",
+                    active = update.bookmarked || busyAction == "bookmark",
+                    onClick = {
+                        if (busyAction == null) {
+                            scope.launch {
+                                busyAction = "bookmark"
+                                runCatching { onSetBookmark(!update.bookmarked) }
+                                busyAction = null
+                            }
+                        }
+                    },
+                )
+                UpdateHistoryQuickAction(
+                    icon = UiIcon.Download,
+                    contentDescription = "Download chapter",
+                    active = busyAction == "download",
+                    onClick = {
+                        if (busyAction == null) {
+                            scope.launch {
+                                busyAction = "download"
+                                runCatching { onEnqueueDownload() }
+                                busyAction = null
+                            }
+                        }
+                    },
                 )
             }
         }
-        ChapterQuickAction(
-            icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
-            contentDescription = if (selected) "Deselect chapter" else "Select chapter",
-            active = selected,
-            onClick = onToggleSelected,
-        )
-        ChapterQuickAction(
-            icon = if (update.read) UiIcon.Circle else UiIcon.CheckCircle,
-            contentDescription = if (update.read) "Mark unread" else "Mark read",
-            active = busyAction == "read",
-            onClick = {
-                if (busyAction == null) {
-                    scope.launch {
-                        busyAction = "read"
-                        runCatching { onSetRead(!update.read) }
-                        busyAction = null
-                    }
-                }
-            },
-        )
-        ChapterQuickAction(
-            icon = if (update.bookmarked) UiIcon.Bookmark else UiIcon.BookmarkBorder,
-            contentDescription = if (update.bookmarked) "Unbookmark" else "Bookmark",
-            active = update.bookmarked || busyAction == "bookmark",
-            onClick = {
-                if (busyAction == null) {
-                    scope.launch {
-                        busyAction = "bookmark"
-                        runCatching { onSetBookmark(!update.bookmarked) }
-                        busyAction = null
-                    }
-                }
-            },
+        Box(
+            modifier = Modifier
+                .padding(start = 78.dp)
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(if (selected) Color.Transparent else ChimahonPalette.divider.copy(alpha = 0.55f)),
         )
     }
 }
 
 @Composable
-private fun UpdateIssueListItem(
-    issue: ChimahonUpdateIssue,
-    onClick: () -> Unit,
-    onDismiss: () -> Unit,
+private fun UpdateIssueSectionHeader(
+    issueCount: Int,
+    groupCount: Int,
+    onClear: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ChimahonPalette.surface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .background(ChimahonPalette.background)
+            .padding(start = 16.dp, end = 10.dp, top = 12.dp, bottom = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(ChimahonPalette.errorContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Label("!", ChimahonPalette.error, 16, weight = FontWeight.Bold, maxLines = 1)
-        }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 14.dp),
-        ) {
-            Label(issue.mangaTitle, ChimahonPalette.onSurface, 13, weight = FontWeight.SemiBold, maxLines = 1)
+        Column(modifier = Modifier.weight(1f)) {
             Label(
-                issue.message,
-                ChimahonPalette.secondaryText,
+                "Library update issues",
+                ChimahonPalette.primary,
                 11,
-                maxLines = 2,
-                modifier = Modifier.padding(top = 3.dp),
+                weight = FontWeight.Bold,
+                maxLines = 1,
             )
             Label(
-                issue.lastUpdate,
+                "$issueCount issue(s) in $groupCount group(s)",
                 ChimahonPalette.secondaryText,
                 10,
                 maxLines = 1,
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
-        ChapterQuickAction(
-            icon = UiIcon.Delete,
-            contentDescription = "Dismiss issue",
-            active = false,
-            onClick = onDismiss,
+        TextButtonLike("Clear", onClick = onClear)
+    }
+}
+
+@Composable
+private fun UpdateIssueGroupWarningRow(
+    group: UpdateIssueGroup,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(start = 16.dp, end = 12.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(ChimahonPalette.errorContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Label("!", ChimahonPalette.error, 15, weight = FontWeight.Bold, maxLines = 1)
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp, end = 8.dp),
+        ) {
+            Label(
+                group.sourceName,
+                ChimahonPalette.onSurface,
+                13,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Label(
+                "${group.categoryName} - ${group.rows.size} issue(s)",
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        UpdateIssueStatusChip("Warning")
+    }
+}
+
+@Composable
+private fun UpdateIssueListItem(
+    row: UpdateIssueRow,
+    onClick: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val issue = row.issue
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 62.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Label(
+                        issue.mangaTitle,
+                        ChimahonPalette.onSurface,
+                        13,
+                        weight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    UpdateHistoryStatusChip(
+                        text = issue.lastUpdate.ifBlank { "No timestamp" },
+                        active = false,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .widthIn(max = 118.dp),
+                    )
+                }
+                Label(
+                    issue.message,
+                    ChimahonPalette.secondaryText,
+                    11,
+                    lineHeight = 15,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 5.dp),
+                ) {
+                    UpdateIssueStatusChip("Issue")
+                    UpdateHistoryStatusChip(
+                        row.categoryName,
+                        active = false,
+                        modifier = Modifier.widthIn(max = 118.dp),
+                    )
+                    if (row.sourceName != "Unknown source") {
+                        UpdateHistoryStatusChip(
+                            row.sourceName,
+                            active = false,
+                            modifier = Modifier.widthIn(max = 118.dp),
+                        )
+                    }
+                }
+            }
+            UpdateHistoryQuickAction(
+                icon = UiIcon.Delete,
+                contentDescription = "Dismiss issue",
+                active = false,
+                onClick = onDismiss,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .padding(start = 62.dp)
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(ChimahonPalette.divider.copy(alpha = 0.55f)),
         )
     }
 }
 
+@Composable
+private fun UpdateIssueEmptyRow() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 62.dp)
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PreferenceIconBox(icon = UiIcon.CheckCircle, active = true)
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 16.dp, end = 10.dp),
+        ) {
+            Label(
+                "No update issues",
+                ChimahonPalette.onSurface,
+                14,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Label(
+                "Library update warnings will appear here after a failed check.",
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        UpdateHistoryStatusChip("Clean", active = true)
+    }
+}
+
+@Composable
+private fun UpdateIssueStatusChip(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .height(20.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(ChimahonPalette.errorContainer)
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(text, ChimahonPalette.error, 9, weight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HistoryHome(
     snapshot: ChimahonSnapshot,
@@ -2946,14 +4525,25 @@ private fun HistoryHome(
     filtersVisible: Boolean,
     onOpenManga: (Long) -> Unit,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
+    onSetMangaFavorite: suspend (Long, Boolean) -> Unit,
     onResetHistoryEntry: suspend (Long) -> Unit,
     onResetHistoryForManga: suspend (Long) -> Unit,
     onClearHistory: suspend () -> Unit,
     onRefresh: () -> Unit,
 ) {
     var selectedFilter by remember { mutableStateOf(HistoryFilter.All) }
+    var selectedSort by remember { mutableStateOf(HistorySort.Recent) }
     val selectedHistoryIds = remember { mutableStateMapOf<Long, Boolean>() }
     val scope = rememberCoroutineScope()
+    val libraryMangaIds = remember(snapshot.library, snapshot.mangaDetails) {
+        (
+            snapshot.library.map { it.id } +
+                snapshot.mangaDetails.values.filter { it.favorite }.map { it.id }
+            ).toSet()
+    }
+    val progressSummary = remember(snapshot.library, snapshot.chaptersByMangaId, snapshot.history) {
+        snapshot.readingProgressSummary()
+    }
     val history = snapshot.history
         .filter { entry ->
             query.isBlank() || entry.title.contains(query, ignoreCase = true)
@@ -2961,72 +4551,64 @@ private fun HistoryHome(
         .filter { entry ->
             when (selectedFilter) {
                 HistoryFilter.All -> true
-                HistoryFilter.Unfinished -> !entry.read || entry.lastPageRead > 0L
+                HistoryFilter.UnfinishedManga -> entry.totalCount > 0.0 && entry.readCount < entry.totalCount
+                HistoryFilter.UnfinishedChapter -> !entry.read
+                HistoryFilter.NonLibrary -> entry.mangaId !in libraryMangaIds
                 HistoryFilter.Completed -> entry.read
             }
         }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 16.dp),
-    ) {
-        if (filtersVisible) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(ChimahonPalette.surface)
-                        .padding(vertical = 8.dp),
-                ) {
-                    FilterChips(
-                        chips = HistoryFilter.entries.map { it.title },
-                        selected = selectedFilter.title,
-                        onSelect = { title ->
-                            selectedFilter = HistoryFilter.entries.firstOrNull { it.title == title } ?: HistoryFilter.All
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        TextButtonLike("Clear history", onClick = {
-                            scope.launch {
-                                runCatching { onClearHistory() }
-                                onRefresh()
-                            }
-                        })
-                    }
-                }
+        .let { entries ->
+            when (selectedSort) {
+                HistorySort.Recent -> entries.sortedByDescending { it.readAt ?: 0L }
+                HistorySort.Oldest -> entries.sortedBy { it.readAt ?: Long.MAX_VALUE }
+                HistorySort.Title -> entries.sortedWith(
+                    compareBy<ChimahonHistoryEntry> { it.title.lowercase() }
+                        .thenByDescending { it.readAt ?: 0L },
+                )
             }
         }
-        if (history.isNotEmpty()) {
+    val selectedHistory = history.filter { selectedHistoryIds[it.id] == true }
+    val selectedHistoryCount = selectedHistory.size
+    val groupedHistory = history.groupBy { it.readAt?.toDateBucket("Read") ?: "Unknown date" }
+        .toList()
+        .let { groups ->
+            if (selectedSort == HistorySort.Oldest) {
+                groups.sortedBy { (_, entries) -> entries.mapNotNull { it.readAt }.minOrNull() ?: Long.MAX_VALUE }
+            } else {
+                groups.sortedByDescending { (_, entries) -> entries.mapNotNull { it.readAt }.maxOrNull() ?: 0L }
+            }
+        }
+    Box(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = if (selectedHistoryCount > 0) 132.dp else 16.dp),
+    ) {
+        item {
+            HistoryProgressSummary(
+                summary = progressSummary,
+                visibleCount = history.size,
+                totalCount = snapshot.history.size,
+                filtersActive = query.isNotBlank() ||
+                    selectedFilter != HistoryFilter.All ||
+                    selectedSort != HistorySort.Recent,
+            )
+        }
+        if (filtersVisible) {
             item {
-                MultiSelectionBar(
-                    selectedCount = selectedHistoryIds.count { it.value },
-                    totalCount = history.size,
-                    onSelectAll = {
-                        history.forEach { selectedHistoryIds[it.id] = true }
-                    },
-                    onInvert = {
-                        history.forEach { entry ->
-                            selectedHistoryIds[entry.id] = selectedHistoryIds[entry.id] != true
+                HistoryFilterSortPanel(
+                    selectedFilter = selectedFilter,
+                    selectedSort = selectedSort,
+                    visibleCount = history.size,
+                    totalCount = snapshot.history.size,
+                    onFilterChange = { selectedFilter = it },
+                    onSortChange = { selectedSort = it },
+                    onClearHistory = {
+                        scope.launch {
+                            runCatching { onClearHistory() }
+                            selectedHistoryIds.clear()
+                            onRefresh()
                         }
                     },
-                    onClear = { selectedHistoryIds.clear() },
-                    actions = listOf(
-                        SelectionAction("Remove", UiIcon.Delete) {
-                            val selected = history.filter { selectedHistoryIds[it.id] == true }
-                            scope.launch {
-                                selected.forEach { entry ->
-                                    runCatching { onResetHistoryEntry(entry.id) }
-                                }
-                                selectedHistoryIds.clear()
-                                onRefresh()
-                            }
-                        },
-                    ),
                 )
             }
         }
@@ -3039,22 +4621,29 @@ private fun HistoryHome(
                     detail = if (snapshot.history.isEmpty()) {
                         "Recently read manga will appear here from the shared history view."
                     } else {
-                        "Try another search or history filter."
+                        "Try another search, history filter, or sort."
                     },
                 )
             }
         } else {
-            history.groupBy { it.readAt?.toDateBucket("Read") ?: "Unknown date" }.forEach { (date, entries) ->
-                item {
-                    ListGroupHeader(date)
+            groupedHistory.forEach { (date, entries) ->
+                stickyHeader {
+                    val mangaCount = entries.map { it.mangaId }.distinct().size
+                    UpdateHistoryDateHeader(
+                        title = date,
+                        detail = "$mangaCount manga - ${entries.size} item(s)",
+                    )
                 }
-                items(entries, key = { "${it.mangaId}:${it.chapterId}" }) { entry ->
+                items(entries, key = { it.id }) { entry ->
                     val manga = snapshot.mangaDetails[entry.mangaId]
                     val chapters = snapshot.chaptersByMangaId[entry.mangaId].orEmpty()
                     val chapter = chapters.firstOrNull { it.id == entry.chapterId }
+                    val favorite = entry.mangaId in libraryMangaIds
                     HistoryListItem(
                         entry = entry,
                         manga = manga,
+                        favorite = favorite,
+                        selectionActive = selectedHistoryCount > 0,
                         selected = selectedHistoryIds[entry.id] == true,
                         onToggleSelected = {
                             selectedHistoryIds[entry.id] = selectedHistoryIds[entry.id] != true
@@ -3062,6 +4651,16 @@ private fun HistoryHome(
                         onOpenManga = { onOpenManga(entry.mangaId) },
                         onResume = if (manga != null && chapter != null) {
                             { onOpenReader(chapter.toReaderRequest(manga, chapters)) }
+                        } else {
+                            null
+                        },
+                        onSetFavorite = if (!favorite) {
+                            {
+                                scope.launch {
+                                    runCatching { onSetMangaFavorite(entry.mangaId, true) }
+                                    onRefresh()
+                                }
+                            }
                         } else {
                             null
                         },
@@ -3080,6 +4679,219 @@ private fun HistoryHome(
                     )
                 }
             }
+        }
+    }
+    UpdateHistorySelectionBar(
+        selectedCount = selectedHistoryCount,
+        totalCount = history.size,
+        onSelectAll = {
+            history.forEach { selectedHistoryIds[it.id] = true }
+        },
+        onInvert = {
+            history.forEach { entry ->
+                selectedHistoryIds[entry.id] = selectedHistoryIds[entry.id] != true
+            }
+        },
+        onClear = { selectedHistoryIds.clear() },
+        actions = buildList {
+            add(
+                SelectionAction("Remove", UiIcon.Delete) {
+                    val selected = history.filter { selectedHistoryIds[it.id] == true }
+                    scope.launch {
+                        selected.forEach { entry ->
+                            runCatching { onResetHistoryEntry(entry.id) }
+                        }
+                        selectedHistoryIds.clear()
+                        onRefresh()
+                    }
+                },
+            )
+            add(
+                SelectionAction("Clear manga", UiIcon.DoneAll) {
+                    val mangaIds = history
+                        .filter { selectedHistoryIds[it.id] == true }
+                        .map { it.mangaId }
+                        .distinct()
+                    scope.launch {
+                        mangaIds.forEach { mangaId ->
+                            runCatching { onResetHistoryForManga(mangaId) }
+                        }
+                        selectedHistoryIds.clear()
+                        onRefresh()
+                    }
+                },
+            )
+            if (selectedHistory.any { it.mangaId !in libraryMangaIds }) {
+                add(
+                    SelectionAction("Favorite", UiIcon.FavoriteBorder) {
+                        val mangaIds = history
+                            .filter { selectedHistoryIds[it.id] == true && it.mangaId !in libraryMangaIds }
+                            .map { it.mangaId }
+                            .distinct()
+                        scope.launch {
+                            mangaIds.forEach { mangaId ->
+                                runCatching { onSetMangaFavorite(mangaId, true) }
+                            }
+                            selectedHistoryIds.clear()
+                            onRefresh()
+                        }
+                    },
+                )
+            }
+        },
+        modifier = Modifier.align(Alignment.BottomCenter),
+    )
+}
+}
+
+@Composable
+private fun HistoryProgressSummary(
+    summary: ReadingProgressSummary,
+    visibleCount: Int,
+    totalCount: Int,
+    filtersActive: Boolean,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconGlyph(
+                icon = UiIcon.History,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp, end = 8.dp),
+            ) {
+                Label(
+                    "Reading history",
+                    ChimahonPalette.onSurface,
+                    14,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    if (summary.historyEntries == 0) {
+                        "No local reading sessions yet"
+                    } else {
+                        "${summary.historyEntries} entries across ${summary.historyManga} manga"
+                    },
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            UpdateHistoryStatusChip(
+                text = if (filtersActive) "$visibleCount / $totalCount shown" else "$totalCount items",
+                active = filtersActive,
+            )
+        }
+        ProgressSummaryBar(
+            progress = summary.readProgressFraction,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val chips = listOf(
+                "${summary.readChapters}/${summary.totalChapters} read" to (summary.readChapters > 0),
+                "${summary.inProgressManga} in progress" to (summary.inProgressManga > 0),
+                "${summary.startedChapters} started" to (summary.startedChapters > 0),
+                summary.readDuration.toReadingDuration() to (summary.readDuration > 0L),
+                (summary.lastReadAt?.toDateBucket("Read") ?: "Never read") to (summary.lastReadAt != null),
+            )
+            items(chips, key = { it.first }) { chip ->
+                UpdateHistoryStatusChip(text = chip.first, active = chip.second)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryFilterSortPanel(
+    selectedFilter: HistoryFilter,
+    selectedSort: HistorySort,
+    visibleCount: Int,
+    totalCount: Int,
+    onFilterChange: (HistoryFilter) -> Unit,
+    onSortChange: (HistorySort) -> Unit,
+    onClearHistory: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp))
+            .background(ChimahonPalette.surface)
+            .border(
+                1.dp,
+                ChimahonPalette.divider.copy(alpha = 0.6f),
+                RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
+            )
+            .padding(top = 7.dp, bottom = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Label(
+                "$visibleCount / $totalCount history",
+                ChimahonPalette.secondaryText,
+                11,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            UpdateHistoryStatusChip(selectedFilter.title, active = selectedFilter != HistoryFilter.All)
+            UpdateHistoryStatusChip(
+                selectedSort.title,
+                active = selectedSort != HistorySort.Recent,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+        FilterPanelLabel("Filter")
+        ScrollableFilterChips(
+            chips = HistoryFilter.entries.map { it.title },
+            selected = selectedFilter.title,
+            onSelect = { title ->
+                onFilterChange(HistoryFilter.entries.firstOrNull { it.title == title } ?: HistoryFilter.All)
+            },
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+        FilterPanelLabel("Sort", modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp))
+        ScrollableFilterChips(
+            chips = HistorySort.entries.map { it.title },
+            selected = selectedSort.title,
+            onSelect = { title ->
+                onSortChange(HistorySort.entries.firstOrNull { it.title == title } ?: HistorySort.Recent)
+            },
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Label(
+                "$visibleCount of $totalCount history items visible",
+                ChimahonPalette.secondaryText,
+                10,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            TextButtonLike("Clear history", onClick = onClearHistory)
         }
     }
 }
@@ -3137,120 +4949,623 @@ private fun MultiSelectionBar(
 }
 
 @Composable
+private fun LibrarySelectionBottomActionBar(
+    selectedCount: Int,
+    totalCount: Int,
+    onSelectAll: () -> Unit,
+    onInvert: () -> Unit,
+    onClear: () -> Unit,
+    actions: List<SelectionAction>,
+    modifier: Modifier = Modifier,
+) {
+    if (selectedCount <= 0) return
+    val sheetShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 8.dp)
+            .clip(sheetShape)
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider, sheetShape)
+            .padding(start = 12.dp, end = 12.dp, top = 7.dp, bottom = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(38.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.divider),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Label(
+                    "$selectedCount selected",
+                    ChimahonPalette.onSurface,
+                    13,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                if (selectedCount == totalCount && totalCount > 0) {
+                    Label(
+                        "All visible manga",
+                        ChimahonPalette.secondaryText,
+                        10,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 1.dp),
+                    )
+                }
+            }
+            TextButtonLike("All", onClick = onSelectAll)
+            TextButtonLike("Invert", onClick = onInvert)
+            ChapterHeaderAction(
+                icon = UiIcon.Close,
+                contentDescription = "Clear selection",
+                onClick = onClear,
+            )
+        }
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            items(actions, key = { it.title }) { action ->
+                LibrarySelectionActionButton(action = action)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibrarySelectionActionButton(
+    action: SelectionAction,
+) {
+    Column(
+        modifier = Modifier
+            .widthIn(min = 68.dp)
+            .height(52.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(ChimahonPalette.primaryContainer)
+            .clickable(onClick = action.onClick)
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        IconGlyph(
+            icon = action.icon,
+            contentDescription = action.title,
+            tint = ChimahonPalette.primary,
+            modifier = Modifier.size(19.dp),
+        )
+        Label(
+            action.title,
+            ChimahonPalette.primary,
+            9,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 3.dp),
+        )
+    }
+}
+
+@Composable
+private fun SelectionBottomActionMenu(
+    selectedCount: Int,
+    totalCount: Int,
+    onSelectAll: () -> Unit,
+    onInvert: () -> Unit,
+    onClear: () -> Unit,
+    actions: List<SelectionAction>,
+    modifier: Modifier = Modifier,
+) {
+    if (selectedCount <= 0) return
+    val sheetShape = RoundedCornerShape(
+        topStart = 20.dp,
+        topEnd = 20.dp,
+        bottomStart = 0.dp,
+        bottomEnd = 0.dp,
+    )
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(sheetShape)
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider, sheetShape)
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(38.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.divider),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Label(
+                "$selectedCount selected",
+                ChimahonPalette.onSurface,
+                13,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            TextButtonLike("All", onClick = onSelectAll)
+            TextButtonLike("Invert", onClick = onInvert)
+            ChapterHeaderAction(
+                icon = UiIcon.Close,
+                contentDescription = "Clear selection",
+                onClick = onClear,
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            actions.forEach { action ->
+                SelectionMenuActionButton(
+                    action = action,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        if (selectedCount == totalCount && totalCount > 0) {
+            Label(
+                "All visible items selected",
+                ChimahonPalette.secondaryText,
+                10,
+                maxLines = 1,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectionMenuActionButton(
+    action: SelectionAction,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .height(52.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(ChimahonPalette.primaryContainer)
+            .clickable(onClick = action.onClick)
+            .padding(horizontal = 3.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        IconGlyph(
+            icon = action.icon,
+            contentDescription = action.title,
+            tint = ChimahonPalette.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Label(
+            action.title,
+            ChimahonPalette.primary,
+            9,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun UpdateHistorySelectionBar(
+    selectedCount: Int,
+    totalCount: Int,
+    onSelectAll: () -> Unit,
+    onInvert: () -> Unit,
+    onClear: () -> Unit,
+    actions: List<SelectionAction>,
+    modifier: Modifier = Modifier,
+) {
+    if (selectedCount <= 0) return
+    val sheetShape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(sheetShape)
+            .background(ChimahonPalette.surface)
+            .border(width = 1.dp, color = ChimahonPalette.divider, shape = sheetShape)
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(38.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.divider),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Label(
+                    "$selectedCount selected",
+                    ChimahonPalette.onSurface,
+                    13,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                if (selectedCount == totalCount && totalCount > 0) {
+                    Label(
+                        "All visible items",
+                        ChimahonPalette.secondaryText,
+                        10,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 1.dp),
+                    )
+                }
+            }
+            TextButtonLike("All", onClick = onSelectAll)
+            TextButtonLike("Invert", onClick = onInvert)
+            ChapterHeaderAction(
+                icon = UiIcon.Close,
+                contentDescription = "Clear selection",
+                onClick = onClear,
+            )
+        }
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(actions, key = { it.title }) { action ->
+                UpdateHistorySelectionAction(
+                    action = action,
+                    modifier = Modifier.widthIn(min = 74.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdateHistorySelectionAction(
+    action: SelectionAction,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .height(52.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(ChimahonPalette.primaryContainer)
+            .clickable(onClick = action.onClick)
+            .padding(horizontal = 4.dp, vertical = 5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        IconGlyph(
+            icon = action.icon,
+            contentDescription = action.title,
+            tint = ChimahonPalette.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Label(
+            action.title,
+            ChimahonPalette.primary,
+            10,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 3.dp),
+        )
+    }
+}
+
+@Composable
+private fun UpdateHistoryDateHeader(
+    title: String,
+    detail: String,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.background),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(ChimahonPalette.background)
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Label(
+                text = title.uppercase(),
+                color = ChimahonPalette.primary,
+                size = 11,
+                weight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            UpdateHistoryStatusChip(
+                text = detail,
+                active = false,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .padding(start = 16.dp)
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(ChimahonPalette.divider.copy(alpha = 0.35f)),
+        )
+    }
+}
+
+@Composable
+private fun UpdateHistoryStatusChip(
+    text: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .height(20.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (active) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant)
+            .border(
+                1.dp,
+                if (active) ChimahonPalette.primaryContainer else ChimahonPalette.divider.copy(alpha = 0.5f),
+                RoundedCornerShape(10.dp),
+            )
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            text,
+            if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            9,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun UpdateHistoryQuickAction(
+    icon: UiIcon,
+    contentDescription: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(if (active) ChimahonPalette.primaryContainer else Color.Transparent)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = contentDescription,
+            tint = if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
 private fun ListGroupHeader(title: String) {
     Label(
-        text = title,
-        color = ChimahonPalette.secondaryText,
-        size = 12,
-        weight = FontWeight.SemiBold,
+        text = title.uppercase(),
+        color = ChimahonPalette.primary,
+        size = 11,
+        weight = FontWeight.ExtraBold,
         maxLines = 1,
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.background)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 7.dp),
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HistoryListItem(
     entry: ChimahonHistoryEntry,
     manga: ChimahonMangaEntry?,
+    favorite: Boolean,
+    selectionActive: Boolean,
     selected: Boolean,
     onToggleSelected: () -> Unit,
     onOpenManga: () -> Unit,
     onResume: (() -> Unit)?,
+    onSetFavorite: (() -> Unit)?,
     onResetEntry: () -> Unit,
     onResetManga: () -> Unit,
 ) {
-    Row(
+    val primaryAction = onResume ?: onOpenManga
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(96.dp)
-            .background(ChimahonPalette.surface)
-            .clickable(onClick = onResume ?: onOpenManga)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(53.dp)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(4.dp))
-                .clickable(onClick = onOpenManga),
-        ) {
-            ThumbnailArtwork(
-                url = manga?.thumbnailUrl,
-                title = entry.title,
-                fallbackColor = coverColor(entry.mangaId, entry.title),
-                modifier = Modifier.fillMaxSize(),
+            .background(if (selected) ChimahonPalette.primaryContainer else ChimahonPalette.surface)
+            .border(
+                width = if (selected) 1.dp else 0.dp,
+                color = if (selected) ChimahonPalette.primary.copy(alpha = 0.42f) else Color.Transparent,
             )
-        }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 16.dp, end = 8.dp),
-        ) {
-            Label(
-                text = entry.title,
-                color = if (entry.read) ChimahonPalette.secondaryText else ChimahonPalette.onSurface,
-                size = 13,
-                weight = FontWeight.SemiBold,
-                maxLines = 2,
-            )
-            Row(
-                modifier = Modifier.padding(top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (!entry.read) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(ChimahonPalette.primary),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
-                Label(
-                text = buildString {
-                    append("Ch. ${entry.chapterNumber.toDisplayChapter()}")
-                    entry.readAt?.let { append("  \u00b7  ").append(it.toDateBucket("Read")) }
-                    if (entry.lastPageRead > 0L) append("  \u00b7  Page ${entry.lastPageRead + 1}")
-                    if (entry.totalCount > 0.0) {
-                        append("  \u00b7  ")
-                        append(entry.readCount.toLong()).append("/").append(entry.totalCount.toLong())
+            .combinedClickable(
+                onClick = {
+                    if (selectionActive) {
+                        onToggleSelected()
+                    } else {
+                        primaryAction()
                     }
                 },
-                    color = ChimahonPalette.secondaryText,
-                    size = 11,
-                    maxLines = 1,
+                onLongClick = onToggleSelected,
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 80.dp)
+                .padding(horizontal = 16.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(48.dp)
+                    .height(68.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(onClick = onOpenManga),
+                contentAlignment = Alignment.BottomEnd,
+            ) {
+                ThumbnailArtwork(
+                    url = manga?.thumbnailUrl,
+                    title = entry.title,
+                    fallbackColor = coverColor(entry.mangaId, entry.title),
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (selected) {
+                    Box(
+                        modifier = Modifier
+                            .padding(4.dp)
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(ChimahonPalette.primary),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        IconGlyph(
+                            icon = UiIcon.CheckCircle,
+                            contentDescription = "",
+                            tint = ChimahonPalette.surface,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp, end = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Label(
+                        text = entry.title,
+                        color = if (entry.read) ChimahonPalette.secondaryText else ChimahonPalette.onSurface,
+                        size = 13,
+                        weight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    UpdateHistoryStatusChip(
+                        text = entry.historyStateLabel(),
+                        active = !entry.read || entry.lastPageRead > 0L,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!entry.read) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(18.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(ChimahonPalette.primary),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Label(
+                        text = entry.historySubtitle(),
+                        color = ChimahonPalette.secondaryText,
+                        size = 11,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (favorite) {
+                        UpdateHistoryStatusChip("In library", active = true)
+                    } else {
+                        UpdateHistoryStatusChip("Not in library", active = false)
+                    }
+                    if (entry.totalCount > 0.0) {
+                        UpdateHistoryStatusChip(
+                            "${entry.readCount.toLong()}/${entry.totalCount.toLong()} read",
+                            active = entry.readCount < entry.totalCount,
+                        )
+                    }
+                }
+                if (entry.totalCount > 0.0) {
+                    ProgressSummaryBar(
+                        progress = (entry.readCount / entry.totalCount).toFloat(),
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+            if (selectionActive || selected) {
+                UpdateHistoryQuickAction(
+                    icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+                    contentDescription = if (selected) "Deselect history entry" else "Select history entry",
+                    active = selected,
+                    onClick = onToggleSelected,
+                )
+            }
+            if (!selectionActive) {
+                onResume?.let {
+                    UpdateHistoryQuickAction(
+                        icon = UiIcon.Play,
+                        contentDescription = "Resume reading",
+                        active = false,
+                        onClick = it,
+                    )
+                }
+                onSetFavorite?.let {
+                    UpdateHistoryQuickAction(
+                        icon = if (favorite) UiIcon.Favorite else UiIcon.FavoriteBorder,
+                        contentDescription = if (favorite) "In library" else "Add to library",
+                        active = favorite,
+                        onClick = it,
+                    )
+                }
+                UpdateHistoryQuickAction(
+                    icon = UiIcon.Delete,
+                    contentDescription = "Remove history entry",
+                    active = false,
+                    onClick = onResetEntry,
+                )
+                UpdateHistoryQuickAction(
+                    icon = UiIcon.DoneAll,
+                    contentDescription = "Clear manga history",
+                    active = false,
+                    onClick = onResetManga,
                 )
             }
         }
-        onResume?.let {
-            ChapterQuickAction(
-                icon = UiIcon.Play,
-                contentDescription = "Resume reading",
-                active = false,
-                onClick = it,
-            )
-        }
-        ChapterQuickAction(
-            icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
-            contentDescription = if (selected) "Deselect history entry" else "Select history entry",
-            active = selected,
-            onClick = onToggleSelected,
-        )
-        ChapterQuickAction(
-            icon = UiIcon.Delete,
-            contentDescription = "Remove history entry",
-            active = false,
-            onClick = onResetEntry,
-        )
-        ChapterQuickAction(
-            icon = UiIcon.DoneAll,
-            contentDescription = "Clear manga history",
-            active = false,
-            onClick = onResetManga,
+        Box(
+            modifier = Modifier
+                .padding(start = 76.dp)
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(if (selected) Color.Transparent else ChimahonPalette.divider.copy(alpha = 0.55f)),
         )
     }
 }
@@ -3279,6 +5594,7 @@ private fun BrowseHome(
     onInstallExtension: suspend (ChimahonRepoExtensionEntry) -> ChimahonInstalledExtensionEntry,
     onUninstallExtension: suspend (String, ChimahonExtensionPackageType) -> ChimahonExtensionUninstallResult,
     onRepoSaved: () -> Unit,
+    onOpenExternalUrl: (String) -> Boolean,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         BrowseTabs(
@@ -3289,6 +5605,7 @@ private fun BrowseHome(
             BrowseSection.Sources -> SourcesSection(
                 sources = snapshot.sources,
                 query = query,
+                filtersVisible = filtersVisible,
                 settings = browseSettings,
                 onOpenSource = onOpenSource,
                 onInstallExtension = { onSectionChange(BrowseSection.Extensions) },
@@ -3312,6 +5629,7 @@ private fun BrowseHome(
                 onInstallExtension = onInstallExtension,
                 onUninstallExtension = onUninstallExtension,
                 onRepoSaved = onRepoSaved,
+                onOpenExternalUrl = onOpenExternalUrl,
             )
             BrowseSection.Migrate -> MigrateSection(
                 library = snapshot.library,
@@ -3333,39 +5651,48 @@ private fun BrowseTabs(
     selected: BrowseSection,
     onSelect: (BrowseSection) -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, ChimahonPalette.divider),
+            .background(ChimahonPalette.surface),
     ) {
-        BrowseSection.entries.forEach { section ->
-            val isSelected = section == selected
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { onSelect(section) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    modifier = Modifier.height(48.dp),
-                    contentAlignment = Alignment.Center,
+        Row(modifier = Modifier.fillMaxWidth()) {
+            BrowseSection.entries.forEach { section ->
+                val isSelected = section == selected
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onSelect(section) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Label(
-                        text = section.title,
-                        color = if (isSelected) ChimahonPalette.primary else ChimahonPalette.onSurface,
-                        size = 13,
-                        weight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                        maxLines = 1,
+                    Box(
+                        modifier = Modifier.height(46.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Label(
+                            text = section.title,
+                            color = if (isSelected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                            size = 13,
+                            weight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                            maxLines = 1,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp))
+                            .background(if (isSelected) ChimahonPalette.primary else Color.Transparent),
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .height(3.dp)
-                        .fillMaxWidth()
-                        .background(if (isSelected) ChimahonPalette.primary else Color.Transparent),
-                )
             }
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(ChimahonPalette.divider),
+        )
     }
 }
 
@@ -3373,17 +5700,70 @@ private fun BrowseTabs(
 private fun SourcesSection(
     sources: List<ChimahonSourceEntry>,
     query: String,
+    filtersVisible: Boolean,
     settings: ChimahonBrowseSettings,
     onOpenSource: (Long, ChimahonSourceBrowseMode) -> Unit,
     onInstallExtension: () -> Unit,
 ) {
+    var selectedLanguage by remember(sources) { mutableStateOf("All") }
+    var quickFilter by remember { mutableStateOf(SourceQuickFilter.All) }
+    var sourceSort by remember { mutableStateOf(SourceSort.Name) }
+    val pinnedSources = remember { mutableStateMapOf<Long, Boolean>() }
+    val languageOptions = remember(sources, settings.enabledLanguages) {
+        listOf("All") + sources
+            .map { it.language.sourceLanguageCode() }
+            .filter { settings.enabledLanguages.isEmpty() || it in settings.enabledLanguages }
+            .distinct()
+            .sorted()
+    }
+    LaunchedEffect(languageOptions) {
+        if (selectedLanguage !in languageOptions) {
+            selectedLanguage = "All"
+        }
+    }
     val filteredSources = sources.filter {
         (settings.enabledLanguages.isEmpty() || it.language.sourceLanguageCode() in settings.enabledLanguages) &&
+            (selectedLanguage == "All" || it.language.sourceLanguageCode() == selectedLanguage) &&
             (
                 query.isBlank() ||
                     it.name.contains(query, ignoreCase = true) ||
                     it.language.contains(query, ignoreCase = true)
-                )
+                ) &&
+            when (quickFilter) {
+                SourceQuickFilter.All -> true
+                SourceQuickFilter.Latest -> it.supportsLatest
+                SourceQuickFilter.PopularOnly -> !it.supportsLatest
+            }
+    }.let { entries ->
+        when (sourceSort) {
+            SourceSort.Name -> entries.sortedWith(compareBy<ChimahonSourceEntry> { it.name.lowercase() })
+            SourceSort.Language -> entries.sortedWith(
+                compareBy<ChimahonSourceEntry> { it.language.sourceLanguageCode() }
+                    .thenBy { it.name.lowercase() },
+            )
+            SourceSort.Capability -> entries.sortedWith(
+                compareBy<ChimahonSourceEntry> { if (it.supportsLatest) 0 else 1 }
+                    .thenBy { it.name.lowercase() },
+            )
+        }
+    }
+    val pinnedFilteredSources = filteredSources.filter { pinnedSources[it.id] == true }
+    val unpinnedFilteredSources = filteredSources.filterNot { pinnedSources[it.id] == true }
+    val sourceGroups = mutableListOf<Pair<String?, List<ChimahonSourceEntry>>>().apply {
+        if (pinnedFilteredSources.isNotEmpty()) {
+            add("Pinned" to pinnedFilteredSources)
+        }
+        if (settings.groupSourcesByLanguage) {
+            addAll(
+                unpinnedFilteredSources
+                    .groupBy { it.language.sourceLanguageCode() }
+                    .toList()
+                    .sortedBy { it.first }
+                    .map { (language, group) -> language to group },
+            )
+        } else if (unpinnedFilteredSources.isNotEmpty()) {
+            add(null to unpinnedFilteredSources)
+        }
     }
     if (sources.isEmpty()) {
         EmptyMobileState(
@@ -3396,59 +5776,271 @@ private fun SourcesSection(
         )
         return
     }
-    if (filteredSources.isEmpty()) {
-        EmptyListPanel(
-            marker = "S",
-            title = "No matching sources",
-            detail = "No installed source matches \"$query\".",
-        )
-        return
-    }
-    val sourceGroups = filteredSources.sourceGroups(settings.groupSourcesByLanguage)
-    if (settings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.Grid) {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(150.dp),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            sourceGroups.forEach { (language, group) ->
-                if (language != null) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        ListGroupHeader(language)
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (filteredSources.isEmpty()) {
+            EmptyMobileState(
+                marker = "S",
+                icon = UiIcon.Search,
+                title = "No matching sources",
+                detail = if (query.isBlank()) {
+                    "No installed source matches the active language or capability filters."
+                } else {
+                    "No installed source matches \"$query\" with the active filters."
+                },
+            )
+        } else if (settings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.Grid) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(150.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                sourceGroups.forEach { (language, group) ->
+                    if (language != null) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SourceLanguageHeader(language, group.size)
+                        }
+                    }
+                    items(group, key = { it.id }) { source ->
+                        val pinned = pinnedSources[source.id] == true
+                        SourceGridCard(
+                            source = source,
+                            pinned = pinned,
+                            showLanguage = settings.showSourceLanguage,
+                            onTogglePinned = { pinnedSources[source.id] = !pinned },
+                            onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
+                            onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
+                        )
                     }
                 }
-                items(group, key = { it.id }) { source ->
-                    SourceGridCard(
-                        source = source,
-                        showLanguage = settings.showSourceLanguage,
-                        onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
-                        onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
-                    )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 4.dp),
+            ) {
+                sourceGroups.forEach { (language, group) ->
+                    if (language != null) {
+                        item { SourceLanguageHeader(language, group.size) }
+                    }
+                    items(group, key = { it.id }) { source ->
+                        val pinned = pinnedSources[source.id] == true
+                        SourceListItem(
+                            source = source,
+                            compact = settings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.CompactList,
+                            pinned = pinned,
+                            showLanguage = settings.showSourceLanguage,
+                            onTogglePinned = { pinnedSources[source.id] = !pinned },
+                            onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
+                            onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
+                        )
+                    }
                 }
             }
         }
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 4.dp),
+        if (filtersVisible) {
+            SourceFilterPanel(
+                sourceCount = filteredSources.size,
+                totalCount = sources.size,
+                pinnedCount = pinnedFilteredSources.size,
+                languageOptions = languageOptions,
+                selectedLanguage = selectedLanguage,
+                onLanguageSelect = { selectedLanguage = it },
+                quickFilter = quickFilter,
+                onQuickFilterSelect = { quickFilter = it },
+                sourceSort = sourceSort,
+                onSortSelect = { sourceSort = it },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SourceFilterPanel(
+    sourceCount: Int,
+    totalCount: Int,
+    pinnedCount: Int,
+    languageOptions: List<String>,
+    selectedLanguage: String,
+    onLanguageSelect: (String) -> Unit,
+    quickFilter: SourceQuickFilter,
+    onQuickFilterSelect: (SourceQuickFilter) -> Unit,
+    sourceSort: SourceSort,
+    onSortSelect: (SourceSort) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val sheetShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 8.dp)
+            .clip(sheetShape)
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider, sheetShape)
+            .padding(top = 8.dp, bottom = 12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(bottom = 8.dp)
+                .width(38.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(ChimahonPalette.divider),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            sourceGroups.forEach { (language, group) ->
-                if (language != null) {
-                    item { ListGroupHeader(language) }
-                }
-                items(group, key = { it.id }) { source ->
-                    SourceListItem(
-                        source = source,
-                        compact = settings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.CompactList,
-                        showLanguage = settings.showSourceLanguage,
-                        onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
-                        onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
-                    )
-                }
-            }
+            Label(
+                "Sources",
+                ChimahonPalette.onSurface,
+                13,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            Label(
+                "$sourceCount of $totalCount shown",
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 1,
+            )
         }
+        if (pinnedCount > 0) {
+            Label(
+                "$pinnedCount pinned source(s)",
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
+            )
+        }
+        FilterPanelLabel("Language")
+        ScrollableFilterChips(
+            chips = languageOptions,
+            selected = selectedLanguage,
+            onSelect = onLanguageSelect,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        FilterPanelLabel("Capability")
+        ScrollableFilterChips(
+            chips = SourceQuickFilter.entries.map { it.title },
+            selected = quickFilter.title,
+            onSelect = { title ->
+                onQuickFilterSelect(SourceQuickFilter.entries.firstOrNull { it.title == title } ?: SourceQuickFilter.All)
+            },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        FilterPanelLabel("Sort")
+        ScrollableFilterChips(
+            chips = SourceSort.entries.map { it.title },
+            selected = sourceSort.title,
+            onSelect = { title ->
+                onSortSelect(SourceSort.entries.firstOrNull { it.title == title } ?: SourceSort.Name)
+            },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun SourceLanguageHeader(
+    language: String,
+    count: Int,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.background)
+            .padding(start = 16.dp, end = 16.dp, top = 15.dp, bottom = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Label(
+            language.uppercase(),
+            if (language == "Pinned") ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            11,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Label(
+            "$count source(s)",
+            ChimahonPalette.secondaryText,
+            10,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 10.dp),
+        )
+    }
+}
+
+@Composable
+private fun SourceIconTile(
+    source: ChimahonSourceEntry,
+    size: androidx.compose.ui.unit.Dp,
+    cornerRadius: androidx.compose.ui.unit.Dp,
+    compact: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val color = coverColor(source.id, source.name)
+    val initials = source.sourceInitials()
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(RoundedCornerShape(cornerRadius))
+            .background(color.copy(alpha = 0.18f))
+            .border(1.dp, color.copy(alpha = 0.24f), RoundedCornerShape(cornerRadius)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            initials,
+            color,
+            if (compact) 11 else 13,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(if (compact) 11.dp else 13.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = UiIcon.Web,
+                contentDescription = "",
+                tint = color,
+                modifier = Modifier.size(if (compact) 7.dp else 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SourceCapabilityBadge(
+    text: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .heightIn(min = 22.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(if (active) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            text,
+            if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            10,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -3456,108 +6048,157 @@ private fun SourcesSection(
 private fun SourceListItem(
     source: ChimahonSourceEntry,
     compact: Boolean,
+    pinned: Boolean,
     showLanguage: Boolean,
+    onTogglePinned: () -> Unit,
     onClick: () -> Unit,
     onClickLatest: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ChimahonPalette.surface)
-            .clickable(onClick = onClick)
-            .padding(
-                start = 16.dp,
-                end = 8.dp,
-                top = if (compact) 7.dp else 10.dp,
-                bottom = if (compact) 7.dp else 10.dp,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(ChimahonPalette.surface),
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(if (compact) 34.dp else 42.dp)
-                .clip(CircleShape)
-                .background(coverColor(source.id, source.name).copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .heightIn(min = if (compact) 54.dp else 64.dp)
+                .clickable(onClick = onClick)
+                .padding(
+                    start = 16.dp,
+                    end = 8.dp,
+                    top = if (compact) 6.dp else 9.dp,
+                    bottom = if (compact) 6.dp else 9.dp,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Label(
-                source.name.firstOrNull()?.uppercase() ?: "S",
-                coverColor(source.id, source.name),
-                if (compact) 12 else 15,
-                weight = FontWeight.Bold,
-                maxLines = 1,
+            SourceIconTile(
+                source = source,
+                size = if (compact) 34.dp else 42.dp,
+                cornerRadius = if (compact) 9.dp else 11.dp,
+                compact = compact,
             )
-        }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 14.dp),
-        ) {
-            Label(source.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
-            if (showLanguage || !compact) {
-                Label(
-                    source.language.ifBlank { "multi" }.uppercase(),
-                    ChimahonPalette.secondaryText,
-                    11,
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = 2.dp),
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp),
+            ) {
+                Label(source.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                if (showLanguage || !compact || source.supportsLatest) {
+                    Row(
+                        modifier = Modifier.padding(top = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (showLanguage || !compact) {
+                            SourceCapabilityBadge(
+                                text = source.language.ifBlank { "multi" }.uppercase(),
+                                active = false,
+                            )
+                        }
+                        SourceCapabilityBadge(
+                            text = if (source.supportsLatest) "LATEST" else "POPULAR",
+                            active = source.supportsLatest,
+                        )
+                    }
+                }
+            }
+            ChapterQuickAction(
+                icon = UiIcon.Star,
+                contentDescription = if (pinned) "Unpin ${source.name}" else "Pin ${source.name}",
+                active = pinned,
+                onClick = onTogglePinned,
+            )
+            if (source.supportsLatest) {
+                ChapterQuickAction(
+                    icon = UiIcon.Updates,
+                    contentDescription = "Open latest from ${source.name}",
+                    active = false,
+                    onClick = onClickLatest,
+                )
+            } else {
+                IconGlyph(
+                    icon = UiIcon.Forward,
+                    contentDescription = "Open ${source.name}",
+                    tint = ChimahonPalette.secondaryText,
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
-        if (source.supportsLatest) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
-                    .clickable(onClick = onClickLatest)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                Label("Latest", ChimahonPalette.primary, 12, weight = FontWeight.SemiBold, maxLines = 1)
-            }
-        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = if (compact) 64.dp else 72.dp)
+                .height(1.dp)
+                .background(ChimahonPalette.divider),
+        )
+    }
+}
+
+private fun ChimahonSourceEntry.sourceInitials(): String {
+    val words = name
+        .replace('-', ' ')
+        .replace('_', ' ')
+        .split(' ')
+        .mapNotNull { word -> word.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() }
+    return when {
+        words.size >= 2 -> (words[0] + words[1]).take(2)
+        words.size == 1 -> words[0]
+        else -> language.sourceLanguageCode().take(2).uppercase().ifBlank { "S" }
     }
 }
 
 @Composable
 private fun SourceGridCard(
     source: ChimahonSourceEntry,
+    pinned: Boolean,
     showLanguage: Boolean,
+    onTogglePinned: () -> Unit,
     onClick: () -> Unit,
     onClickLatest: () -> Unit,
 ) {
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(6.dp))
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(8.dp))
+            .border(1.dp, if (pinned) ChimahonPalette.primary.copy(alpha = 0.36f) else ChimahonPalette.divider, RoundedCornerShape(6.dp))
             .clickable(onClick = onClick)
             .padding(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(coverColor(source.id, source.name).copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Label(
-                    source.name.firstOrNull()?.uppercase() ?: "S",
-                    coverColor(source.id, source.name),
-                    14,
-                    weight = FontWeight.Bold,
-                    maxLines = 1,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SourceIconTile(source = source, size = 42.dp, cornerRadius = 11.dp)
+            if (showLanguage) {
+                SourceCapabilityBadge(
+                    text = source.language.ifBlank { "multi" }.uppercase(),
+                    active = false,
                 )
             }
+            Spacer(modifier = Modifier.weight(1f))
+            ChapterQuickAction(
+                icon = UiIcon.Star,
+                contentDescription = if (pinned) "Unpin ${source.name}" else "Pin ${source.name}",
+                active = pinned,
+                onClick = onTogglePinned,
+            )
             if (source.supportsLatest) {
                 Box(
                     modifier = Modifier
-                        .padding(start = 8.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .size(34.dp)
+                        .clip(CircleShape)
                         .background(ChimahonPalette.primaryContainer)
-                        .clickable(onClick = onClickLatest)
-                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                        .clickable(onClick = onClickLatest),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Label("Latest", ChimahonPalette.primary, 10, weight = FontWeight.SemiBold, maxLines = 1)
+                    IconGlyph(
+                        icon = UiIcon.Updates,
+                        contentDescription = "Open latest from ${source.name}",
+                        tint = ChimahonPalette.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         }
@@ -3569,14 +6210,18 @@ private fun SourceGridCard(
             maxLines = 2,
             modifier = Modifier.padding(top = 10.dp),
         )
-        if (showLanguage) {
-            Label(
-                source.language.ifBlank { "multi" }.uppercase(),
-                ChimahonPalette.secondaryText,
-                11,
-                maxLines = 1,
-                modifier = Modifier.padding(top = 4.dp),
+        Row(
+            modifier = Modifier.padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SourceCapabilityBadge(
+                text = if (source.supportsLatest) "LATEST" else "POPULAR",
+                active = source.supportsLatest,
             )
+            if (pinned) {
+                SourceCapabilityBadge("PINNED", active = true)
+            }
         }
     }
 }
@@ -3707,6 +6352,7 @@ private fun SourceDetailHome(
                     val libraryRemoteKeys = snapshot.mangaDetails.values
                         .map { "${it.sourceId}:${it.url}" }
                         .toSet()
+                    val sourceLibraryCount = snapshot.mangaDetails.values.count { it.sourceId == source.id }
                     val visiblePreview = preview.preview.copy(
                         entries = preview.preview.entries.filter { entry ->
                             !browseSettings.hideLibraryEntries ||
@@ -3731,6 +6377,24 @@ private fun SourceDetailHome(
                         )
                     } else {
                         val gridState = rememberLazyGridState()
+                        LaunchedEffect(
+                            visiblePreview.entries.size,
+                            visiblePreview.hasNextPage,
+                            browseSettings.autoLoadMore,
+                            loadingMore,
+                            loadMoreError,
+                        ) {
+                            if (
+                                browseSettings.autoLoadMore &&
+                                visiblePreview.hasNextPage &&
+                                !loadingMore &&
+                                loadMoreError == null &&
+                                visiblePreview.entries.size < SOURCE_CATALOG_PREFETCH_ITEM_COUNT
+                            ) {
+                                loadingMore = true
+                                pageNumber++
+                            }
+                        }
                         LaunchedEffect(
                             gridState,
                             visiblePreview.entries.size,
@@ -3769,6 +6433,12 @@ private fun SourceDetailHome(
                             verticalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
+                                SourceDetailHeader(
+                                    source = source,
+                                    localCount = sourceLibraryCount,
+                                )
+                            }
+                            item(span = { GridItemSpan(maxLineSpan) }) {
                                 SourcePreviewHeader(visiblePreview)
                             }
                             items(visiblePreview.entries, key = { "${it.sourceId}:${it.url}" }) { entry ->
@@ -3778,51 +6448,22 @@ private fun SourceDetailHome(
                                     onClick = { onOpenRemoteManga(entry) },
                                 )
                             }
-                            if (
-                                visiblePreview.hasNextPage &&
-                                (!browseSettings.autoLoadMore || loadingMore || loadMoreError != null)
-                            ) {
+                            if (visiblePreview.hasNextPage) {
                                 item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 8.dp),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        if (loadingMore) {
-                                            Label(
-                                                text = "Loading more...",
-                                                color = ChimahonPalette.secondaryText,
-                                                size = 12,
-                                                weight = FontWeight.SemiBold,
-                                            )
-                                        } else {
-                                            TextButtonLike(
-                                                text = if (loadMoreError == null) "Load more" else "Retry",
-                                                onClick = {
-                                                    if (loadMoreError == null) {
-                                                        pageNumber++
-                                                    } else {
-                                                        loadMoreError = null
-                                                        loadingMore = true
-                                                        pageRequestKey++
-                                                    }
-                                                },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            loadMoreError?.let { message ->
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Label(
-                                        text = message,
-                                        color = ChimahonPalette.error,
-                                        size = 11,
-                                        maxLines = 3,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp),
+                                    SourceCatalogFooter(
+                                        autoLoadMore = browseSettings.autoLoadMore,
+                                        loadingMore = loadingMore,
+                                        loadMoreError = loadMoreError,
+                                        onLoadMore = {
+                                            if (loadMoreError == null) {
+                                                loadingMore = true
+                                                pageNumber++
+                                            } else {
+                                                loadMoreError = null
+                                                loadingMore = true
+                                                pageRequestKey++
+                                            }
+                                        },
                                     )
                                 }
                             }
@@ -3840,39 +6481,48 @@ private fun SourceBrowseModeTabs(
     selected: ChimahonSourceBrowseMode,
     onSelect: (ChimahonSourceBrowseMode) -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, ChimahonPalette.divider),
+            .background(ChimahonPalette.surface),
     ) {
-        modes.forEach { mode ->
-            val isSelected = mode == selected
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { onSelect(mode) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    modifier = Modifier.height(46.dp),
-                    contentAlignment = Alignment.Center,
+        Row(modifier = Modifier.fillMaxWidth()) {
+            modes.forEach { mode ->
+                val isSelected = mode == selected
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onSelect(mode) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Label(
-                        mode.title,
-                        if (isSelected) ChimahonPalette.primary else ChimahonPalette.onSurface,
-                        13,
-                        weight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                        maxLines = 1,
+                    Box(
+                        modifier = Modifier.height(45.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Label(
+                            mode.title,
+                            if (isSelected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                            13,
+                            weight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                            maxLines = 1,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp))
+                            .background(if (isSelected) ChimahonPalette.primary else Color.Transparent),
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .height(3.dp)
-                        .fillMaxWidth()
-                        .background(if (isSelected) ChimahonPalette.primary else Color.Transparent),
-                )
             }
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(ChimahonPalette.divider),
+        )
     }
 }
 
@@ -3929,30 +6579,16 @@ private fun SourceDetailHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(6.dp))
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(12.dp))
+            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(6.dp))
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(58.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(ChimahonPalette.primaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Label(
-                source.name.firstOrNull()?.uppercase() ?: "S",
-                ChimahonPalette.primary,
-                20,
-                weight = FontWeight.Bold,
-                maxLines = 1,
-            )
-        }
+        SourceIconTile(source = source, size = 56.dp, cornerRadius = 12.dp)
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Label(source.name, ChimahonPalette.onSurface, 18, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(source.name, ChimahonPalette.onSurface, 17, weight = FontWeight.SemiBold, maxLines = 1)
             Label(
                 "${source.language.ifBlank { "multi" }.uppercase()} - $localCount in library",
                 ChimahonPalette.secondaryText,
@@ -3961,12 +6597,9 @@ private fun SourceDetailHeader(
                 modifier = Modifier.padding(top = 3.dp),
             )
         }
-        Label(
-            if (source.supportsLatest) "Latest" else "Popular",
-            ChimahonPalette.primary,
-            12,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
+        SourceCapabilityBadge(
+            text = if (source.supportsLatest) "Latest" else "Popular",
+            active = source.supportsLatest,
         )
     }
 }
@@ -3976,7 +6609,7 @@ private fun SourcePreviewHeader(preview: ChimahonSourcePreview) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Label(preview.mode.title, ChimahonPalette.onSurface, 16, weight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -3986,6 +6619,73 @@ private fun SourcePreviewHeader(preview: ChimahonSourcePreview) {
             12,
             maxLines = 1,
         )
+    }
+}
+
+@Composable
+private fun SourceCatalogFooter(
+    autoLoadMore: Boolean,
+    loadingMore: Boolean,
+    loadMoreError: String?,
+    onLoadMore: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(6.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(if (loadMoreError != null) ChimahonPalette.error.copy(alpha = 0.12f) else ChimahonPalette.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = if (loadMoreError != null) UiIcon.Info else UiIcon.Refresh,
+                contentDescription = "",
+                tint = if (loadMoreError != null) ChimahonPalette.error else ChimahonPalette.primary,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Label(
+                text = when {
+                    loadMoreError != null -> "Could not load the next page"
+                    loadingMore -> "Loading next page"
+                    autoLoadMore -> "More entries load automatically"
+                    else -> "More entries available"
+                },
+                color = if (loadMoreError != null) ChimahonPalette.error else ChimahonPalette.onSurface,
+                size = 13,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+            Label(
+                text = loadMoreError ?: if (autoLoadMore) {
+                    "Scroll near the end to continue this catalogue."
+                } else {
+                    "Load the next catalogue page when you are ready."
+                },
+                color = ChimahonPalette.secondaryText,
+                size = 11,
+                lineHeight = 16,
+                maxLines = 2,
+                modifier = Modifier.padding(start = 12.dp, top = 3.dp),
+            )
+        }
+        if (!autoLoadMore || loadMoreError != null) {
+            TextButtonLike(
+                text = if (loadMoreError == null) "Load more" else "Retry",
+                onClick = onLoadMore,
+            )
+        }
     }
 }
 
@@ -4148,7 +6848,7 @@ private fun RemoteMangaDetailContent(
                         .weight(0.42f)
                         .fillMaxHeight()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                 ) {
                     RemoteMangaDetailHeader(
                         detail = detail,
@@ -4161,11 +6861,11 @@ private fun RemoteMangaDetailContent(
                         onOpenLibraryManga = onOpenLibraryManga,
                         onOpenRemoteMangaUrl = onOpenRemoteMangaUrl,
                         onAddToLibrary = onAddToLibrary,
-                        modifier = Modifier.padding(top = 10.dp),
+                        modifier = Modifier.padding(top = 8.dp),
                     )
                     RemoteMangaDescriptionPanel(
                         detail = detail,
-                        modifier = Modifier.padding(top = 8.dp),
+                        modifier = Modifier.padding(top = 6.dp),
                     )
                 }
                 Box(
@@ -4176,6 +6876,7 @@ private fun RemoteMangaDetailContent(
                 )
                 RemoteChapterPane(
                     detail = detail.copy(chapters = visibleChapters),
+                    allChapterCount = detail.chapters.size,
                     filtersVisible = chapterFiltersVisible,
                     descending = chapterDescending,
                     query = chapterQuery,
@@ -4219,8 +6920,12 @@ private fun RemoteMangaDetailContent(
                 item {
                     RemoteChapterHeader(
                         chapters = visibleChapters,
+                        allChapterCount = detail.chapters.size,
                         filtersVisible = chapterFiltersVisible,
+                        descending = chapterDescending,
+                        query = chapterQuery,
                         onToggleFilters = { chapterFiltersVisible = !chapterFiltersVisible },
+                        onSortDirectionChange = { chapterDescending = it },
                         modifier = Modifier.padding(top = 12.dp),
                     )
                 }
@@ -4260,6 +6965,7 @@ private fun RemoteMangaDetailContent(
 @Composable
 private fun RemoteChapterPane(
     detail: ChimahonRemoteMangaDetail,
+    allChapterCount: Int,
     filtersVisible: Boolean,
     descending: Boolean,
     query: String,
@@ -4276,8 +6982,12 @@ private fun RemoteChapterPane(
         item {
             RemoteChapterHeader(
                 chapters = detail.chapters,
+                allChapterCount = allChapterCount,
                 filtersVisible = filtersVisible,
+                descending = descending,
+                query = query,
                 onToggleFilters = onToggleFilters,
+                onSortDirectionChange = onSortDirectionChange,
             )
         }
         if (filtersVisible) {
@@ -4320,11 +7030,28 @@ private fun RemoteMangaDetailHeader(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(vertical = 4.dp)
+            .background(ChimahonPalette.surface),
     ) {
+        ThumbnailArtwork(
+            url = detail.thumbnailUrl,
+            title = detail.title,
+            fallbackColor = coverColor(detail.sourceId xor detail.url.hashCode().toLong(), detail.title),
+            modifier = Modifier
+                .matchParentSize()
+                .alpha(0.14f),
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(ChimahonPalette.background.copy(alpha = 0.76f)),
+        )
         val useCenteredLayout = centered || maxWidth < 420.dp
         if (!useCenteredLayout) {
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
                 RemoteMangaCoverTile(
                     detail = detail,
                     modifier = Modifier
@@ -4339,7 +7066,12 @@ private fun RemoteMangaDetailHeader(
                 )
             }
         } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 RemoteMangaCoverTile(
                     detail = detail,
                     modifier = Modifier
@@ -4407,6 +7139,12 @@ private fun RemoteMangaInfoColumn(
     centered: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val infoChips = listOf(
+        MangaInfoChipSpec(detail.status.ifBlank { "Unknown status" }, active = true),
+        MangaInfoChipSpec(detail.sourceName, icon = UiIcon.Web),
+        MangaInfoChipSpec("${detail.chapters.size} chapters", icon = UiIcon.Chapters),
+        MangaInfoChipSpec(if (detail.initialized) "Initialized" else "Needs refresh"),
+    )
     Column(
         modifier = modifier,
         horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
@@ -4419,20 +7157,16 @@ private fun RemoteMangaInfoColumn(
             maxLines = 1,
             modifier = Modifier.padding(top = 5.dp),
         )
-        Label(
-            text = "${detail.status}  \u00b7  ${detail.sourceName}",
-            color = ChimahonPalette.secondaryText,
-            size = 12,
-            maxLines = 1,
-            modifier = Modifier.padding(top = 5.dp),
-        )
-        Label(
-            text = "${detail.chapters.size} chapters",
-            color = ChimahonPalette.secondaryText,
-            size = 11,
-            maxLines = 1,
-            modifier = Modifier.padding(top = 3.dp),
-        )
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 9.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(infoChips, key = { it.text }) { chip ->
+                MangaInfoPill(chip)
+            }
+        }
     }
 }
 
@@ -4557,37 +7291,75 @@ private fun RemoteMangaDescriptionPanel(
 @Composable
 private fun RemoteChapterHeader(
     chapters: List<ChimahonRemoteChapterEntry>,
+    allChapterCount: Int,
+    selectedCount: Int = 0,
     filtersVisible: Boolean,
+    descending: Boolean,
+    query: String,
     onToggleFilters: () -> Unit,
+    onSortDirectionChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.45f))
+            .padding(top = 8.dp, bottom = 7.dp),
     ) {
-        Label(
-            "${chapters.size} chapters",
-            ChimahonPalette.onSurface,
-            16,
-            weight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f),
-        )
-        Box(
+        Row(
             modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(if (filtersVisible) ChimahonPalette.primaryContainer else Color.Transparent)
-                .clickable(onClick = onToggleFilters),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconGlyph(
-                icon = UiIcon.Filter,
-                contentDescription = "Chapter filters",
-                tint = if (filtersVisible) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                modifier = Modifier.size(19.dp),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Label(
+                    if (selectedCount > 0) "$selectedCount selected" else "Chapters",
+                    ChimahonPalette.onSurface,
+                    15,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    if (chapters.size == allChapterCount) {
+                        "$allChapterCount source chapters"
+                    } else {
+                        "${chapters.size} of $allChapterCount source chapters"
+                    },
+                    if (selectedCount > 0) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                ChapterHeaderAction(
+                    icon = UiIcon.Swap,
+                    contentDescription = if (descending) "Sort ascending" else "Sort descending",
+                    active = !descending,
+                    onClick = { onSortDirectionChange(!descending) },
+                )
+                ChapterHeaderAction(
+                    icon = UiIcon.Filter,
+                    contentDescription = "Chapter filters",
+                    active = filtersVisible,
+                    onClick = onToggleFilters,
+                )
+            }
+        }
+        val summaryItems = listOfNotNull(
+            "${chapters.size} visible" to false,
+            (if (descending) "Newest first" else "Oldest first") to false,
+            query.takeIf { it.isNotBlank() }?.let { "Search" to true },
+        )
+        LazyRow(
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(summaryItems, key = { it.first }) { item ->
+                ChapterSummaryPill(text = item.first, active = item.second)
+            }
         }
     }
 }
@@ -4603,21 +7375,52 @@ private fun RemoteChapterFilterPanel(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
-            .padding(bottom = 8.dp),
+            .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 6.dp, bottom = 8.dp)
+                .width(38.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.divider),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Label("Chapter filters", ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                Label("Search and order source chapters", ChimahonPalette.secondaryText, 11, maxLines = 1)
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(42.dp)
-                .padding(horizontal = 12.dp, vertical = 2.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(ChimahonPalette.background)
                 .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(8.dp))
                 .padding(horizontal = 12.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
+            IconGlyph(
+                icon = UiIcon.Search,
+                contentDescription = "Search chapters",
+                tint = ChimahonPalette.secondaryText,
+                modifier = Modifier.size(17.dp),
+            )
             if (query.isBlank()) {
-                Label("Search chapters", ChimahonPalette.secondaryText, 12, maxLines = 1)
+                Label(
+                    "Search chapters",
+                    ChimahonPalette.secondaryText,
+                    12,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 26.dp),
+                )
             }
             BasicTextField(
                 value = query,
@@ -4628,14 +7431,17 @@ private fun RemoteChapterFilterPanel(
                     fontSize = 13.sp,
                     lineHeight = 17.sp,
                 ),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 26.dp),
             )
         }
-        FilterChips(
-            chips = listOf("Newest first", "Oldest first"),
-            selected = if (descending) "Newest first" else "Oldest first",
-            onSelect = { onSortDirectionChange(it == "Newest first") },
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        SegmentTabs(
+            values = listOf(true, false),
+            selected = descending,
+            label = { if (it) "Newest first" else "Oldest first" },
+            onSelect = onSortDirectionChange,
+            modifier = Modifier.padding(top = 10.dp),
         )
     }
 }
@@ -4645,42 +7451,62 @@ private fun RemoteChapterListItem(
     chapter: ChimahonRemoteChapterEntry,
     onClick: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
-            .clickable(onClick = onClick)
-            .padding(start = 16.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clickable(onClick = onClick),
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 58.dp)
+                .padding(start = 14.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Label(
-                text = chapter.name,
-                color = ChimahonPalette.onSurface,
-                size = 13,
-                maxLines = 1,
+            ChapterMarkerBadge(
+                text = chapter.remoteChapterMarker(),
+                active = true,
             )
-            Label(
-                text = buildString {
-                    if (chapter.dateUpload > 0L) append(chapter.dateUpload.toDateBucket("Uploaded"))
-                    chapter.scanlator?.takeIf { it.isNotBlank() }?.let {
-                        if (isNotEmpty()) append("  \u00b7  ")
-                        append(it)
-                    }
-                }.ifBlank { "Source chapter" },
-                color = ChimahonPalette.secondaryText,
-                size = 11,
-                maxLines = 1,
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Label(
+                    text = chapter.name,
+                    color = ChimahonPalette.onSurface,
+                    size = 13,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    text = buildString {
+                        if (chapter.dateUpload > 0L) append(chapter.dateUpload.toDateBucket("Uploaded"))
+                        chapter.scanlator?.takeIf { it.isNotBlank() }?.let {
+                            if (isNotEmpty()) append("  -  ")
+                            append(it)
+                        }
+                    }.ifBlank { "Source chapter" },
+                    color = ChimahonPalette.secondaryText,
+                    size = 11,
+                    maxLines = 1,
+                )
+            }
+            IconGlyph(
+                icon = UiIcon.Play,
+                contentDescription = "Read chapter",
+                tint = ChimahonPalette.secondaryText,
+                modifier = Modifier.size(20.dp),
             )
         }
-        IconGlyph(
-            icon = UiIcon.Play,
-            contentDescription = "Read chapter",
-            tint = ChimahonPalette.secondaryText,
-            modifier = Modifier.size(20.dp),
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .padding(start = 62.dp)
+                .background(ChimahonPalette.divider.copy(alpha = 0.72f)),
         )
     }
 }
@@ -4700,6 +7526,8 @@ private fun ReaderHome(
     onOpenExternalUrl: (String) -> Boolean,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onCloseReader: () -> Unit,
+    desktopCommandRequest: ChimahonDesktopCommandRequest? = null,
+    onDesktopCommandHandled: (Long) -> Unit = {},
 ) {
     var refreshKey by remember(request) { mutableIntStateOf(0) }
     var state by remember(request) {
@@ -4708,11 +7536,22 @@ private fun ReaderHome(
 
     LaunchedEffect(request, refreshKey) {
         state = ReaderUiState.Loading
+        if (settings.readerStartupDelay) {
+            delay(250)
+        }
         state = runCatching { onLoadReaderChapter(request) }
             .fold(
                 onSuccess = ReaderUiState::Ready,
                 onFailure = { ReaderUiState.Failed(it.message ?: "Unable to load chapter pages.") },
             )
+    }
+    LaunchedEffect(desktopCommandRequest?.id, state) {
+        val commandRequest = desktopCommandRequest ?: return@LaunchedEffect
+        if (!commandRequest.command.readerScoped) return@LaunchedEffect
+        val readyState = state as? ReaderUiState.Ready
+        if (readyState == null || readyState.chapter.pages.isEmpty()) {
+            onDesktopCommandHandled(commandRequest.id)
+        }
     }
 
     when (val readerState = state) {
@@ -4759,6 +7598,8 @@ private fun ReaderHome(
                     onOpenExternalUrl = onOpenExternalUrl,
                     onOpenReader = onOpenReader,
                     onCloseReader = onCloseReader,
+                    desktopCommandRequest = desktopCommandRequest,
+                    onDesktopCommandHandled = onDesktopCommandHandled,
                 )
             }
         }
@@ -4815,12 +7656,16 @@ private fun ReaderContent(
     onOpenExternalUrl: (String) -> Boolean,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onCloseReader: () -> Unit,
+    desktopCommandRequest: ChimahonDesktopCommandRequest? = null,
+    onDesktopCommandHandled: (Long) -> Unit = {},
 ) {
     var readerPreferences by remember(chapter.request) { mutableStateOf(settings) }
-    var mode by remember(chapter.request) { mutableStateOf(settings.mode.toUiReaderMode()) }
+    var mode by remember(chapter.request) { mutableStateOf(settings.initialReaderMode(chapter)) }
     var scale by remember(chapter.request.mangaId) { mutableStateOf(settings.scale.toUiReaderScale()) }
     var canvas by remember(chapter.request.mangaId) { mutableStateOf(settings.canvas.toUiReaderCanvas()) }
-    var controlsVisible by remember(chapter.request) { mutableStateOf(settings.keepControlsVisible) }
+    var controlsVisible by remember(chapter.request) {
+        mutableStateOf(settings.keepControlsVisible || settings.showNavigationOverlayOnStart)
+    }
     var settingsVisible by remember(chapter.request) { mutableStateOf(false) }
     var chaptersVisible by remember(chapter.request) { mutableStateOf(false) }
     var statsVisible by remember(chapter.request) { mutableStateOf(false) }
@@ -4833,14 +7678,42 @@ private fun ReaderContent(
     var readBusy by remember(chapter.request.chapterId) { mutableStateOf(false) }
     var downloadBusy by remember(chapter.request.chapterId) { mutableStateOf(false) }
     var retainedPage by remember(chapter.request) {
-        mutableIntStateOf(chapter.request.initialPage.coerceIn(chapter.pages.indices))
+        mutableIntStateOf(
+            if (settings.preserveReadingPosition) {
+                chapter.request.initialPage.coerceIn(chapter.pages.indices)
+            } else {
+                0
+            },
+        )
     }
+    val readerStartedAt = remember(chapter.request) { TimeSource.Monotonic.markNow() }
+    var inputLocked by remember(chapter.request) { mutableStateOf(readerPreferences.readerStartupDelay) }
     val pageStates = remember(chapter.request) {
         mutableStateMapOf<Int, ReaderPageUiState>()
     }
-    val previousChapter = chapter.request.chapterQueue.getOrNull(chapter.request.chapterIndex + 1)
-    val nextChapter = chapter.request.chapterQueue.getOrNull(chapter.request.chapterIndex - 1)
+    LaunchedEffect(chapter.request, readerPreferences.readerStartupDelay) {
+        if (readerPreferences.readerStartupDelay) {
+            inputLocked = true
+            delay(650)
+        }
+        inputLocked = false
+    }
+    val previousChapter = chapter.request.chapterQueue.readerAdjacentChapter(
+        currentIndex = chapter.request.chapterIndex,
+        step = 1,
+        settings = readerPreferences,
+    )
+    val nextChapter = chapter.request.chapterQueue.readerAdjacentChapter(
+        currentIndex = chapter.request.chapterIndex,
+        step = -1,
+        settings = readerPreferences,
+    )
     val scope = rememberCoroutineScope()
+    val preloadWindow = if (readerPreferences.aggressivePageLoading) {
+        readerPreferences.preloadSize.coerceIn(4, 20)
+    } else {
+        min(readerPreferences.preloadSize, 6).coerceIn(1, 12)
+    }
     val preloadReaderPage: suspend (Int) -> Unit = { pageIndex ->
         if (pageIndex in chapter.pages.indices && pageStates[pageIndex] == null) {
             pageStates[pageIndex] = ReaderPageUiState.Loading
@@ -4965,11 +7838,15 @@ private fun ReaderContent(
                     }
             }
             LaunchedEffect(chapter.request, actualGroupIndex, spreadGroups) {
-                listOf(actualGroupIndex - 1, actualGroupIndex + 1)
+                val preloadGroups = (preloadWindow / if (dualPage) 2 else 1).coerceAtLeast(1)
+                ((actualGroupIndex - preloadGroups)..(actualGroupIndex + preloadGroups))
                     .filter { it in spreadGroups.indices }
                     .flatMap { spreadGroups[it] }
                     .distinct()
-                    .forEach { preloadReaderPage(it) }
+                    .preloadReaderPages(
+                        maxConcurrency = readerPreferences.readerThreads,
+                        preloadReaderPage = preloadReaderPage,
+                    )
             }
             ReaderScaffold(
                 request = chapter.request,
@@ -4986,6 +7863,8 @@ private fun ReaderContent(
                 settingsVisible = settingsVisible,
                 chaptersVisible = chaptersVisible,
                 statsVisible = statsVisible,
+                inputLocked = inputLocked,
+                elapsedSeconds = readerStartedAt.elapsedNow().inWholeSeconds.coerceAtLeast(1),
                 showPageStrip = showPageStrip,
                 showControlsOnStart = showControlsOnStart,
                 readerSettings = readerPreferences.copy(
@@ -5158,9 +8037,17 @@ private fun ReaderContent(
                     } else {
                         groupIndex
                     }
-                    scope.launch { pagerState.scrollToPage(target) }
+                    scope.launch {
+                        if (readerPreferences.pageTransitions) {
+                            pagerState.animateScrollToPage(target)
+                        } else {
+                            pagerState.scrollToPage(target)
+                        }
+                    }
                 },
                 onBack = onCloseReader,
+                desktopCommandRequest = desktopCommandRequest,
+                onDesktopCommandHandled = onDesktopCommandHandled,
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -5202,10 +8089,17 @@ private fun ReaderContent(
                     } else {
                         Row(
                             modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.Center,
+                            horizontalArrangement = Arrangement.spacedBy(
+                                readerPreferences.centerMarginDp.coerceIn(0, 64).dp,
+                                Alignment.CenterHorizontally,
+                            ),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            val visibleSpread = if (mode.rightToLeft) spread.reversed() else spread
+                            val visibleSpread = if (mode.rightToLeft xor readerPreferences.invertDoublePages) {
+                                spread.reversed()
+                            } else {
+                                spread
+                            }
                             visibleSpread.forEach { pageIndex ->
                                 Box(
                                     modifier = Modifier
@@ -5246,7 +8140,14 @@ private fun ReaderContent(
                     }
             }
             LaunchedEffect(chapter.request, visibleListPage) {
-                (visibleListPage + 1..visibleListPage + 3).forEach { preloadReaderPage(it) }
+                val preloadBehind = if (readerPreferences.aggressivePageLoading) preloadWindow / 2 else 0
+                val first = (visibleListPage - preloadBehind).coerceAtLeast(0)
+                val last = (visibleListPage + preloadWindow).coerceAtMost(chapter.pages.lastIndex)
+                (first..last)
+                    .preloadReaderPages(
+                        maxConcurrency = readerPreferences.readerThreads,
+                        preloadReaderPage = preloadReaderPage,
+                    )
             }
             ReaderScaffold(
                 request = chapter.request,
@@ -5263,6 +8164,8 @@ private fun ReaderContent(
                 settingsVisible = settingsVisible,
                 chaptersVisible = chaptersVisible,
                 statsVisible = statsVisible,
+                inputLocked = inputLocked,
+                elapsedSeconds = readerStartedAt.elapsedNow().inWholeSeconds.coerceAtLeast(1),
                 showPageStrip = showPageStrip,
                 showControlsOnStart = showControlsOnStart,
                 readerSettings = readerPreferences.copy(
@@ -5418,9 +8321,17 @@ private fun ReaderContent(
                     }
                 },
                 onPageSelected = { pageIndex ->
-                    scope.launch { listState.scrollToItem(pageIndex) }
+                    scope.launch {
+                        if (readerPreferences.pageTransitions) {
+                            listState.animateScrollToItem(pageIndex)
+                        } else {
+                            listState.scrollToItem(pageIndex)
+                        }
+                    }
                 },
                 onBack = onCloseReader,
+                desktopCommandRequest = desktopCommandRequest,
+                onDesktopCommandHandled = onDesktopCommandHandled,
             ) {
                 LazyColumn(
                     state = listState,
@@ -5428,12 +8339,12 @@ private fun ReaderContent(
                         .fillMaxSize()
                         .background(canvas.readerBackground(readerPreferences.pureBlackBackground)),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = if (mode == ReaderMode.Vertical) {
+                    verticalArrangement = if (mode == ReaderMode.Vertical && !readerPreferences.continuousMode) {
                         Arrangement.spacedBy(12.dp)
                     } else {
                         Arrangement.Top
                     },
-                    contentPadding = if (mode == ReaderMode.Vertical) {
+                    contentPadding = if (mode == ReaderMode.Vertical && !readerPreferences.continuousMode) {
                         PaddingValues(vertical = 12.dp)
                     } else {
                         PaddingValues()
@@ -5458,6 +8369,7 @@ private fun ReaderContent(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun ReaderScaffold(
     request: ChimahonReaderRequest,
@@ -5474,6 +8386,8 @@ private fun ReaderScaffold(
     settingsVisible: Boolean,
     chaptersVisible: Boolean,
     statsVisible: Boolean,
+    inputLocked: Boolean,
+    elapsedSeconds: Long,
     showPageStrip: Boolean,
     showControlsOnStart: Boolean,
     readerSettings: ChimahonReaderSettings,
@@ -5505,6 +8419,8 @@ private fun ReaderScaffold(
     onNextPage: () -> Unit,
     onPageSelected: (Int) -> Unit,
     onBack: () -> Unit,
+    desktopCommandRequest: ChimahonDesktopCommandRequest? = null,
+    onDesktopCommandHandled: (Long) -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
@@ -5516,12 +8432,79 @@ private fun ReaderScaffold(
         }
         else -> readerSettings.navigationMode
     }
+    var wheelAccumulator by remember(request, mode) { mutableStateOf(0f) }
+    var flashVisible by remember(request) { mutableStateOf(false) }
+    var flashPulse by remember(request) { mutableIntStateOf(0) }
+    var lastFlashPage by remember(request) { mutableIntStateOf(currentPage) }
 
     LaunchedEffect(request) {
         focusRequester.requestFocus()
     }
+    LaunchedEffect(desktopCommandRequest?.id) {
+        val commandRequest = desktopCommandRequest ?: return@LaunchedEffect
+        if (!commandRequest.command.readerScoped) return@LaunchedEffect
+        when (commandRequest.command) {
+            ChimahonDesktopCommand.ReaderPreviousPage -> onPreviousPage()
+            ChimahonDesktopCommand.ReaderNextPage -> onNextPage()
+            ChimahonDesktopCommand.ReaderFirstPage -> if (pageCount > 0) onPageSelected(0)
+            ChimahonDesktopCommand.ReaderLastPage -> if (pageCount > 0) onPageSelected(pageCount - 1)
+            ChimahonDesktopCommand.ReaderPreviousChapter -> onPreviousChapter?.invoke()
+            ChimahonDesktopCommand.ReaderNextChapter -> onNextChapter?.invoke()
+            ChimahonDesktopCommand.ReaderToggleControls -> onToggleControls()
+            ChimahonDesktopCommand.ReaderCycleMode -> {
+                val nextIndex = (ReaderMode.entries.indexOf(mode) + 1) % ReaderMode.entries.size
+                onModeChange(ReaderMode.entries[nextIndex])
+            }
+            ChimahonDesktopCommand.ReaderOpenSettings -> onToggleSettings()
+            ChimahonDesktopCommand.ReaderOpenChapters -> onToggleChapters()
+            ChimahonDesktopCommand.ReaderToggleStats -> onToggleStats()
+            ChimahonDesktopCommand.ReaderToggleCrop -> onToggleCrop()
+            ChimahonDesktopCommand.ReaderBookmarkChapter -> onToggleBookmark?.invoke()
+            ChimahonDesktopCommand.ReaderDownloadChapter -> onDownloadChapter?.invoke()
+            ChimahonDesktopCommand.ReaderMarkChapterRead -> onMarkChapterRead?.invoke()
+            ChimahonDesktopCommand.ReaderOpenChapterUrl -> onOpenChapterUrl?.invoke()
+            else -> Unit
+        }
+        onDesktopCommandHandled(commandRequest.id)
+    }
+    LaunchedEffect(
+        currentPage,
+        pageCount,
+        readerSettings.flashOnPageChange,
+        readerSettings.flashDurationMillis,
+        readerSettings.flashPageInterval,
+    ) {
+        val durationMillis = readerSettings.flashDurationMillis.coerceIn(100, 1_500)
+        val interval = readerSettings.flashPageInterval.coerceIn(1, 10)
+        if (!readerSettings.flashOnPageChange || pageCount <= 0) {
+            flashVisible = false
+            lastFlashPage = currentPage
+            return@LaunchedEffect
+        }
+        if (currentPage != lastFlashPage && abs(currentPage - lastFlashPage) >= interval) {
+            lastFlashPage = currentPage
+            flashPulse += 1
+            flashVisible = true
+            delay(durationMillis.toLong())
+            flashVisible = false
+        } else {
+            flashVisible = false
+        }
+    }
+    LaunchedEffect(controlsVisible, settingsVisible, chaptersVisible, statsVisible, readerSettings.keepControlsVisible) {
+        if (
+            controlsVisible &&
+            !readerSettings.keepControlsVisible &&
+            !settingsVisible &&
+            !chaptersVisible &&
+            !statsVisible
+        ) {
+            delay(3_500)
+            onToggleControls()
+        }
+    }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(canvas.readerBackground(readerSettings.pureBlackBackground))
@@ -5529,6 +8512,7 @@ private fun ReaderScaffold(
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (inputLocked && event.key != Key.Escape) return@onPreviewKeyEvent true
                 when (event.key) {
                     Key.VolumeUp -> {
                         if (!readerSettings.volumeKeysEnabled) {
@@ -5565,6 +8549,79 @@ private fun ReaderScaffold(
                         onToggleControls()
                         true
                     }
+                    Key.M -> {
+                        if (settingsVisible || chaptersVisible || statsVisible) {
+                            false
+                        } else {
+                            val nextIndex = (ReaderMode.entries.indexOf(mode) + 1) % ReaderMode.entries.size
+                            onModeChange(ReaderMode.entries[nextIndex])
+                            true
+                        }
+                    }
+                    Key.S -> {
+                        if (chaptersVisible) {
+                            false
+                        } else {
+                            onToggleSettings()
+                            true
+                        }
+                    }
+                    Key.C -> {
+                        if (settingsVisible || chaptersVisible) {
+                            false
+                        } else {
+                            onToggleChapters()
+                            true
+                        }
+                    }
+                    Key.I -> {
+                        if (settingsVisible || chaptersVisible) {
+                            false
+                        } else {
+                            onToggleStats()
+                            true
+                        }
+                    }
+                    Key.F -> {
+                        if (settingsVisible || chaptersVisible || statsVisible) {
+                            false
+                        } else {
+                            onToggleCrop()
+                            true
+                        }
+                    }
+                    Key.B -> {
+                        if (settingsVisible || chaptersVisible || statsVisible || onToggleBookmark == null) {
+                            false
+                        } else {
+                            onToggleBookmark()
+                            true
+                        }
+                    }
+                    Key.D -> {
+                        if (settingsVisible || chaptersVisible || statsVisible || onDownloadChapter == null) {
+                            false
+                        } else {
+                            onDownloadChapter()
+                            true
+                        }
+                    }
+                    Key.R -> {
+                        if (settingsVisible || chaptersVisible || statsVisible || onMarkChapterRead == null) {
+                            false
+                        } else {
+                            onMarkChapterRead()
+                            true
+                        }
+                    }
+                    Key.O -> {
+                        if (settingsVisible || chaptersVisible || statsVisible || onOpenChapterUrl == null) {
+                            false
+                        } else {
+                            onOpenChapterUrl()
+                            true
+                        }
+                    }
                     Key.MoveHome -> {
                         onPageSelected(0)
                         true
@@ -5583,18 +8640,59 @@ private fun ReaderScaffold(
                     }
                     else -> false
                 }
+            }
+            .onPointerEvent(PointerEventType.Scroll) { event ->
+                if (
+                    mode.paged &&
+                    !inputLocked &&
+                    readerSettings.swipeNavigationEnabled &&
+                    !settingsVisible &&
+                    !chaptersVisible &&
+                    !statsVisible &&
+                    event.changes.any { abs(it.scrollDelta.y) > abs(it.scrollDelta.x) }
+                ) {
+                    val delta = event.changes.sumOf { it.scrollDelta.y.toDouble() }.toFloat()
+                    wheelAccumulator += delta
+                    if (abs(wheelAccumulator) >= 48f) {
+                        if (wheelAccumulator > 0f) onNextPage() else onPreviousPage()
+                        wheelAccumulator = 0f
+                    }
+                }
             },
     ) {
+        val readerWidth = maxWidth
+        val readerHeight = maxHeight
+        val useVerticalPageStrip = showPageStrip &&
+            !readerSettings.forceHorizontalSeekbar &&
+            readerSettings.landscapeVerticalSeekbar &&
+            readerWidth > readerHeight &&
+            pageCount > 1
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(currentPage, pageCount, controlsVisible, readerSettings) {
+                .semantics {
+                    contentDescription = if (pageCount > 0) {
+                        "Reader page $currentPage of $pageCount"
+                    } else {
+                        "Reader"
+                    }
+                    stateDescription = if (controlsVisible) "Controls visible" else "Controls hidden"
+                    role = Role.Button
+                    onClick(
+                        label = if (controlsVisible) "Hide reader controls" else "Show reader controls",
+                    ) {
+                        onToggleControls()
+                        true
+                    }
+                }
+                .pointerInput(currentPage, pageCount, controlsVisible, readerSettings, inputLocked) {
                     detectTapGestures(
                         onLongPress = {
-                            if (readerSettings.longTapEnabled) onToggleControls()
+                            if (!inputLocked && readerSettings.longTapEnabled) onToggleControls()
                         },
                         onDoubleTap = {
-                            if (readerSettings.doubleTapToZoom) {
+                            if (!inputLocked && readerSettings.doubleTapToZoom) {
                                 onScaleChange(
                                     if (scale == ReaderScale.FitWidth) {
                                         ReaderScale.FitScreen
@@ -5605,6 +8703,7 @@ private fun ReaderScaffold(
                             }
                         },
                         onTap = { offset ->
+                            if (inputLocked) return@detectTapGestures
                             if (!readerSettings.tapZonesEnabled || size.width <= 0 || size.height <= 0) {
                                 onToggleControls()
                                 return@detectTapGestures
@@ -5626,9 +8725,71 @@ private fun ReaderScaffold(
                             }
                         },
                     )
+                }
+                .pointerInput(
+                    currentPage,
+                    pageCount,
+                    mode,
+                    scale,
+                    inputLocked,
+                    readerSettings.navigateToPan,
+                    readerSettings.chapterSwipeDistance,
+                    onPreviousChapter,
+                    onNextChapter,
+                ) {
+                    val imagePanOwnsDrag = mode.paged && readerSettings.navigateToPan && scale != ReaderScale.FitScreen
+                    if (!inputLocked && !imagePanOwnsDrag) {
+                        val threshold = readerSettings.chapterSwipeDistance.coerceAtLeast(32).toFloat()
+                        var totalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onHorizontalDrag = { _, dragAmount ->
+                                totalDrag += dragAmount
+                            },
+                            onDragEnd = {
+                                if (abs(totalDrag) >= threshold) {
+                                    val swipedRight = totalDrag > 0f
+                                    when {
+                                        currentPage <= 1 && swipedRight -> {
+                                            if (mode.rightToLeft) onNextChapter?.invoke() else onPreviousChapter?.invoke()
+                                        }
+                                        currentPage >= pageCount && !swipedRight -> {
+                                            if (mode.rightToLeft) onPreviousChapter?.invoke() else onNextChapter?.invoke()
+                                        }
+                                    }
+                                }
+                            },
+                        )
+                    }
                 },
         ) {
             content()
+        }
+
+        AnimatedVisibility(
+            visible = flashVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        readerFlashOverlayColor(readerSettings.flashColor, flashPulse)
+                            .copy(alpha = readerFlashOverlayAlpha(readerSettings.flashColor)),
+                    ),
+            )
+        }
+
+        if (controlsVisible && readerSettings.tapZonesEnabled && readerSettings.showNavigationOverlayOnStart) {
+            ReaderTapZoneOverlay(
+                navigationMode = effectiveNavigationMode,
+                smallerZones = readerSettings.smallerTapZones,
+                tapZonePercent = readerSettings.tapZonePercent,
+                canvas = canvas,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
 
         if (!controlsVisible && pageCount > 0 && readerSettings.showPageNumber) {
@@ -5641,11 +8802,70 @@ private fun ReaderScaffold(
             )
         }
 
-        if (controlsVisible) {
-            Column(
+        if (!controlsVisible && readerSettings.showReadingMode) {
+            ReaderModeIndicator(
+                mode = mode,
+                scale = scale,
+                canvas = canvas,
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth(),
+                    .align(Alignment.TopStart)
+                    .padding(16.dp),
+            )
+        }
+
+        if ((!controlsVisible || readerSettings.alwaysShowChapterTransition) && pageCount > 0) {
+            ReaderChapterEdgeHint(
+                request = request,
+                currentPage = currentPage,
+                pageCount = pageCount,
+                canvas = canvas,
+                previousChapter = previousChapter,
+                nextChapter = nextChapter,
+                onPreviousChapter = onPreviousChapter,
+                onNextChapter = onNextChapter,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = if (controlsVisible) 96.dp else 18.dp),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = controlsVisible && useVerticalPageStrip,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(if (readerSettings.leftVerticalSeekbar) Alignment.CenterStart else Alignment.CenterEnd)
+                .fillMaxHeight()
+                .padding(
+                    start = if (readerSettings.leftVerticalSeekbar) 8.dp else 0.dp,
+                    top = 86.dp,
+                    end = if (readerSettings.leftVerticalSeekbar) 0.dp else 8.dp,
+                    bottom = 86.dp,
+                ),
+        ) {
+            ReaderPageStrip(
+                currentPage = currentPage,
+                pageCount = pageCount,
+                canvas = canvas,
+                onPageSelected = onPageSelected,
+                onPreviousChapter = onPreviousChapter,
+                onNextChapter = onNextChapter,
+                isRtl = mode.rightToLeft,
+                vertical = true,
+                modifier = Modifier.fillMaxHeight(),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 ReaderTopBar(
@@ -5678,12 +8898,32 @@ private fun ReaderScaffold(
                             .padding(horizontal = 10.dp, vertical = 5.dp),
                     )
                 }
+                if (readerWidth >= 720.dp) {
+                    ReaderDesktopShortcutHintBar(
+                        mode = mode,
+                        canvas = canvas,
+                        bookmarkAvailable = onToggleBookmark != null,
+                        downloadAvailable = onDownloadChapter != null,
+                        markReadAvailable = onMarkChapterRead != null,
+                        modifier = Modifier
+                            .fillMaxWidth(0.96f)
+                            .widthIn(max = 760.dp)
+                            .padding(top = 6.dp),
+                    )
+                }
             }
+        }
 
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(),
+        ) {
             Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (statsVisible) {
@@ -5693,12 +8933,14 @@ private fun ReaderScaffold(
                         scale = scale,
                         currentPage = currentPage,
                         pageCount = pageCount,
+                        settings = readerSettings,
+                        elapsedSeconds = elapsedSeconds,
                         previousChapter = previousChapter,
                         nextChapter = nextChapter,
                         modifier = Modifier
-                            .fillMaxWidth(0.96f)
-                            .widthIn(max = 680.dp)
-                            .padding(bottom = 8.dp),
+                            .fillMaxWidth(0.98f)
+                            .widthIn(max = 720.dp)
+                            .padding(bottom = 6.dp),
                     )
                 }
                 if (chaptersVisible) {
@@ -5711,9 +8953,9 @@ private fun ReaderScaffold(
                         onDownloadChapter = onDownloadChapterRef,
                         onMarkChapterRead = onMarkChapterRefRead,
                         modifier = Modifier
-                            .fillMaxWidth(0.96f)
-                            .widthIn(max = 760.dp)
-                            .padding(bottom = 8.dp),
+                            .fillMaxWidth(0.98f)
+                            .widthIn(max = 800.dp)
+                            .padding(bottom = 6.dp),
                     )
                 }
                 if (settingsVisible) {
@@ -5735,12 +8977,12 @@ private fun ReaderScaffold(
                             }
                         },
                         modifier = Modifier
-                            .fillMaxWidth(0.96f)
-                            .widthIn(max = 680.dp)
-                            .padding(bottom = 8.dp),
+                            .fillMaxWidth(0.98f)
+                            .widthIn(max = 720.dp)
+                            .padding(bottom = 6.dp),
                     )
                 }
-                if (showPageStrip) {
+                if (showPageStrip && !useVerticalPageStrip) {
                     ReaderPageStrip(
                         currentPage = currentPage,
                         pageCount = pageCount,
@@ -5759,6 +9001,8 @@ private fun ReaderScaffold(
                     settingsVisible = settingsVisible,
                     chaptersVisible = chaptersVisible,
                     statsVisible = statsVisible,
+                    showPageStrip = showPageStrip,
+                    bottomButtons = readerSettings.bottomButtons,
                     cropActive = readerSettings.cropBorders,
                     showPercentage = readerSettings.showPercentage,
                     onOpenChapterUrl = onOpenChapterUrl,
@@ -5770,6 +9014,8 @@ private fun ReaderScaffold(
                     onToggleChapters = onToggleChapters,
                     onToggleStats = onToggleStats,
                     onToggleCrop = onToggleCrop,
+                    onPreviousPage = onPreviousPage,
+                    onNextPage = onNextPage,
                 )
             }
         }
@@ -5780,6 +9026,112 @@ private enum class ReaderTapAction {
     Previous,
     Menu,
     Next,
+}
+
+@Composable
+private fun ReaderTapZoneOverlay(
+    navigationMode: ChimahonReaderNavigationMode,
+    smallerZones: Boolean,
+    tapZonePercent: Int,
+    canvas: ReaderCanvas,
+    modifier: Modifier = Modifier,
+) {
+    val edgeWeight = ((if (smallerZones) min(tapZonePercent, 22) else tapZonePercent).coerceIn(12, 40)) / 100f
+    val centerWeight = (1f - edgeWeight * 2f).coerceAtLeast(0.25f)
+    val paneTint = readerHudContent(canvas)
+    val paneBackground = ReaderPalette.selectedControl.copy(alpha = 0.10f)
+    if (navigationMode == ChimahonReaderNavigationMode.Vertical) {
+        Column(
+            modifier = modifier.padding(horizontal = 28.dp, vertical = 92.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ReaderTapZonePane(
+                icon = UiIcon.Back,
+                contentDescription = "Previous",
+                tint = paneTint,
+                background = paneBackground,
+                modifier = Modifier
+                    .weight(edgeWeight)
+                    .fillMaxWidth(),
+            )
+            ReaderTapZonePane(
+                icon = UiIcon.More,
+                contentDescription = "Menu",
+                tint = paneTint,
+                background = paneBackground.copy(alpha = 0.07f),
+                modifier = Modifier
+                    .weight(centerWeight)
+                    .fillMaxWidth(),
+            )
+            ReaderTapZonePane(
+                icon = UiIcon.Forward,
+                contentDescription = "Next",
+                tint = paneTint,
+                background = paneBackground,
+                modifier = Modifier
+                    .weight(edgeWeight)
+                    .fillMaxWidth(),
+            )
+        }
+    } else {
+        val rtl = navigationMode == ChimahonReaderNavigationMode.RightToLeft
+        Row(
+            modifier = modifier.padding(horizontal = 28.dp, vertical = 92.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ReaderTapZonePane(
+                icon = if (rtl) UiIcon.Forward else UiIcon.Back,
+                contentDescription = if (rtl) "Next" else "Previous",
+                tint = paneTint,
+                background = paneBackground,
+                modifier = Modifier
+                    .weight(edgeWeight)
+                    .fillMaxHeight(),
+            )
+            ReaderTapZonePane(
+                icon = UiIcon.More,
+                contentDescription = "Menu",
+                tint = paneTint,
+                background = paneBackground.copy(alpha = 0.07f),
+                modifier = Modifier
+                    .weight(centerWeight)
+                    .fillMaxHeight(),
+            )
+            ReaderTapZonePane(
+                icon = if (rtl) UiIcon.Back else UiIcon.Forward,
+                contentDescription = if (rtl) "Previous" else "Next",
+                tint = paneTint,
+                background = paneBackground,
+                modifier = Modifier
+                    .weight(edgeWeight)
+                    .fillMaxHeight(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReaderTapZonePane(
+    icon: UiIcon,
+    contentDescription: String,
+    tint: Color,
+    background: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(background)
+            .border(1.dp, tint.copy(alpha = 0.10f), RoundedCornerShape(18.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = contentDescription,
+            tint = tint.copy(alpha = 0.38f),
+            modifier = Modifier.size(26.dp),
+        )
+    }
 }
 
 private fun readerTapActionAt(
@@ -5802,7 +9154,7 @@ private fun readerTapActionAt(
     if (navigationMode == ChimahonReaderNavigationMode.RightToLeft) {
         x = 1f - x
     }
-    val configuredEdge = tapZonePercent.coerceIn(0, 45) / 100f
+    val configuredEdge = tapZonePercent.coerceIn(0, 40) / 100f
     val edge = if (smallerZones) min(configuredEdge, 0.22f) else configuredEdge
     if (navigationMode == ChimahonReaderNavigationMode.Vertical) {
         return when {
@@ -5819,6 +9171,323 @@ private fun readerTapActionAt(
 }
 
 @Composable
+private fun ReaderChapterEdgeHint(
+    request: ChimahonReaderRequest,
+    currentPage: Int,
+    pageCount: Int,
+    canvas: ReaderCanvas,
+    previousChapter: ChimahonReaderChapterRef?,
+    nextChapter: ChimahonReaderChapterRef?,
+    onPreviousChapter: (() -> Unit)?,
+    onNextChapter: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val atStart = currentPage <= 1
+    val atEnd = currentPage >= pageCount
+    if (!atStart && !atEnd) return
+    val destination = when {
+        atStart -> previousChapter
+        atEnd -> nextChapter
+        else -> null
+    }
+    val onClick = when {
+        atStart -> onPreviousChapter
+        atEnd -> onNextChapter
+        else -> null
+    }
+    val currentChapter = ChimahonReaderChapterRef(
+        chapterId = null,
+        chapterName = request.chapterName,
+        chapterUrl = request.chapterUrl,
+        chapterNumber = request.chapterNumber,
+        scanlator = request.scanlator,
+        dateUpload = 0L,
+    )
+    val gap = when {
+        destination == null -> 0
+        atStart -> readerChapterGap(currentChapter.chapterNumber, destination.chapterNumber)
+        else -> readerChapterGap(destination.chapterNumber, currentChapter.chapterNumber)
+    }
+    val clickModifier = if (onClick != null) {
+        Modifier.clickable(onClick = onClick)
+    } else {
+        Modifier
+    }
+    Column(
+        modifier = modifier
+            .widthIn(max = 520.dp)
+            .fillMaxWidth(0.92f)
+            .clip(RoundedCornerShape(18.dp))
+            .background(readerHudBackground(canvas).copy(alpha = 0.92f))
+            .then(clickModifier)
+            .border(1.dp, readerHudContent(canvas).copy(alpha = 0.10f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (atStart) {
+            ReaderTransitionChapterText(
+                header = "Previous chapter",
+                chapter = destination,
+                fallback = "No previous chapter",
+                canvas = canvas,
+            )
+            if (gap > 0) {
+                ReaderTransitionNotice(
+                    icon = UiIcon.Info,
+                    text = "$gap missing chapter(s)",
+                    canvas = canvas,
+                    error = true,
+                )
+            }
+            ReaderTransitionChapterText(
+                header = "Current chapter",
+                chapter = currentChapter,
+                canvas = canvas,
+            )
+        } else {
+            ReaderTransitionChapterText(
+                header = "Finished",
+                chapter = currentChapter,
+                canvas = canvas,
+            )
+            if (gap > 0) {
+                ReaderTransitionNotice(
+                    icon = UiIcon.Info,
+                    text = "$gap missing chapter(s)",
+                    canvas = canvas,
+                    error = true,
+                )
+            }
+            ReaderTransitionChapterText(
+                header = "Next chapter",
+                chapter = destination,
+                fallback = "No next chapter",
+                canvas = canvas,
+            )
+        }
+        ReaderTransitionNotice(
+            icon = when {
+                destination == null -> UiIcon.Info
+                atStart -> UiIcon.SkipPrevious
+                else -> UiIcon.SkipNext
+            },
+            text = when {
+                destination == null -> "No adjacent chapter available"
+                atStart -> "Previous chapter available"
+                else -> "Next chapter available"
+            },
+            canvas = canvas,
+            error = false,
+        )
+    }
+}
+
+@Composable
+private fun ReaderTransitionChapterText(
+    header: String,
+    chapter: ChimahonReaderChapterRef?,
+    canvas: ReaderCanvas,
+    modifier: Modifier = Modifier,
+    fallback: String = "",
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Label(
+            text = header,
+            color = readerHudContent(canvas).copy(alpha = 0.72f),
+            size = 11,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        if (chapter == null) {
+            ReaderTransitionNotice(
+                icon = UiIcon.Info,
+                text = fallback,
+                canvas = canvas,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                if (chapter.read) {
+                    IconGlyph(
+                        icon = UiIcon.CheckCircle,
+                        contentDescription = "Read",
+                        tint = ReaderPalette.selectedControl,
+                        modifier = Modifier
+                            .padding(top = 3.dp)
+                            .size(18.dp),
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Label(
+                        text = chapter.chapterName,
+                        color = readerHudContent(canvas),
+                        size = 17,
+                        weight = FontWeight.SemiBold,
+                        maxLines = 3,
+                    )
+                    chapter.scanlator?.takeIf { it.isNotBlank() }?.let { scanlator ->
+                        Label(
+                            text = scanlator,
+                            color = readerHudContent(canvas).copy(alpha = 0.62f),
+                            size = 11,
+                            weight = FontWeight.Normal,
+                            maxLines = 2,
+                            modifier = Modifier.padding(top = 3.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderTransitionNotice(
+    icon: UiIcon,
+    text: String,
+    canvas: ReaderCanvas,
+    modifier: Modifier = Modifier,
+    error: Boolean = false,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (error) {
+                    ChimahonPalette.errorContainer.copy(alpha = 0.22f)
+                } else {
+                    readerHudContent(canvas).copy(alpha = 0.08f)
+                },
+            )
+            .border(
+                1.dp,
+                if (error) ChimahonPalette.error.copy(alpha = 0.32f) else readerHudContent(canvas).copy(alpha = 0.08f),
+                RoundedCornerShape(50),
+            )
+            .padding(horizontal = 11.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = text,
+            tint = if (error) ChimahonPalette.error else ReaderPalette.selectedControl,
+            modifier = Modifier.size(18.dp),
+        )
+        Label(
+            text = text,
+            color = readerHudContent(canvas),
+            size = 12,
+            weight = FontWeight.SemiBold,
+            maxLines = 2,
+        )
+    }
+}
+
+private fun readerChapterGap(
+    goingTo: Double,
+    current: Double,
+): Int {
+    if (goingTo <= 0.0 || current <= 0.0) return 0
+    return (abs(goingTo - current).roundToInt() - 1).coerceAtLeast(0)
+}
+
+@Composable
+private fun ReaderModeIndicator(
+    mode: ReaderMode,
+    scale: ReaderScale,
+    canvas: ReaderCanvas,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(readerHudBackground(canvas).copy(alpha = 0.78f))
+            .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f), RoundedCornerShape(50))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconGlyph(
+            icon = UiIcon.Swap,
+            contentDescription = "Reader mode",
+            tint = readerHudContent(canvas),
+            modifier = Modifier.size(15.dp),
+        )
+        Label(
+            text = "${mode.title} - ${scale.title}",
+            color = readerHudContent(canvas),
+            size = 10,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun ReaderDesktopShortcutHintBar(
+    mode: ReaderMode,
+    canvas: ReaderCanvas,
+    bookmarkAvailable: Boolean,
+    downloadAvailable: Boolean,
+    markReadAvailable: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val hints = buildList {
+        add("\u2190/\u2192 Page")
+        if (mode.paged) add("Wheel Page")
+        add("Enter HUD")
+        add("M Mode")
+        add("C Chapters")
+        add("S Settings")
+        if (bookmarkAvailable) add("B Bookmark")
+        if (downloadAvailable) add("D Download")
+        if (markReadAvailable) add("R Read")
+        add("Esc Back")
+    }
+    LazyRow(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(readerHudBackground(canvas).copy(alpha = 0.68f))
+            .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f), RoundedCornerShape(50))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items(hints) { hint ->
+            ReaderShortcutHintChip(
+                text = hint,
+                canvas = canvas,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReaderShortcutHintChip(
+    text: String,
+    canvas: ReaderCanvas,
+) {
+    Label(
+        text = text,
+        color = readerHudContent(canvas).copy(alpha = 0.74f),
+        size = 9,
+        weight = FontWeight.SemiBold,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(readerHudContent(canvas).copy(alpha = 0.08f))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
 private fun ReaderPageIndicator(
     currentPage: Int,
     pageCount: Int,
@@ -5831,10 +9500,25 @@ private fun ReaderPageIndicator(
         weight = FontWeight.Bold,
         maxLines = 1,
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(50))
             .background(ReaderPalette.chrome.copy(alpha = 0.78f))
             .padding(horizontal = 9.dp, vertical = 5.dp),
     )
+}
+
+private fun readerFlashOverlayColor(
+    flashColor: ChimahonReaderFlashColor,
+    pulse: Int,
+): Color = when (flashColor) {
+    ChimahonReaderFlashColor.Black -> Color.Black
+    ChimahonReaderFlashColor.White -> Color.White
+    ChimahonReaderFlashColor.WhiteBlack -> if (pulse % 2 == 0) Color.Black else Color.White
+}
+
+private fun readerFlashOverlayAlpha(flashColor: ChimahonReaderFlashColor): Float = when (flashColor) {
+    ChimahonReaderFlashColor.Black -> 0.28f
+    ChimahonReaderFlashColor.White -> 0.34f
+    ChimahonReaderFlashColor.WhiteBlack -> 0.32f
 }
 
 @Composable
@@ -5846,6 +9530,8 @@ private fun ReaderPageStrip(
     onPreviousChapter: (() -> Unit)?,
     onNextChapter: (() -> Unit)?,
     isRtl: Boolean = false,
+    vertical: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var scrubPage by remember(pageCount) {
         mutableIntStateOf((currentPage - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0)))
@@ -5859,13 +9545,121 @@ private fun ReaderPageStrip(
             onPageSelected(pageIndex)
         }
     }
+    val progress = if (pageCount <= 1) {
+        0f
+    } else {
+        (currentPage - 1).toFloat() / (pageCount - 1).toFloat()
+    }
+
+    if (vertical) {
+        Column(
+            modifier = modifier
+                .width(64.dp)
+                .padding(horizontal = 5.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ReaderNavigatorChapterAction(
+                icon = UiIcon.SkipPrevious,
+                contentDescription = "Previous chapter",
+                canvas = canvas,
+                onClick = onPreviousChapter,
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .width(54.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(readerHudBackground(canvas).copy(alpha = 0.96f))
+                    .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Label(
+                    text = currentPage.toString(),
+                    color = readerHudContent(canvas),
+                    size = 10,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Canvas(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .semantics {
+                            contentDescription = "Page $currentPage of $pageCount"
+                        }
+                        .pointerInput(pageCount) {
+                            detectTapGestures { offset ->
+                                selectPage(
+                                    readerVerticalPageIndexAt(
+                                        y = offset.y,
+                                        height = size.height,
+                                        pageCount = pageCount,
+                                    ),
+                                )
+                            }
+                        }
+                        .pointerInput(pageCount) {
+                            detectDragGestures { change, _ ->
+                                selectPage(
+                                    readerVerticalPageIndexAt(
+                                        y = change.position.y,
+                                        height = size.height,
+                                        pageCount = pageCount,
+                                    ),
+                                )
+                                change.consume()
+                            }
+                        },
+                ) {
+                    val x = size.width / 2f
+                    val thumbY = size.height * progress
+                    drawLine(
+                        color = readerHudContent(canvas).copy(alpha = 0.20f),
+                        start = Offset(x, 0f),
+                        end = Offset(x, size.height),
+                        strokeWidth = 4f,
+                        cap = StrokeCap.Round,
+                    )
+                    drawLine(
+                        color = ReaderPalette.selectedControl,
+                        start = Offset(x, 0f),
+                        end = Offset(x, thumbY),
+                        strokeWidth = 4f,
+                        cap = StrokeCap.Round,
+                    )
+                    drawCircle(
+                        color = readerHudContent(canvas),
+                        radius = 6f,
+                        center = Offset(x, thumbY),
+                    )
+                }
+                Label(
+                    text = pageCount.toString(),
+                    color = readerHudContent(canvas).copy(alpha = 0.62f),
+                    size = 10,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
+            ReaderNavigatorChapterAction(
+                icon = UiIcon.SkipNext,
+                contentDescription = "Next chapter",
+                canvas = canvas,
+                onClick = onNextChapter,
+            )
+        }
+        return
+    }
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ReaderNavigatorChapterAction(
             icon = UiIcon.SkipPrevious,
@@ -5873,32 +9667,47 @@ private fun ReaderPageStrip(
             canvas = canvas,
             onClick = onPreviousChapter,
         )
-        Row(
+        Column(
             modifier = Modifier
                 .weight(1f)
-                .height(44.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(readerHudBackground(canvas))
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .height(48.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(readerHudBackground(canvas).copy(alpha = 0.96f))
+                .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Label(
-                text = currentPage.toString(),
-                color = readerHudContent(canvas),
-                size = 11,
-                weight = FontWeight.SemiBold,
-                maxLines = 1,
-                modifier = Modifier.width(32.dp),
-            )
-            val progress = if (pageCount <= 1) {
-                0f
-            } else {
-                (currentPage - 1).toFloat() / (pageCount - 1).toFloat()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Label(
+                    text = currentPage.toString(),
+                    color = readerHudContent(canvas),
+                    size = 10,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    text = readerProgressText(currentPage, pageCount),
+                    color = readerHudContent(canvas).copy(alpha = 0.58f),
+                    size = 9,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    text = pageCount.toString(),
+                    color = readerHudContent(canvas).copy(alpha = 0.62f),
+                    size = 10,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
             }
             Canvas(
                 modifier = Modifier
-                    .weight(1f)
-                    .height(28.dp)
+                    .fillMaxWidth()
+                    .height(18.dp)
                     .semantics {
                         contentDescription = "Page $currentPage of $pageCount"
                     }
@@ -5934,30 +9743,22 @@ private fun ReaderPageStrip(
                     color = readerHudContent(canvas).copy(alpha = 0.20f),
                     start = Offset(0f, y),
                     end = Offset(size.width, y),
-                    strokeWidth = 5f,
+                    strokeWidth = 4f,
                     cap = StrokeCap.Round,
                 )
                 drawLine(
                     color = ReaderPalette.selectedControl,
                     start = if (isRtl) Offset(size.width, y) else Offset(0f, y),
                     end = Offset(thumbX, y),
-                    strokeWidth = 5f,
+                    strokeWidth = 4f,
                     cap = StrokeCap.Round,
                 )
                 drawCircle(
                     color = readerHudContent(canvas),
-                    radius = 7f,
+                    radius = 6f,
                     center = Offset(thumbX, y),
                 )
             }
-            Label(
-                text = pageCount.toString(),
-                color = readerHudContent(canvas).copy(alpha = 0.62f),
-                size = 11,
-                weight = FontWeight.SemiBold,
-                maxLines = 1,
-                modifier = Modifier.width(32.dp),
-            )
         }
         ReaderNavigatorChapterAction(
             icon = UiIcon.SkipNext,
@@ -5982,6 +9783,18 @@ private fun readerPageIndexAt(
         .coerceIn(0, pageCount - 1)
 }
 
+private fun readerVerticalPageIndexAt(
+    y: Float,
+    height: Int,
+    pageCount: Int,
+): Int {
+    if (height <= 0 || pageCount <= 1) return 0
+    val fraction = (y / height.toFloat()).coerceIn(0f, 1f)
+    return (fraction * (pageCount - 1).toFloat() + 0.5f)
+        .toInt()
+        .coerceIn(0, pageCount - 1)
+}
+
 @Composable
 private fun ReaderNavigatorChapterAction(
     icon: UiIcon,
@@ -5991,9 +9804,10 @@ private fun ReaderNavigatorChapterAction(
 ) {
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(42.dp)
             .clip(CircleShape)
-            .background(readerHudBackground(canvas))
+            .background(readerHudBackground(canvas).copy(alpha = if (onClick != null) 0.94f else 0.54f))
+            .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f), CircleShape)
             .clickable(enabled = onClick != null) { onClick?.invoke() }
             .padding(10.dp),
         contentAlignment = Alignment.Center,
@@ -6002,9 +9816,17 @@ private fun ReaderNavigatorChapterAction(
             icon = icon,
             contentDescription = contentDescription,
             tint = if (onClick != null) readerHudContent(canvas) else readerHudContent(canvas).copy(alpha = 0.28f),
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(20.dp),
         )
     }
+}
+
+private enum class ReaderSettingsTab(val title: String) {
+    Display("Display"),
+    Image("Image"),
+    Controls("Controls"),
+    Text("Text"),
+    Advanced("Advanced"),
 }
 
 @Composable
@@ -6019,356 +9841,629 @@ private fun ReaderSettingsPanel(
     onSettingsChange: (ChimahonReaderSettings) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var selectedTab by remember { mutableStateOf(ReaderSettingsTab.Display) }
     Column(
         modifier = modifier
-            .heightIn(max = 560.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(ReaderPalette.chrome.copy(alpha = 0.97f))
-            .border(1.dp, ReaderPalette.divider, RoundedCornerShape(8.dp))
+            .heightIn(max = 600.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(ReaderPalette.chrome.copy(alpha = 0.98f))
+            .border(1.dp, ReaderPalette.divider.copy(alpha = 0.82f), RoundedCornerShape(18.dp))
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Label(
-            "Appearance",
-            Color.White,
-            16,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
+        ReaderSheetDragHandle()
+        ReaderSheetHeader(
+            title = "Reader settings",
+            subtitle = "${mode.title} - ${scale.title} - ${canvas.title}",
+            icon = UiIcon.Settings,
         )
-        ReaderSheetSectionTitle("Theme")
-        ReaderThemeSwatchRow(
-            selected = canvas,
-            onSelect = onCanvasChange,
+        ReaderSettingsTabRow(
+            selected = selectedTab,
+            onSelect = { selectedTab = it },
         )
-        ReaderToggleRow(
-            label = "Pure black background",
-            checked = settings.pureBlackBackground,
-            onCheckedChange = { onSettingsChange(settings.copy(pureBlackBackground = it)) },
-        )
-        ReaderSheetSectionTitle("Mode")
-        ReaderOptionRow(
-            label = "Reading mode",
-            options = ReaderMode.entries.map { it.title },
-            selected = mode.title,
-            onSelect = { title ->
-                ReaderMode.entries.firstOrNull { it.title == title }?.let(onModeChange)
-            },
-        )
-        ReaderOptionRow(
-            label = "Orientation",
-            options = ChimahonReaderOrientation.entries.map { it.readerTitle() },
-            selected = settings.orientation.readerTitle(),
-            onSelect = { title ->
-                ChimahonReaderOrientation.entries
-                    .firstOrNull { it.readerTitle() == title }
-                    ?.let { onSettingsChange(settings.copy(orientation = it)) }
-            },
-        )
-        ReaderOptionRow(
-            label = "Dual page",
-            options = ChimahonDualPageMode.entries.map { it.readerTitle() },
-            selected = settings.dualPageMode.readerTitle(),
-            onSelect = { title ->
-                ChimahonDualPageMode.entries
-                    .firstOrNull { it.readerTitle() == title }
-                    ?.let { onSettingsChange(settings.copy(dualPageMode = it)) }
-            },
-        )
-        ReaderToggleRow(
-            label = "Page scrubber",
-            checked = settings.showPageStrip,
-            onCheckedChange = { onSettingsChange(settings.copy(showPageStrip = it)) },
-        )
-        ReaderSheetSectionTitle("Typography")
-        ReaderValueStepperRow(
-            label = "Font size",
-            value = "${settings.fontSize.toCleanDecimal()}px",
-            onDecrease = {
-                onSettingsChange(settings.copy(fontSize = (settings.fontSize - 0.5).coerceIn(12.0, 72.0)))
-            },
-            onIncrease = {
-                onSettingsChange(settings.copy(fontSize = (settings.fontSize + 0.5).coerceIn(12.0, 72.0)))
-            },
-        )
-        ReaderValueStepperRow(
-            label = "Line height",
-            value = settings.lineHeight.toCleanDecimal(),
-            onDecrease = {
-                onSettingsChange(settings.copy(lineHeight = (settings.lineHeight - 0.05).coerceIn(1.0, 2.5)))
-            },
-            onIncrease = {
-                onSettingsChange(settings.copy(lineHeight = (settings.lineHeight + 0.05).coerceIn(1.0, 2.5)))
-            },
-        )
-        ReaderToggleRow(
-            label = "Hide furigana",
-            checked = settings.hideFurigana,
-            onCheckedChange = { onSettingsChange(settings.copy(hideFurigana = it)) },
-        )
-        ReaderSheetSectionTitle("Margins")
-        ReaderValueStepperRow(
-            label = "Horizontal padding",
-            value = "${settings.horizontalPadding.toCleanDecimal()}%",
-            onDecrease = {
-                onSettingsChange(
-                    settings.copy(horizontalPadding = (settings.horizontalPadding - 0.5).coerceIn(0.0, 50.0)),
+        when (selectedTab) {
+            ReaderSettingsTab.Display -> {
+                ReaderSheetSectionTitle("Theme")
+                ReaderThemeSwatchRow(
+                    selected = canvas,
+                    onSelect = onCanvasChange,
                 )
-            },
-            onIncrease = {
-                onSettingsChange(
-                    settings.copy(horizontalPadding = (settings.horizontalPadding + 0.5).coerceIn(0.0, 50.0)),
+                ReaderToggleRow(
+                    label = "Pure black background",
+                    checked = settings.pureBlackBackground,
+                    onCheckedChange = { onSettingsChange(settings.copy(pureBlackBackground = it)) },
                 )
-            },
-        )
-        ReaderValueStepperRow(
-            label = "Vertical padding",
-            value = "${settings.verticalPadding.toCleanDecimal()}%",
-            onDecrease = {
-                onSettingsChange(
-                    settings.copy(verticalPadding = (settings.verticalPadding - 0.5).coerceIn(0.0, 50.0)),
+                ReaderSheetSectionTitle("Mode")
+                ReaderOptionRow(
+                    label = "Reading mode",
+                    options = ReaderMode.entries.map { it.title },
+                    selected = mode.title,
+                    onSelect = { title ->
+                        ReaderMode.entries.firstOrNull { it.title == title }?.let(onModeChange)
+                    },
                 )
-            },
-            onIncrease = {
-                onSettingsChange(
-                    settings.copy(verticalPadding = (settings.verticalPadding + 0.5).coerceIn(0.0, 50.0)),
+                ReaderOptionRow(
+                    label = "Orientation",
+                    options = ChimahonReaderOrientation.entries.map { it.readerTitle() },
+                    selected = settings.orientation.readerTitle(),
+                    onSelect = { title ->
+                        ChimahonReaderOrientation.entries
+                            .firstOrNull { it.readerTitle() == title }
+                            ?.let { onSettingsChange(settings.copy(orientation = it)) }
+                    },
                 )
-            },
-        )
-        ReaderSheetSectionTitle("Image")
-        ReaderOptionRow(
-            label = "Scale",
-            options = ReaderScale.entries.map { it.title },
-            selected = scale.title,
-            onSelect = { title ->
-                ReaderScale.entries.firstOrNull { it.title == title }?.let(onScaleChange)
-            },
-        )
-        ReaderToggleRow(
-            label = "Crop borders",
-            checked = settings.cropBorders,
-            onCheckedChange = { onSettingsChange(settings.copy(cropBorders = it)) },
-        )
-        ReaderToggleRow(
-            label = "Split wide pages",
-            checked = settings.splitWidePages,
-            onCheckedChange = { onSettingsChange(settings.copy(splitWidePages = it)) },
-        )
-        ReaderToggleRow(
-            label = "Color filter",
-            checked = settings.colorFilterEnabled,
-            onCheckedChange = { onSettingsChange(settings.copy(colorFilterEnabled = it)) },
-        )
-        ReaderToggleRow(
-            label = "Grayscale",
-            checked = settings.grayscale,
-            onCheckedChange = { onSettingsChange(settings.copy(grayscale = it, colorFilterEnabled = true)) },
-        )
-        ReaderToggleRow(
-            label = "Invert colors",
-            checked = settings.invertColors,
-            onCheckedChange = { onSettingsChange(settings.copy(invertColors = it, colorFilterEnabled = true)) },
-        )
-        ReaderValueStepperRow(
-            label = "Brightness",
-            value = settings.brightness.toString(),
-            onDecrease = {
-                onSettingsChange(
-                    settings.copy(
-                        brightness = (settings.brightness - 5).coerceIn(-100, 100),
-                        colorFilterEnabled = true,
-                    ),
+                ReaderOptionRow(
+                    label = "Dual page",
+                    options = ChimahonDualPageMode.entries.map { it.readerTitle() },
+                    selected = settings.dualPageMode.readerTitle(),
+                    onSelect = { title ->
+                        ChimahonDualPageMode.entries
+                            .firstOrNull { it.readerTitle() == title }
+                            ?.let { onSettingsChange(settings.copy(dualPageMode = it)) }
+                    },
                 )
-            },
-            onIncrease = {
-                onSettingsChange(
-                    settings.copy(
-                        brightness = (settings.brightness + 5).coerceIn(-100, 100),
-                        colorFilterEnabled = true,
-                    ),
+                ReaderToggleRow(
+                    label = "Invert double pages",
+                    checked = settings.invertDoublePages,
+                    onCheckedChange = { onSettingsChange(settings.copy(invertDoublePages = it)) },
                 )
-            },
-        )
-        ReaderSheetSectionTitle("Navigation")
-        ReaderOptionRow(
-            label = "Navigation",
-            options = ChimahonReaderNavigationMode.entries.map { it.readerTitle() },
-            selected = settings.navigationMode.readerTitle(),
-            onSelect = { title ->
-                ChimahonReaderNavigationMode.entries
-                    .firstOrNull { it.readerTitle() == title }
-                    ?.let { onSettingsChange(settings.copy(navigationMode = it)) }
-            },
-        )
-        ReaderToggleRow(
-            label = "Tap zones",
-            checked = settings.tapZonesEnabled,
-            onCheckedChange = { onSettingsChange(settings.copy(tapZonesEnabled = it)) },
-        )
-        ReaderToggleRow(
-            label = "Smaller tap zones",
-            checked = settings.smallerTapZones,
-            onCheckedChange = { onSettingsChange(settings.copy(smallerTapZones = it)) },
-        )
-        ReaderOptionRow(
-            label = "Invert tap zones",
-            options = ChimahonTapZoneInvert.entries.map { it.readerTitle() },
-            selected = settings.invertTapZones.readerTitle(),
-            onSelect = { title ->
-                ChimahonTapZoneInvert.entries
-                    .firstOrNull { it.readerTitle() == title }
-                    ?.let { onSettingsChange(settings.copy(invertTapZones = it)) }
-            },
-        )
-        ReaderToggleRow(
-            label = "Page transitions",
-            checked = settings.pageTransitions,
-            onCheckedChange = { onSettingsChange(settings.copy(pageTransitions = it)) },
-        )
-        ReaderToggleRow(
-            label = "Swipe navigation",
-            checked = settings.swipeNavigationEnabled,
-            onCheckedChange = { onSettingsChange(settings.copy(swipeNavigationEnabled = it)) },
-        )
-        ReaderToggleRow(
-            label = "Double tap zoom",
-            checked = settings.doubleTapToZoom,
-            onCheckedChange = { onSettingsChange(settings.copy(doubleTapToZoom = it)) },
-        )
-        ReaderValueStepperRow(
-            label = "Tap zone size",
-            value = "${settings.tapZonePercent}%",
-            onDecrease = {
-                onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent - 1).coerceIn(0, 40)))
-            },
-            onIncrease = {
-                onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent + 1).coerceIn(0, 40)))
-            },
-        )
-        ReaderValueStepperRow(
-            label = "Chapter swipe",
-            value = "${settings.chapterSwipeDistance}px",
-            onDecrease = {
-                onSettingsChange(
-                    settings.copy(chapterSwipeDistance = (settings.chapterSwipeDistance - 8).coerceIn(32, 256)),
+                ReaderValueStepperRow(
+                    label = "Center margin",
+                    value = "${settings.centerMarginDp} dp",
+                    onDecrease = {
+                        onSettingsChange(settings.copy(centerMarginDp = (settings.centerMarginDp - 2).coerceIn(0, 64)))
+                    },
+                    onIncrease = {
+                        onSettingsChange(settings.copy(centerMarginDp = (settings.centerMarginDp + 2).coerceIn(0, 64)))
+                    },
                 )
-            },
-            onIncrease = {
-                onSettingsChange(
-                    settings.copy(chapterSwipeDistance = (settings.chapterSwipeDistance + 8).coerceIn(32, 256)),
+                ReaderSheetSectionTitle("Reader HUD")
+                ReaderToggleRow(
+                    label = "Page scrubber",
+                    checked = settings.showPageStrip,
+                    onCheckedChange = { onSettingsChange(settings.copy(showPageStrip = it)) },
                 )
-            },
-        )
-        ReaderSheetSectionTitle("Layout")
-        ReaderToggleRow(
-            label = "Vertical writing",
-            checked = settings.verticalWriting,
-            onCheckedChange = { onSettingsChange(settings.copy(verticalWriting = it)) },
-        )
-        ReaderToggleRow(
-            label = "Continuous mode",
-            checked = settings.continuousMode,
-            onCheckedChange = { onSettingsChange(settings.copy(continuousMode = it)) },
-        )
-        ReaderToggleRow(
-            label = "Avoid page break",
-            checked = settings.avoidPageBreak,
-            onCheckedChange = { onSettingsChange(settings.copy(avoidPageBreak = it)) },
-        )
-        ReaderToggleRow(
-            label = "Justify text",
-            checked = settings.justifyText,
-            onCheckedChange = { onSettingsChange(settings.copy(justifyText = it)) },
-        )
-        ReaderValueStepperRow(
-            label = "Character spacing",
-            value = settings.characterSpacing.toCleanDecimal(),
-            onDecrease = {
-                onSettingsChange(
-                    settings.copy(characterSpacing = (settings.characterSpacing - 0.05).coerceIn(0.0, 0.5)),
+                ReaderToggleRow(
+                    label = "Force horizontal seekbar",
+                    checked = settings.forceHorizontalSeekbar,
+                    onCheckedChange = { onSettingsChange(settings.copy(forceHorizontalSeekbar = it)) },
                 )
-            },
-            onIncrease = {
-                onSettingsChange(
-                    settings.copy(characterSpacing = (settings.characterSpacing + 0.05).coerceIn(0.0, 0.5)),
+                if (!settings.forceHorizontalSeekbar) {
+                    ReaderToggleRow(
+                        label = "Vertical seekbar in landscape",
+                        checked = settings.landscapeVerticalSeekbar,
+                        onCheckedChange = { onSettingsChange(settings.copy(landscapeVerticalSeekbar = it)) },
+                    )
+                    ReaderToggleRow(
+                        label = "Left-handed vertical seekbar",
+                        checked = settings.leftVerticalSeekbar,
+                        onCheckedChange = { onSettingsChange(settings.copy(leftVerticalSeekbar = it)) },
+                    )
+                }
+                ReaderToggleRow(
+                    label = "Show page number",
+                    checked = settings.showPageNumber,
+                    onCheckedChange = { onSettingsChange(settings.copy(showPageNumber = it)) },
                 )
-            },
-        )
-        ReaderValueStepperRow(
-            label = "Paragraph spacing",
-            value = "${settings.paragraphSpacing.toCleanDecimal()} em",
-            onDecrease = {
-                onSettingsChange(
-                    settings.copy(paragraphSpacing = (settings.paragraphSpacing - 0.05).coerceIn(0.0, 2.0)),
+                ReaderToggleRow(
+                    label = "Show title",
+                    checked = settings.showTitle,
+                    onCheckedChange = { onSettingsChange(settings.copy(showTitle = it)) },
                 )
-            },
-            onIncrease = {
-                onSettingsChange(
-                    settings.copy(paragraphSpacing = (settings.paragraphSpacing + 0.05).coerceIn(0.0, 2.0)),
+                ReaderToggleRow(
+                    label = "Show percentage",
+                    checked = settings.showPercentage,
+                    onCheckedChange = { onSettingsChange(settings.copy(showPercentage = it)) },
                 )
-            },
-        )
-        ReaderSheetSectionTitle("Behavior")
-        ReaderToggleRow(
-            label = "Show controls on start",
-            checked = settings.keepControlsVisible,
-            onCheckedChange = { onSettingsChange(settings.copy(keepControlsVisible = it)) },
-        )
-        ReaderToggleRow(
-            label = "Show page number",
-            checked = settings.showPageNumber,
-            onCheckedChange = { onSettingsChange(settings.copy(showPageNumber = it)) },
-        )
-        ReaderToggleRow(
-            label = "Show title",
-            checked = settings.showTitle,
-            onCheckedChange = { onSettingsChange(settings.copy(showTitle = it)) },
-        )
-        ReaderToggleRow(
-            label = "Show characters",
-            checked = settings.showCharacters,
-            onCheckedChange = { onSettingsChange(settings.copy(showCharacters = it)) },
-        )
-        ReaderToggleRow(
-            label = "Show percentage",
-            checked = settings.showPercentage,
-            onCheckedChange = { onSettingsChange(settings.copy(showPercentage = it)) },
-        )
-        ReaderToggleRow(
-            label = "Progress on top",
-            checked = settings.showProgressTop,
-            onCheckedChange = { onSettingsChange(settings.copy(showProgressTop = it)) },
-        )
-        ReaderToggleRow(
-            label = "Reading speed",
-            checked = settings.showReadingSpeed,
-            onCheckedChange = { onSettingsChange(settings.copy(showReadingSpeed = it)) },
-        )
-        ReaderToggleRow(
-            label = "Reading time",
-            checked = settings.showReadingTime,
-            onCheckedChange = { onSettingsChange(settings.copy(showReadingTime = it)) },
-        )
-        ReaderToggleRow(
-            label = "Volume keys",
-            checked = settings.volumeKeysEnabled,
-            onCheckedChange = { onSettingsChange(settings.copy(volumeKeysEnabled = it)) },
-        )
-        ReaderToggleRow(
-            label = "Invert volume keys",
-            checked = settings.volumeKeysInverted,
-            onCheckedChange = { onSettingsChange(settings.copy(volumeKeysInverted = it)) },
-        )
-        ReaderToggleRow(
-            label = "Long tap controls",
-            checked = settings.longTapEnabled,
-            onCheckedChange = { onSettingsChange(settings.copy(longTapEnabled = it)) },
-        )
-        ReaderToggleRow(
-            label = "Keep screen on",
-            checked = settings.keepScreenOn,
-            onCheckedChange = { onSettingsChange(settings.copy(keepScreenOn = it)) },
-        )
+                ReaderToggleRow(
+                    label = "Progress on top",
+                    checked = settings.showProgressTop,
+                    onCheckedChange = { onSettingsChange(settings.copy(showProgressTop = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Show reading mode",
+                    checked = settings.showReadingMode,
+                    onCheckedChange = { onSettingsChange(settings.copy(showReadingMode = it)) },
+                )
+            }
+
+            ReaderSettingsTab.Image -> {
+                ReaderSheetSectionTitle("Image")
+                ReaderOptionRow(
+                    label = "Scale",
+                    options = ReaderScale.entries.map { it.title },
+                    selected = scale.title,
+                    onSelect = { title ->
+                        ReaderScale.entries.firstOrNull { it.title == title }?.let(onScaleChange)
+                    },
+                )
+                ReaderToggleRow(
+                    label = "Crop borders",
+                    checked = settings.cropBorders,
+                    onCheckedChange = { onSettingsChange(settings.copy(cropBorders = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Split wide pages",
+                    checked = settings.splitWidePages,
+                    onCheckedChange = { onSettingsChange(settings.copy(splitWidePages = it)) },
+                )
+                ReaderSheetSectionTitle("Margins")
+                ReaderValueStepperRow(
+                    label = "Horizontal padding",
+                    value = "${settings.horizontalPadding.toCleanDecimal()}%",
+                    onDecrease = {
+                        onSettingsChange(
+                            settings.copy(horizontalPadding = (settings.horizontalPadding - 0.5).coerceIn(0.0, 50.0)),
+                        )
+                    },
+                    onIncrease = {
+                        onSettingsChange(
+                            settings.copy(horizontalPadding = (settings.horizontalPadding + 0.5).coerceIn(0.0, 50.0)),
+                        )
+                    },
+                )
+                ReaderValueStepperRow(
+                    label = "Vertical padding",
+                    value = "${settings.verticalPadding.toCleanDecimal()}%",
+                    onDecrease = {
+                        onSettingsChange(
+                            settings.copy(verticalPadding = (settings.verticalPadding - 0.5).coerceIn(0.0, 50.0)),
+                        )
+                    },
+                    onIncrease = {
+                        onSettingsChange(
+                            settings.copy(verticalPadding = (settings.verticalPadding + 0.5).coerceIn(0.0, 50.0)),
+                        )
+                    },
+                )
+                ReaderSheetSectionTitle("Color filter")
+                ReaderToggleRow(
+                    label = "Color filter",
+                    checked = settings.colorFilterEnabled,
+                    onCheckedChange = { onSettingsChange(settings.copy(colorFilterEnabled = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Grayscale",
+                    checked = settings.grayscale,
+                    onCheckedChange = { onSettingsChange(settings.copy(grayscale = it, colorFilterEnabled = true)) },
+                )
+                ReaderToggleRow(
+                    label = "Invert colors",
+                    checked = settings.invertColors,
+                    onCheckedChange = { onSettingsChange(settings.copy(invertColors = it, colorFilterEnabled = true)) },
+                )
+                ReaderValueStepperRow(
+                    label = "Brightness",
+                    value = settings.brightness.toString(),
+                    onDecrease = {
+                        onSettingsChange(
+                            settings.copy(
+                                brightness = (settings.brightness - 5).coerceIn(-100, 100),
+                                colorFilterEnabled = true,
+                            ),
+                        )
+                    },
+                    onIncrease = {
+                        onSettingsChange(
+                            settings.copy(
+                                brightness = (settings.brightness + 5).coerceIn(-100, 100),
+                                colorFilterEnabled = true,
+                            ),
+                        )
+                    },
+                )
+                ReaderSheetSectionTitle("Page loading")
+                ReaderValueStepperRow(
+                    label = "Preload pages",
+                    value = settings.preloadSize.toString(),
+                    onDecrease = {
+                        onSettingsChange(settings.copy(preloadSize = (settings.preloadSize - 1).coerceIn(1, 20)))
+                    },
+                    onIncrease = {
+                        onSettingsChange(settings.copy(preloadSize = (settings.preloadSize + 1).coerceIn(1, 20)))
+                    },
+                )
+                ReaderValueStepperRow(
+                    label = "Reader threads",
+                    value = settings.readerThreads.toString(),
+                    onDecrease = {
+                        onSettingsChange(settings.copy(readerThreads = (settings.readerThreads - 1).coerceIn(1, 5)))
+                    },
+                    onIncrease = {
+                        onSettingsChange(settings.copy(readerThreads = (settings.readerThreads + 1).coerceIn(1, 5)))
+                    },
+                )
+                ReaderValueStepperRow(
+                    label = "Cache size",
+                    value = "${settings.readerCacheSizeMb} MB",
+                    onDecrease = {
+                        onSettingsChange(
+                            settings.copy(readerCacheSizeMb = (settings.readerCacheSizeMb - 50).coerceIn(50, 2_000)),
+                        )
+                    },
+                    onIncrease = {
+                        onSettingsChange(
+                            settings.copy(readerCacheSizeMb = (settings.readerCacheSizeMb + 50).coerceIn(50, 2_000)),
+                        )
+                    },
+                )
+                ReaderToggleRow(
+                    label = "Aggressive loading",
+                    checked = settings.aggressivePageLoading,
+                    onCheckedChange = { onSettingsChange(settings.copy(aggressivePageLoading = it)) },
+                )
+            }
+
+            ReaderSettingsTab.Controls -> {
+                ReaderSheetSectionTitle("Navigation")
+                ReaderOptionRow(
+                    label = "Navigation",
+                    options = ChimahonReaderNavigationMode.entries.map { it.readerTitle() },
+                    selected = settings.navigationMode.readerTitle(),
+                    onSelect = { title ->
+                        ChimahonReaderNavigationMode.entries
+                            .firstOrNull { it.readerTitle() == title }
+                            ?.let { onSettingsChange(settings.copy(navigationMode = it)) }
+                    },
+                )
+                ReaderToggleRow(
+                    label = "Tap zones",
+                    checked = settings.tapZonesEnabled,
+                    onCheckedChange = { onSettingsChange(settings.copy(tapZonesEnabled = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Smaller tap zones",
+                    checked = settings.smallerTapZones,
+                    onCheckedChange = { onSettingsChange(settings.copy(smallerTapZones = it)) },
+                )
+                ReaderOptionRow(
+                    label = "Invert tap zones",
+                    options = ChimahonTapZoneInvert.entries.map { it.readerTitle() },
+                    selected = settings.invertTapZones.readerTitle(),
+                    onSelect = { title ->
+                        ChimahonTapZoneInvert.entries
+                            .firstOrNull { it.readerTitle() == title }
+                            ?.let { onSettingsChange(settings.copy(invertTapZones = it)) }
+                    },
+                )
+                ReaderToggleRow(
+                    label = "Swipe navigation",
+                    checked = settings.swipeNavigationEnabled,
+                    onCheckedChange = { onSettingsChange(settings.copy(swipeNavigationEnabled = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Navigate to pan",
+                    checked = settings.navigateToPan,
+                    onCheckedChange = { onSettingsChange(settings.copy(navigateToPan = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Double tap zoom",
+                    checked = settings.doubleTapToZoom,
+                    onCheckedChange = { onSettingsChange(settings.copy(doubleTapToZoom = it)) },
+                )
+                ReaderValueStepperRow(
+                    label = "Tap zone size",
+                    value = "${settings.tapZonePercent}%",
+                    onDecrease = {
+                        onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent - 1).coerceIn(0, 40)))
+                    },
+                    onIncrease = {
+                        onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent + 1).coerceIn(0, 40)))
+                    },
+                )
+                ReaderValueStepperRow(
+                    label = "Chapter swipe",
+                    value = "${settings.chapterSwipeDistance}px",
+                    onDecrease = {
+                        onSettingsChange(
+                            settings.copy(chapterSwipeDistance = (settings.chapterSwipeDistance - 8).coerceIn(32, 256)),
+                        )
+                    },
+                    onIncrease = {
+                        onSettingsChange(
+                            settings.copy(chapterSwipeDistance = (settings.chapterSwipeDistance + 8).coerceIn(32, 256)),
+                        )
+                    },
+                )
+                ReaderSheetSectionTitle("Hardware")
+                ReaderToggleRow(
+                    label = "Volume keys",
+                    checked = settings.volumeKeysEnabled,
+                    onCheckedChange = { onSettingsChange(settings.copy(volumeKeysEnabled = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Invert volume keys",
+                    checked = settings.volumeKeysInverted,
+                    onCheckedChange = { onSettingsChange(settings.copy(volumeKeysInverted = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Long tap controls",
+                    checked = settings.longTapEnabled,
+                    onCheckedChange = { onSettingsChange(settings.copy(longTapEnabled = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Read with long tap",
+                    checked = settings.readWithLongTap,
+                    onCheckedChange = { onSettingsChange(settings.copy(readWithLongTap = it)) },
+                )
+            }
+
+            ReaderSettingsTab.Text -> {
+                ReaderSheetSectionTitle("Typography")
+                ReaderValueStepperRow(
+                    label = "Font size",
+                    value = "${settings.fontSize.toCleanDecimal()}px",
+                    onDecrease = {
+                        onSettingsChange(settings.copy(fontSize = (settings.fontSize - 0.5).coerceIn(12.0, 72.0)))
+                    },
+                    onIncrease = {
+                        onSettingsChange(settings.copy(fontSize = (settings.fontSize + 0.5).coerceIn(12.0, 72.0)))
+                    },
+                )
+                ReaderValueStepperRow(
+                    label = "Line height",
+                    value = settings.lineHeight.toCleanDecimal(),
+                    onDecrease = {
+                        onSettingsChange(settings.copy(lineHeight = (settings.lineHeight - 0.05).coerceIn(1.0, 2.5)))
+                    },
+                    onIncrease = {
+                        onSettingsChange(settings.copy(lineHeight = (settings.lineHeight + 0.05).coerceIn(1.0, 2.5)))
+                    },
+                )
+                ReaderValueStepperRow(
+                    label = "Character spacing",
+                    value = settings.characterSpacing.toCleanDecimal(),
+                    onDecrease = {
+                        onSettingsChange(
+                            settings.copy(characterSpacing = (settings.characterSpacing - 0.05).coerceIn(0.0, 0.5)),
+                        )
+                    },
+                    onIncrease = {
+                        onSettingsChange(
+                            settings.copy(characterSpacing = (settings.characterSpacing + 0.05).coerceIn(0.0, 0.5)),
+                        )
+                    },
+                )
+                ReaderValueStepperRow(
+                    label = "Paragraph spacing",
+                    value = "${settings.paragraphSpacing.toCleanDecimal()} em",
+                    onDecrease = {
+                        onSettingsChange(
+                            settings.copy(paragraphSpacing = (settings.paragraphSpacing - 0.05).coerceIn(0.0, 2.0)),
+                        )
+                    },
+                    onIncrease = {
+                        onSettingsChange(
+                            settings.copy(paragraphSpacing = (settings.paragraphSpacing + 0.05).coerceIn(0.0, 2.0)),
+                        )
+                    },
+                )
+                ReaderSheetSectionTitle("Layout")
+                ReaderToggleRow(
+                    label = "Vertical writing",
+                    checked = settings.verticalWriting,
+                    onCheckedChange = { onSettingsChange(settings.copy(verticalWriting = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Continuous mode",
+                    checked = settings.continuousMode,
+                    onCheckedChange = { onSettingsChange(settings.copy(continuousMode = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Avoid page break",
+                    checked = settings.avoidPageBreak,
+                    onCheckedChange = { onSettingsChange(settings.copy(avoidPageBreak = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Justify text",
+                    checked = settings.justifyText,
+                    onCheckedChange = { onSettingsChange(settings.copy(justifyText = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Hide furigana",
+                    checked = settings.hideFurigana,
+                    onCheckedChange = { onSettingsChange(settings.copy(hideFurigana = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Show characters",
+                    checked = settings.showCharacters,
+                    onCheckedChange = { onSettingsChange(settings.copy(showCharacters = it)) },
+                )
+            }
+
+            ReaderSettingsTab.Advanced -> {
+                ReaderSheetSectionTitle("Reader behavior")
+                ReaderToggleRow(
+                    label = "Show controls on start",
+                    checked = settings.keepControlsVisible,
+                    onCheckedChange = { onSettingsChange(settings.copy(keepControlsVisible = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Show navigation overlay",
+                    checked = settings.showNavigationOverlayOnStart,
+                    onCheckedChange = { onSettingsChange(settings.copy(showNavigationOverlayOnStart = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Startup delay",
+                    checked = settings.readerStartupDelay,
+                    onCheckedChange = { onSettingsChange(settings.copy(readerStartupDelay = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Page transitions",
+                    checked = settings.pageTransitions,
+                    onCheckedChange = { onSettingsChange(settings.copy(pageTransitions = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Keep screen on",
+                    checked = settings.keepScreenOn,
+                    onCheckedChange = { onSettingsChange(settings.copy(keepScreenOn = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Fullscreen",
+                    checked = settings.fullscreen,
+                    onCheckedChange = { onSettingsChange(settings.copy(fullscreen = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Draw under cutout",
+                    checked = settings.drawUnderCutout,
+                    onCheckedChange = { onSettingsChange(settings.copy(drawUnderCutout = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Show OCR outlines",
+                    checked = settings.ocrOutlineVisible,
+                    onCheckedChange = { onSettingsChange(settings.copy(ocrOutlineVisible = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Reading speed",
+                    checked = settings.showReadingSpeed,
+                    onCheckedChange = { onSettingsChange(settings.copy(showReadingSpeed = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Reading time",
+                    checked = settings.showReadingTime,
+                    onCheckedChange = { onSettingsChange(settings.copy(showReadingTime = it)) },
+                )
+                ReaderSheetSectionTitle("Page flash")
+                ReaderToggleRow(
+                    label = "Flash on page change",
+                    checked = settings.flashOnPageChange,
+                    onCheckedChange = { onSettingsChange(settings.copy(flashOnPageChange = it)) },
+                )
+                if (settings.flashOnPageChange) {
+                    ReaderValueStepperRow(
+                        label = "Flash duration",
+                        value = "${settings.flashDurationMillis} ms",
+                        onDecrease = {
+                            onSettingsChange(
+                                settings.copy(
+                                    flashDurationMillis = (settings.flashDurationMillis - 100).coerceIn(100, 1_500),
+                                ),
+                            )
+                        },
+                        onIncrease = {
+                            onSettingsChange(
+                                settings.copy(
+                                    flashDurationMillis = (settings.flashDurationMillis + 100).coerceIn(100, 1_500),
+                                ),
+                            )
+                        },
+                    )
+                    ReaderValueStepperRow(
+                        label = "Flash interval",
+                        value = "${settings.flashPageInterval} page(s)",
+                        onDecrease = {
+                            onSettingsChange(
+                                settings.copy(flashPageInterval = (settings.flashPageInterval - 1).coerceIn(1, 10)),
+                            )
+                        },
+                        onIncrease = {
+                            onSettingsChange(
+                                settings.copy(flashPageInterval = (settings.flashPageInterval + 1).coerceIn(1, 10)),
+                            )
+                        },
+                    )
+                    ReaderOptionRow(
+                        label = "Flash color",
+                        options = ChimahonReaderFlashColor.entries.map { it.readerTitle() },
+                        selected = settings.flashColor.readerTitle(),
+                        onSelect = { title ->
+                            ChimahonReaderFlashColor.entries
+                                .firstOrNull { it.readerTitle() == title }
+                                ?.let { onSettingsChange(settings.copy(flashColor = it)) }
+                        },
+                    )
+                }
+                ReaderSheetSectionTitle("Chapter transitions")
+                ReaderToggleRow(
+                    label = "Always show chapter transition",
+                    checked = settings.alwaysShowChapterTransition,
+                    onCheckedChange = { onSettingsChange(settings.copy(alwaysShowChapterTransition = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Preserve reading position",
+                    checked = settings.preserveReadingPosition,
+                    onCheckedChange = { onSettingsChange(settings.copy(preserveReadingPosition = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Use auto webtoon",
+                    checked = settings.useAutoWebtoon,
+                    onCheckedChange = { onSettingsChange(settings.copy(useAutoWebtoon = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Skip read chapters",
+                    checked = settings.skipReadChapters,
+                    onCheckedChange = { onSettingsChange(settings.copy(skipReadChapters = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Skip filtered chapters",
+                    checked = settings.skipFilteredChapters,
+                    onCheckedChange = { onSettingsChange(settings.copy(skipFilteredChapters = it)) },
+                )
+                ReaderToggleRow(
+                    label = "Skip duplicate chapters",
+                    checked = settings.skipDuplicateChapters,
+                    onCheckedChange = { onSettingsChange(settings.copy(skipDuplicateChapters = it)) },
+                )
+                ReaderSheetSectionTitle("Bottom buttons")
+                readerBottomButtonOptions().forEach { option ->
+                    ReaderToggleRow(
+                        label = option.title,
+                        checked = option.key in settings.bottomButtons,
+                        onCheckedChange = { checked ->
+                            val updatedButtons = if (checked) {
+                                (settings.bottomButtons + option.key).distinct()
+                            } else {
+                                settings.bottomButtons.filterNot { it == option.key }
+                            }
+                            onSettingsChange(settings.copy(bottomButtons = updatedButtons))
+                        },
+                    )
+                }
+                ReaderSheetSectionTitle("Storage")
+                ReaderToggleRow(
+                    label = "Folder per manga",
+                    checked = settings.folderPerManga,
+                    onCheckedChange = { onSettingsChange(settings.copy(folderPerManga = it)) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderSettingsTabRow(
+    selected: ReaderSettingsTab,
+    onSelect: (ReaderSettingsTab) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(ReaderPalette.control.copy(alpha = 0.68f))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        items(ReaderSettingsTab.entries.toList()) { tab ->
+            val active = tab == selected
+            Box(
+                modifier = Modifier
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (active) ReaderPalette.selectedControl else Color.Transparent)
+                    .clickable { onSelect(tab) }
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Label(
+                    text = tab.title,
+                    color = if (active) Color.White else ReaderPalette.secondaryText,
+                    size = 11,
+                    weight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
@@ -6393,11 +10488,86 @@ private fun ChimahonDualPageMode.readerTitle(): String = when (this) {
     ChimahonDualPageMode.Always -> "Always"
 }
 
+private fun ChimahonReaderFlashColor.readerTitle(): String = when (this) {
+    ChimahonReaderFlashColor.Black -> "Black"
+    ChimahonReaderFlashColor.White -> "White"
+    ChimahonReaderFlashColor.WhiteBlack -> "White + black"
+}
+
 private fun ChimahonReaderNavigationMode.readerTitle(): String = when (this) {
     ChimahonReaderNavigationMode.Automatic -> "Automatic"
     ChimahonReaderNavigationMode.LeftToRight -> "Left to right"
     ChimahonReaderNavigationMode.RightToLeft -> "Right to left"
     ChimahonReaderNavigationMode.Vertical -> "Vertical"
+}
+
+private fun ChimahonReaderSettings.initialReaderMode(
+    chapter: ChimahonReaderChapter,
+): ReaderMode {
+    if (useAutoWebtoon && chapter.pages.size >= 28) return ReaderMode.Webtoon
+    return mode.toUiReaderMode()
+}
+
+private data class ReaderBottomButtonOption(
+    val key: String,
+    val title: String,
+)
+
+private fun readerBottomButtonOptions(): List<ReaderBottomButtonOption> = listOf(
+    ReaderBottomButtonOption("chapters", "Chapters"),
+    ReaderBottomButtonOption("source", "Source"),
+    ReaderBottomButtonOption("mode", "Reading mode"),
+    ReaderBottomButtonOption("crop", "Crop borders"),
+    ReaderBottomButtonOption("stats", "Manga stats"),
+)
+
+private fun ChimahonReaderRequest.readerChapterMarker(): String {
+    return when {
+        chapterNumber > 0.0 -> "Ch. ${chapterNumber.toDisplayChapter()}"
+        chapterIndex >= 0 && chapterQueue.isNotEmpty() -> "${chapterIndex + 1}/${chapterQueue.size}"
+        else -> "Chapter"
+    }
+}
+
+private fun ChimahonReaderChapterRef.readerChapterMarker(): String {
+    return if (chapterNumber > 0.0) "Ch. ${chapterNumber.toDisplayChapter()}" else "Chapter"
+}
+
+private suspend fun Iterable<Int>.preloadReaderPages(
+    maxConcurrency: Int,
+    preloadReaderPage: suspend (Int) -> Unit,
+) {
+    val chunkSize = maxConcurrency.coerceIn(1, 5)
+    distinct().chunked(chunkSize).forEach { chunk ->
+        coroutineScope {
+            chunk.forEach { pageIndex ->
+                launch { preloadReaderPage(pageIndex) }
+            }
+        }
+    }
+}
+
+private fun List<ChimahonReaderChapterRef>.readerAdjacentChapter(
+    currentIndex: Int,
+    step: Int,
+    settings: ChimahonReaderSettings,
+): ChimahonReaderChapterRef? {
+    if (currentIndex !in indices || step == 0) return null
+    val current = getOrNull(currentIndex)
+    var index = currentIndex + step
+    while (index in indices) {
+        val candidate = this[index]
+        val duplicate = settings.skipDuplicateChapters &&
+            current != null &&
+            current.chapterNumber > 0.0 &&
+            candidate.chapterNumber == current.chapterNumber &&
+            candidate.scanlator == current.scanlator
+        val skippedRead = settings.skipReadChapters && candidate.read
+        val skippedFiltered = settings.skipFilteredChapters && candidate.chapterUrl.isBlank()
+        if (!duplicate && !skippedRead && !skippedFiltered) return candidate
+        index += step
+    }
+    return null
 }
 
 private fun ChimahonLibraryCoverRatio.libraryTitle(): String = when (this) {
@@ -6406,6 +10576,15 @@ private fun ChimahonLibraryCoverRatio.libraryTitle(): String = when (this) {
     ChimahonLibraryCoverRatio.ThreeToFour -> "3:4"
     ChimahonLibraryCoverRatio.TwoToThree -> "2:3"
     ChimahonLibraryCoverRatio.Original -> "Original"
+}
+
+private fun ChimahonLibraryCoverRatio.libraryCoverAspectRatio(): Float = when (this) {
+    ChimahonLibraryCoverRatio.Square -> 1f
+    ChimahonLibraryCoverRatio.ThreeToFour -> 0.75f
+    ChimahonLibraryCoverRatio.TwoToThree -> 2f / 3f
+    ChimahonLibraryCoverRatio.Automatic,
+    ChimahonLibraryCoverRatio.Original,
+    -> 0.68f
 }
 
 private fun ChimahonLibrarySort.libraryTitle(): String = when (this) {
@@ -6422,24 +10601,94 @@ private fun ChimahonLibrarySort.libraryTitle(): String = when (this) {
 
 private fun ChimahonLibrarySort.toUiLibrarySort(): LibrarySort = when (this) {
     ChimahonLibrarySort.DateAdded -> LibrarySort.DateAdded
-    ChimahonLibrarySort.LastRead,
-    ChimahonLibrarySort.LastUpdate,
-    ChimahonLibrarySort.LatestChapter,
-    ChimahonLibrarySort.ChapterFetchDate,
-    -> LibrarySort.LastUpdated
+    ChimahonLibrarySort.LastRead -> LibrarySort.LastRead
+    ChimahonLibrarySort.LastUpdate -> LibrarySort.LastUpdated
+    ChimahonLibrarySort.LatestChapter -> LibrarySort.LatestChapter
+    ChimahonLibrarySort.ChapterFetchDate -> LibrarySort.ChapterFetchDate
     ChimahonLibrarySort.UnreadCount -> LibrarySort.UnreadCount
-    ChimahonLibrarySort.Alphabetical,
-    ChimahonLibrarySort.TotalChapters,
-    ChimahonLibrarySort.Random,
-    -> LibrarySort.Alphabetical
+    ChimahonLibrarySort.TotalChapters -> LibrarySort.TotalChapters
+    ChimahonLibrarySort.Random -> LibrarySort.Random
+    ChimahonLibrarySort.Alphabetical -> LibrarySort.Alphabetical
 }
 
 private fun ChimahonLibrarySettings.toInitialLibraryFilter(): LibraryFilter {
     return when {
+        downloadedFilter == ChimahonFilterMode.Include -> LibraryFilter.Downloaded
         unreadFilter == ChimahonFilterMode.Include -> LibraryFilter.Unread
         startedFilter == ChimahonFilterMode.Include -> LibraryFilter.Started
         bookmarkedFilter == ChimahonFilterMode.Include -> LibraryFilter.Bookmarked
+        completedFilter == ChimahonFilterMode.Include -> LibraryFilter.Completed
         else -> LibraryFilter.All
+    }
+}
+
+private fun ChimahonMangaEntry.libraryFacts(
+    snapshot: ChimahonSnapshot,
+    downloadSnapshot: ChimahonDownloadSnapshot?,
+): LibraryMangaFacts {
+    val chapters = snapshot.chaptersByMangaId[id].orEmpty()
+    val lastReadAt = snapshot.history
+        .asSequence()
+        .filter { it.mangaId == id }
+        .map { it.readAt ?: 0L }
+        .maxOrNull() ?: 0L
+    val downloadedCount = chapters.count { chapter ->
+        downloadSnapshot?.statusForChapter(chapter.id)?.status == ChimahonDownloadState.Downloaded
+    }
+    return LibraryMangaFacts(
+        chapters = chapters,
+        unreadCount = chapters.count { !it.read },
+        downloadedCount = downloadedCount,
+        started = chapters.any { it.lastPageRead > 0L && !it.read },
+        bookmarked = chapters.any { it.bookmarked },
+        completed = status.equals("Completed", ignoreCase = true) ||
+            (chapters.isNotEmpty() && chapters.all { it.read }),
+        lastReadAt = lastReadAt,
+        latestChapter = chapters.maxOfOrNull { it.chapterNumber } ?: 0.0,
+        chapterFetchDate = chapters.maxOfOrNull { it.dateFetch } ?: 0L,
+    )
+}
+
+private fun ChimahonMangaEntry.matchesLibrarySearch(
+    query: String,
+    sourceName: String,
+): Boolean {
+    if (query.isBlank()) return true
+    return title.contains(query, ignoreCase = true) ||
+        author.orEmpty().contains(query, ignoreCase = true) ||
+        artist.orEmpty().contains(query, ignoreCase = true) ||
+        description.orEmpty().contains(query, ignoreCase = true) ||
+        genres.any { it.contains(query, ignoreCase = true) } ||
+        status.contains(query, ignoreCase = true) ||
+        sourceName.contains(query, ignoreCase = true)
+}
+
+private fun LibraryFilter.matches(facts: LibraryMangaFacts): Boolean {
+    return when (this) {
+        LibraryFilter.All -> true
+        LibraryFilter.Downloaded -> facts.downloadedCount > 0
+        LibraryFilter.Unread -> facts.unreadCount > 0
+        LibraryFilter.Started -> facts.started
+        LibraryFilter.Bookmarked -> facts.bookmarked
+        LibraryFilter.Completed -> facts.completed
+    }
+}
+
+private fun ChimahonLibrarySettings.libraryActiveFilterLabels(): List<String> {
+    return listOfNotNull(
+        downloadedFilter.activeFilterLabel("Downloaded"),
+        unreadFilter.activeFilterLabel("Unread"),
+        startedFilter.activeFilterLabel("Started"),
+        bookmarkedFilter.activeFilterLabel("Bookmarked"),
+        completedFilter.activeFilterLabel("Completed"),
+    )
+}
+
+private fun ChimahonFilterMode.activeFilterLabel(title: String): String? {
+    return when (this) {
+        ChimahonFilterMode.Any -> null
+        ChimahonFilterMode.Include -> title
+        ChimahonFilterMode.Exclude -> "Not $title"
     }
 }
 
@@ -6458,16 +10707,20 @@ private fun Int.toOffCountTitle(): String = if (this <= 0) "Off" else toString()
 private fun String.toOffCount(): Int = if (this == "Off") 0 else toIntOrNull()?.coerceAtLeast(0) ?: 0
 
 private fun Int.toRemoveAfterReadTitle(): String = when (this) {
-    1 -> "After next chapter"
-    2 -> "After 2 chapters"
-    5 -> "After 5 chapters"
-    else -> "Never"
+    0 -> "Last read chapter"
+    1 -> "Second to last"
+    2 -> "Third to last"
+    3 -> "Fourth to last"
+    4 -> "Fifth to last"
+    else -> "Disabled"
 }
 
 private fun String.toRemoveAfterReadSlots(): Int = when (this) {
-    "After next chapter" -> 1
-    "After 2 chapters" -> 2
-    "After 5 chapters" -> 5
+    "Last read chapter" -> 0
+    "Second to last" -> 1
+    "Third to last" -> 2
+    "Fourth to last" -> 3
+    "Fifth to last" -> 4
     else -> -1
 }
 
@@ -6477,10 +10730,73 @@ private fun ChimahonBrowseSourceDisplayMode.browseTitle(): String = when (this) 
     ChimahonBrowseSourceDisplayMode.Grid -> "Grid"
 }
 
+private fun ChimahonExtensionPackageType.extensionPackageTitle(): String = when (this) {
+    ChimahonExtensionPackageType.JavaScript -> "JavaScript"
+    ChimahonExtensionPackageType.AndroidApk -> "Android APK"
+}
+
 private fun ChimahonConnectionOpeningPreference.connectionTitle(): String = when (this) {
     ChimahonConnectionOpeningPreference.InApp -> "In app"
     ChimahonConnectionOpeningPreference.ExternalBrowser -> "External browser"
     ChimahonConnectionOpeningPreference.AskEveryTime -> "Ask every time"
+}
+
+private fun ChimahonConnectionOpeningPreference.connectionDescription(): String = when (this) {
+    ChimahonConnectionOpeningPreference.InApp ->
+        "Open supported links inside Chimahon first, then fall back to the platform browser."
+    ChimahonConnectionOpeningPreference.ExternalBrowser ->
+        "Send source, tracker, and help links directly to the system browser."
+    ChimahonConnectionOpeningPreference.AskEveryTime ->
+        "Ask before leaving Chimahon when a link can be opened externally."
+}
+
+private fun ChimahonTrackingSettings.trackingSyncSummary(incognitoMode: Boolean): String {
+    if (incognitoMode) return "Paused while incognito mode is enabled"
+    if (!autoSyncEnabled) return "Manual only"
+    if (updateIntervalHours <= 0) return "Auto-sync after reader progress changes"
+    return "Auto-sync every ${updateIntervalHours.toTrackingIntervalTitle().lowercase()}"
+}
+
+private fun ChimahonTrackingSettings.trackingRestrictionSummary(): String {
+    return syncRestrictions.takeIf { it.isNotEmpty() }?.joinToString()
+        ?: "No network or power restrictions"
+}
+
+private fun ChimahonTrackingSettings.trackingCategorySummary(): String {
+    val parts = mutableListOf<String>()
+    if (syncLibraryEntriesOnly) parts += "Library entries only"
+    if (syncIncludedCategories.isNotEmpty()) {
+        parts += "Included: ${syncIncludedCategories.joinToString()}"
+    }
+    if (syncExcludedCategories.isNotEmpty()) {
+        parts += "Excluded: ${syncExcludedCategories.joinToString()}"
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" - ") ?: "All tracked entries"
+}
+
+private fun ChimahonConnectionSettings.discordPresenceSummary(): String {
+    if (!discordRpcEnabled) return "Disabled"
+    val parts = mutableListOf(discordStatus.title)
+    if (discordShowMangaTitle) parts += "manga title"
+    if (discordShowCoverArt) parts += "cover art"
+    if (discordShowSourceName) parts += "source"
+    if (discordShowProgress) parts += "progress"
+    if (discordShowTimestamp) parts += "timer"
+    if (discordShowButtons) parts += "buttons"
+    return parts.joinToString(" - ")
+}
+
+private fun ChimahonConnectionSettings.discordPrivacySummary(incognitoMode: Boolean): String {
+    val parts = mutableListOf<String>()
+    if (incognitoMode || discordRpcIncognito) parts += "incognito protected"
+    if (!discordShowMangaTitle) parts += "title hidden"
+    if (!discordShowProgress) parts += "progress hidden"
+    if (!discordUseChapterTitles) parts += "chapter titles hidden"
+    if (!discordShowCoverArt) parts += "cover art hidden"
+    if (discordRpcIncognitoCategories.isNotEmpty()) {
+        parts += "${discordRpcIncognitoCategories.size} private categories"
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" - ") ?: "Full activity details"
 }
 
 private fun ChimahonSecureScreenMode.securityTitle(): String = when (this) {
@@ -6525,6 +10841,119 @@ private fun String.toTrackingIntervalHours(): Int = when (this) {
     else -> removeSuffix(" hours").toIntOrNull()?.coerceAtLeast(0) ?: 24
 }
 
+private fun Int.toRowCountTitle(): String = when (this) {
+    0 -> "Disabled"
+    1 -> "1 row"
+    else -> "$this rows"
+}
+
+private fun String.toRowCount(): Int = when (this) {
+    "Disabled" -> 0
+    "1 row" -> 1
+    else -> removeSuffix(" rows").toIntOrNull()?.coerceIn(0, 10) ?: 0
+}
+
+private fun Int.toPxTitle(): String = "$this px"
+
+private fun String.toPxInt(defaultValue: Int): Int {
+    return removeSuffix(" px").toIntOrNull()?.coerceAtLeast(0) ?: defaultValue
+}
+
+private fun Int.toPercentTitle(): String = "$this%"
+
+private fun String.toPercentInt(defaultValue: Int): Int {
+    return removeSuffix("%").toIntOrNull()?.coerceIn(0, 300) ?: defaultValue
+}
+
+private fun Int.toDownloadCacheTitle(): String = when (this) {
+    -1 -> "Manual"
+    1 -> "1 hour"
+    2 -> "2 hours"
+    6 -> "6 hours"
+    12 -> "12 hours"
+    24 -> "24 hours"
+    else -> "$this hours"
+}
+
+private fun String.toDownloadCacheHours(): Int = when (this) {
+    "Manual" -> -1
+    "1 hour" -> 1
+    "2 hours" -> 2
+    "6 hours" -> 6
+    "12 hours" -> 12
+    "24 hours" -> 24
+    else -> removeSuffix(" hours").toIntOrNull() ?: 1
+}
+
+private fun ChimahonDownloadPreferences.downloadRestrictionSummary(
+    downloadedOnlyMode: Boolean,
+): String {
+    return listOfNotNull(
+        "Downloaded-only mode".takeIf { downloadedOnlyMode },
+        if (wifiOnly) "Wi-Fi only" else "Downloads can start on any network",
+        "Sources ${parallelSourceDownloads.coerceAtLeast(1)}, pages ${parallelPageDownloads.coerceAtLeast(1)}",
+    ).joinToString(" - ")
+}
+
+private fun ChimahonDownloadPreferences.downloadCacheSummary(): String {
+    return when (downloadCacheRenewIntervalHours) {
+        -1 -> "Chapter download cache is refreshed manually."
+        1 -> "Chapter download cache is refreshed every hour."
+        else -> "Chapter download cache is refreshed every $downloadCacheRenewIntervalHours hours."
+    }
+}
+
+private fun List<String>.categoryRestrictionLabel(
+    empty: String,
+    prefix: String,
+): String {
+    if (isEmpty()) return empty
+    return "$prefix ${toCategoryListLabel()}."
+}
+
+private fun ChimahonDownloadPreferences.newChapterCategoryRuleLabel(): String {
+    val included = if (downloadNewIncludedCategories.isEmpty()) {
+        "Included: all categories"
+    } else {
+        "Included: ${downloadNewIncludedCategories.toCategoryListLabel()}"
+    }
+    val excluded = if (downloadNewExcludedCategories.isEmpty()) {
+        "Excluded: none"
+    } else {
+        "Excluded: ${downloadNewExcludedCategories.toCategoryListLabel()}"
+    }
+    val prefix = if (downloadNewChapters) {
+        "Automatic downloads enabled."
+    } else {
+        "Automatic downloads off."
+    }
+    return "$prefix $included - $excluded"
+}
+
+private fun List<String>.toCategoryListLabel(): String {
+    val extra = size - 3
+    return joinToString(
+        limit = 3,
+        truncated = if (extra > 0) "+$extra more" else "...",
+    )
+}
+
+private fun libraryUpdateRestrictionOptions(): List<String> {
+    return listOf("Wi-Fi only", "Unmetered network", "Charging")
+}
+
+private fun librarySmartUpdateOptions(): List<String> {
+    return listOf("Has unread chapters", "Started", "Not completed", "In release period")
+}
+
+private fun duplicateReadChapterOptions(): List<String> {
+    return listOf("New duplicate chapters", "Existing duplicate chapters")
+}
+
+private fun weekDayOptions(): List<String> {
+    return listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+}
+
 private fun commonReaderLanguages(): List<String> {
     return listOf("English", "Japanese", "Korean", "Chinese", "Spanish", "French", "German", "Arabic")
 }
@@ -6543,6 +10972,14 @@ private fun ChimahonSnapshot.sourceLanguageOptions(): List<String> {
     return (sourceLanguages + installedLanguages + listOf("EN", "JA", "KO", "ZH", "ES", "FR", "DE", "AR", "MULTI"))
         .distinct()
         .sorted()
+}
+
+private fun ChimahonSnapshot.libraryCategoryOptions(): List<String> {
+    val categories = libraryCategories
+        .filterNot { it.hidden }
+        .sortedWith(compareBy<ChimahonLibraryCategory> { it.order }.thenBy { it.displayName().lowercase() })
+        .map { it.displayName() }
+    return (listOf("Default") + categories).distinct()
 }
 
 private fun List<String>.toggled(value: String): List<String> {
@@ -6579,6 +11016,36 @@ private fun List<ChimahonRepoExtensionEntry>.extensionGroups(
         .map { (language, entries) -> language to entries }
 }
 
+private fun ChimahonInstalledExtensionEntry.installKey(): ExtensionInstallKey {
+    return ExtensionInstallKey(id = id, packageType = packageType)
+}
+
+private fun ChimahonRepoExtensionEntry.installKey(): ExtensionInstallKey {
+    return ExtensionInstallKey(id = id, packageType = packageType)
+}
+
+private fun String.isNewerThan(other: String): Boolean {
+    return compareVersionStrings(this, other) > 0
+}
+
+private fun compareVersionStrings(firstVersion: String, secondVersion: String): Int {
+    val first = firstVersion.versionSortKey()
+    val second = secondVersion.versionSortKey()
+    val maxSize = maxOf(first.size, second.size)
+    repeat(maxSize) { index ->
+        val firstPart = first.getOrNull(index) ?: 0
+        val secondPart = second.getOrNull(index) ?: 0
+        if (firstPart != secondPart) return firstPart.compareTo(secondPart)
+    }
+    return 0
+}
+
+private fun String.versionSortKey(): List<Int> {
+    return split('.', '-', '_', '+')
+        .map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
+        .ifEmpty { listOf(0) }
+}
+
 private fun ChimahonLibraryBulkActionResult.libraryBulkSummary(action: String): String {
     return buildString {
         append(mangaCount).append(" manga ")
@@ -6593,15 +11060,91 @@ private fun ChimahonLibraryBulkActionResult.libraryBulkSummary(action: String): 
 }
 
 @Composable
+private fun ReaderSheetDragHandle() {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(34.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(ReaderPalette.secondaryText.copy(alpha = 0.42f)),
+        )
+    }
+}
+
+@Composable
 private fun ReaderSheetSectionTitle(text: String) {
-    Label(
-        text = text,
-        color = ReaderPalette.secondaryText,
-        size = 11,
-        weight = FontWeight.Bold,
-        maxLines = 1,
-        modifier = Modifier.padding(top = 6.dp),
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Label(
+            text = text.uppercase(),
+            color = ReaderPalette.secondaryText,
+            size = 10,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(ReaderPalette.divider.copy(alpha = 0.68f)),
+        )
+    }
+}
+
+@Composable
+private fun ReaderSheetHeader(
+    title: String,
+    subtitle: String,
+    icon: UiIcon,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(ReaderPalette.selectedControl.copy(alpha = 0.72f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = title,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Label(
+                title,
+                Color.White,
+                14,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Label(
+                subtitle,
+                ReaderPalette.secondaryText,
+                10,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -6672,14 +11215,17 @@ private fun ReaderToggleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 46.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(ReaderPalette.control.copy(alpha = 0.36f))
             .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 2.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Label(
             text = label,
-            color = ReaderPalette.secondaryText,
-            size = 11,
+            color = Color.White.copy(alpha = 0.88f),
+            size = 12,
             weight = FontWeight.SemiBold,
             maxLines = 1,
             modifier = Modifier.weight(1f),
@@ -6711,13 +11257,18 @@ private fun ReaderValueStepperRow(
     onIncrease: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 46.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(ReaderPalette.control.copy(alpha = 0.36f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Label(
             text = label,
-            color = ReaderPalette.secondaryText,
-            size = 11,
+            color = Color.White.copy(alpha = 0.88f),
+            size = 12,
             weight = FontWeight.SemiBold,
             maxLines = 1,
             modifier = Modifier.weight(1f),
@@ -6726,7 +11277,7 @@ private fun ReaderValueStepperRow(
             icon = UiIcon.Back,
             contentDescription = "Decrease $label",
             onClick = onDecrease,
-            modifier = Modifier.size(32.dp),
+            modifier = Modifier.size(44.dp),
         )
         Label(
             text = value,
@@ -6734,13 +11285,17 @@ private fun ReaderValueStepperRow(
             size = 11,
             weight = FontWeight.SemiBold,
             maxLines = 1,
-            modifier = Modifier.width(62.dp),
+            modifier = Modifier
+                .width(68.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(ReaderPalette.chrome.copy(alpha = 0.82f))
+                .padding(vertical = 7.dp),
         )
         ReaderAction(
             icon = UiIcon.Forward,
             contentDescription = "Increase $label",
             onClick = onIncrease,
-            modifier = Modifier.size(32.dp),
+            modifier = Modifier.size(44.dp),
         )
     }
 }
@@ -6762,18 +11317,24 @@ private fun ReaderOptionRow(
     onSelect: (String) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(ReaderPalette.control.copy(alpha = 0.36f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Label(
             label,
-            ReaderPalette.secondaryText,
-            11,
+            Color.White.copy(alpha = 0.88f),
+            12,
             weight = FontWeight.SemiBold,
             maxLines = 1,
             modifier = Modifier.width(104.dp),
         )
         LazyRow(
+            modifier = Modifier.weight(1f),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             items(options) { option ->
@@ -6786,7 +11347,7 @@ private fun ReaderOptionRow(
                     maxLines = 1,
                     modifier = Modifier
                         .clip(RoundedCornerShape(5.dp))
-                        .background(if (active) ReaderPalette.selectedControl else ReaderPalette.control)
+                        .background(if (active) ReaderPalette.selectedControl else ReaderPalette.control.copy(alpha = 0.72f))
                         .clickable { onSelect(option) }
                         .padding(horizontal = 10.dp, vertical = 7.dp),
                 )
@@ -6812,58 +11373,80 @@ private fun ReaderChapterQueuePanel(
             chapter.chapterName.contains(query, ignoreCase = true) ||
             chapter.scanlator.orEmpty().contains(query, ignoreCase = true)
     }
+    val chapterListState = rememberLazyListState()
+    val selectedIndex = visibleChapters.indexOfFirst { chapter ->
+        chapter.chapterUrl == request.chapterUrl && chapter.chapterId == request.chapterId
+    }
+    LaunchedEffect(request.chapterUrl, request.chapterId, query, visibleChapters.size) {
+        if (selectedIndex >= 0) {
+            chapterListState.scrollToItem(selectedIndex.coerceAtLeast(0))
+        }
+    }
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(ReaderPalette.chrome.copy(alpha = 0.97f))
-            .border(1.dp, ReaderPalette.divider, RoundedCornerShape(8.dp))
-            .padding(vertical = 10.dp),
+            .clip(RoundedCornerShape(18.dp))
+            .background(ReaderPalette.chrome.copy(alpha = 0.98f))
+            .border(1.dp, ReaderPalette.divider.copy(alpha = 0.82f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        Row(
+        ReaderSheetDragHandle()
+        ReaderSheetHeader(
+            title = "Chapters",
+            subtitle = if (request.chapterQueue.isEmpty()) {
+                "No chapter queue from source"
+            } else {
+                "${(request.chapterIndex + 1).coerceAtLeast(1)} of ${request.chapterQueue.size} - ${request.readerChapterMarker()}"
+            },
+            icon = UiIcon.Chapters,
+        )
+        ReaderChapterJumpTargets(
+            previousChapter = previousChapter,
+            nextChapter = nextChapter,
+            onOpenChapter = onOpenChapter,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Label(
-                "Chapters",
-                Color.White,
-                13,
-                weight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            Label(
-                "${request.chapterIndex + 1} / ${request.chapterQueue.size}",
-                ReaderPalette.secondaryText,
-                11,
-                maxLines = 1,
-            )
-        }
+                .padding(vertical = 8.dp),
+        )
         if (request.chapterQueue.size > 8) {
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(42.dp)
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(ReaderPalette.control)
+                    .padding(vertical = 4.dp)
+                    .clip(RoundedCornerShape(21.dp))
+                    .background(ReaderPalette.control.copy(alpha = 0.72f))
                     .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.CenterStart,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (query.isBlank()) {
-                    Label("Search chapters", ReaderPalette.secondaryText, 11, maxLines = 1)
-                }
-                BasicTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
+                IconGlyph(
+                    icon = UiIcon.Search,
+                    contentDescription = "Search chapters",
+                    tint = ReaderPalette.secondaryText,
+                    modifier = Modifier.size(17.dp),
                 )
+                Box(modifier = Modifier.weight(1f)) {
+                    if (query.isBlank()) {
+                        Label(
+                            "Search chapters",
+                            ReaderPalette.secondaryText,
+                            11,
+                            maxLines = 1,
+                            modifier = Modifier.align(Alignment.CenterStart),
+                        )
+                    }
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
         if (request.chapterQueue.isEmpty()) {
@@ -6875,12 +11458,13 @@ private fun ReaderChapterQueuePanel(
             )
         } else {
             LazyColumn(
+                state = chapterListState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 330.dp)
                     .padding(top = 8.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 items(visibleChapters, key = { "${it.chapterId}:${it.chapterUrl}" }) { chapter ->
                     val selected = chapter.chapterUrl == request.chapterUrl &&
@@ -6889,12 +11473,41 @@ private fun ReaderChapterQueuePanel(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(6.dp))
-                            .background(if (selected) ReaderPalette.selectedControl else ReaderPalette.control)
+                            .background(
+                                when {
+                                    selected -> ReaderPalette.selectedControl.copy(alpha = 0.88f)
+                                    chapter.read -> ReaderPalette.control.copy(alpha = 0.46f)
+                                    else -> Color.Transparent
+                                },
+                            )
                             .clickable { onOpenChapter(chapter) }
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(
+                                    when {
+                                        selected -> Color.White.copy(alpha = 0.90f)
+                                        !chapter.read -> ReaderPalette.selectedControl
+                                        else -> Color.Transparent
+                                    },
+                                ),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        ReaderChapterMarkerChip(
+                            text = chapter.readerChapterMarker(),
+                            selected = selected,
+                            read = chapter.read,
+                        )
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 10.dp),
+                        ) {
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -6926,15 +11539,12 @@ private fun ReaderChapterQueuePanel(
                             }
                             Label(
                                 buildString {
-                                    if (chapter.chapterNumber > 0.0) {
-                                        append("Ch. ").append(chapter.chapterNumber.toDisplayChapter())
-                                    } else {
-                                        append("Chapter")
-                                    }
                                     if (chapter.read) {
-                                        append("  \u00b7  Read")
+                                        append("Read")
                                     } else if (chapter.lastPageRead > 0L) {
-                                        append("  \u00b7  Page ").append(chapter.lastPageRead + 1)
+                                        append("Page ").append(chapter.lastPageRead + 1)
+                                    } else {
+                                        append("Unread")
                                     }
                                     chapter.scanlator?.takeIf { it.isNotBlank() }?.let {
                                         append("  \u00b7  ").append(it)
@@ -6954,7 +11564,7 @@ private fun ReaderChapterQueuePanel(
                                 weight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(50))
                                     .background(Color.White.copy(alpha = 0.16f))
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
                             )
@@ -6986,25 +11596,166 @@ private fun ReaderChapterQueuePanel(
                 }
             }
             if (visibleChapters.isEmpty()) {
-                Label(
-                    "No matching chapters.",
-                    ReaderPalette.secondaryText,
-                    11,
+                ReaderInlineEmpty(
+                    icon = UiIcon.Search,
+                    title = "No matching chapters",
+                    detail = "Try a different chapter title or scanlator.",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ReaderChapterJumpTargets(
+    previousChapter: ChimahonReaderChapterRef?,
+    nextChapter: ChimahonReaderChapterRef?,
+    onOpenChapter: (ChimahonReaderChapterRef) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (previousChapter == null && nextChapter == null) return
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ReaderChapterJumpChip(
+            label = "Previous",
+            chapter = previousChapter,
+            icon = UiIcon.SkipPrevious,
+            onOpenChapter = onOpenChapter,
+            modifier = Modifier.weight(1f),
+        )
+        ReaderChapterJumpChip(
+            label = "Next",
+            chapter = nextChapter,
+            icon = UiIcon.SkipNext,
+            onOpenChapter = onOpenChapter,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun ReaderChapterJumpChip(
+    label: String,
+    chapter: ChimahonReaderChapterRef?,
+    icon: UiIcon,
+    onOpenChapter: (ChimahonReaderChapterRef) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(ReaderPalette.control.copy(alpha = if (chapter == null) 0.28f else 0.52f))
+            .clickable(enabled = chapter != null) {
+                chapter?.let(onOpenChapter)
+            }
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = label,
+            tint = if (chapter == null) ReaderPalette.secondaryText.copy(alpha = 0.42f) else Color.White,
+            modifier = Modifier.size(18.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
             Label(
-                buildString {
-                    previousChapter?.let { append("Previous: ").append(it.chapterName) }
-                    if (previousChapter != null && nextChapter != null) append("  \u00b7  ")
-                    nextChapter?.let { append("Next: ").append(it.chapterName) }
-                },
+                label,
                 ReaderPalette.secondaryText,
                 9,
+                weight = FontWeight.Bold,
                 maxLines = 1,
-                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Label(
+                chapter?.chapterName ?: "None",
+                if (chapter == null) ReaderPalette.secondaryText.copy(alpha = 0.48f) else Color.White,
+                10,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
             )
         }
+    }
+}
+
+@Composable
+private fun ReaderChapterMarkerChip(
+    text: String,
+    selected: Boolean,
+    read: Boolean,
+) {
+    Box(
+        modifier = Modifier
+            .width(46.dp)
+            .height(34.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(
+                when {
+                    selected -> Color.White.copy(alpha = 0.18f)
+                    read -> ReaderPalette.chrome.copy(alpha = 0.70f)
+                    else -> ReaderPalette.selectedControl.copy(alpha = 0.34f)
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            text,
+            if (selected) Color.White else ReaderPalette.secondaryText,
+            9,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun ReaderInlineEmpty(
+    icon: UiIcon,
+    title: String,
+    detail: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(ReaderPalette.control.copy(alpha = 0.32f))
+            .padding(horizontal = 16.dp, vertical = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(ReaderPalette.selectedControl.copy(alpha = 0.35f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = title,
+                tint = Color.White,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Label(
+            title,
+            Color.White,
+            12,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+        Label(
+            detail,
+            ReaderPalette.secondaryText,
+            10,
+            lineHeight = 14,
+            maxLines = 2,
+            modifier = Modifier.padding(top = 3.dp),
+        )
     }
 }
 
@@ -7017,11 +11768,11 @@ private fun ReaderChapterRowAction(
 ) {
     Box(
         modifier = Modifier
-            .size(34.dp)
+            .size(36.dp)
             .clip(CircleShape)
-            .background(if (active) Color.White.copy(alpha = 0.14f) else Color.Transparent)
+            .background(if (active) Color.White.copy(alpha = 0.16f) else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(8.dp),
+            .padding(9.dp),
         contentAlignment = Alignment.Center,
     ) {
         IconGlyph(
@@ -7040,29 +11791,67 @@ private fun ReaderStatisticsPanel(
     scale: ReaderScale,
     currentPage: Int,
     pageCount: Int,
+    settings: ChimahonReaderSettings,
+    elapsedSeconds: Long,
     previousChapter: ChimahonReaderChapterRef?,
     nextChapter: ChimahonReaderChapterRef?,
     modifier: Modifier = Modifier,
 ) {
+    val pagesRead = currentPage.coerceIn(1, pageCount.coerceAtLeast(1))
+    val pagesPerMinute = pagesRead.toDouble() * 60.0 / elapsedSeconds.coerceAtLeast(1).toDouble()
+    val remainingPages = (pageCount - pagesRead).coerceAtLeast(0)
+    val remainingSeconds = if (pagesPerMinute > 0.0) {
+        (remainingPages.toDouble() / pagesPerMinute * 60.0).roundToInt().coerceAtLeast(0)
+    } else {
+        0
+    }
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(ReaderPalette.chrome.copy(alpha = 0.97f))
-            .border(1.dp, ReaderPalette.divider, RoundedCornerShape(8.dp))
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(13.dp),
+            .clip(RoundedCornerShape(18.dp))
+            .background(ReaderPalette.chrome.copy(alpha = 0.98f))
+            .border(1.dp, ReaderPalette.divider.copy(alpha = 0.82f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp),
     ) {
-        Label(
-            "Statistics",
-            Color.White,
-            16,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
+        ReaderSheetDragHandle()
+        ReaderSheetHeader(
+            title = "Reader statistics",
+            subtitle = "${readerProgressText(currentPage, pageCount)} complete - ${request.readerChapterMarker()}",
+            icon = UiIcon.Statistics,
         )
+        ReaderStatsProgressBar(currentPage = currentPage, pageCount = pageCount)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ReaderStatTile(
+                label = "Page",
+                value = "$currentPage/$pageCount",
+                modifier = Modifier.weight(1f),
+            )
+            ReaderStatTile(
+                label = "Mode",
+                value = mode.title,
+                modifier = Modifier.weight(1f),
+            )
+            ReaderStatTile(
+                label = "Fit",
+                value = scale.title,
+                modifier = Modifier.weight(1f),
+            )
+        }
         ReaderStatisticRow("Progress", readerProgressText(currentPage, pageCount))
         ReaderStatisticRow("Page", "$currentPage / $pageCount")
+        ReaderStatisticRow("Remaining", "$remainingPages page(s)")
+        ReaderStatisticRow("Elapsed", elapsedSeconds.toInt().toReaderTime())
         ReaderStatisticRow("Mode", mode.title)
         ReaderStatisticRow("Scale", scale.title)
+        if (settings.showReadingSpeed) {
+            ReaderStatisticRow("Speed", "${pagesPerMinute.toReaderDecimal()} pages/min")
+        }
+        if (settings.showReadingTime) {
+            ReaderStatisticRow("Time left", remainingSeconds.toReaderTime())
+        }
         if (request.chapterQueue.isNotEmpty()) {
             ReaderStatisticRow(
                 "Chapter",
@@ -7072,6 +11861,76 @@ private fun ReaderStatisticsPanel(
         previousChapter?.let { ReaderStatisticRow("Previous", it.chapterName) }
         nextChapter?.let { ReaderStatisticRow("Next", it.chapterName) }
     }
+}
+
+@Composable
+private fun ReaderStatsProgressBar(
+    currentPage: Int,
+    pageCount: Int,
+) {
+    val progress = if (pageCount <= 0) {
+        0f
+    } else {
+        currentPage.coerceIn(0, pageCount).toFloat() / pageCount.toFloat()
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(8.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(ReaderPalette.control),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(progress)
+                .background(ReaderPalette.selectedControl),
+        )
+    }
+}
+
+@Composable
+private fun ReaderStatTile(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(7.dp))
+            .background(ReaderPalette.control.copy(alpha = 0.38f))
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+    ) {
+        Label(
+            label,
+            ReaderPalette.secondaryText,
+            9,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Label(
+            value,
+            Color.White,
+            12,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 3.dp),
+        )
+    }
+}
+
+private fun Double.toReaderDecimal(): String {
+    val rounded = kotlin.math.round(this * 10.0) / 10.0
+    return if (rounded.rem(1.0) == 0.0) rounded.toInt().toString() else rounded.toString()
+}
+
+private fun Int.toReaderTime(): String {
+    if (this <= 0) return "Less than a minute"
+    val minutes = (this + 59) / 60
+    if (minutes < 60) return "$minutes min"
+    val hours = minutes / 60
+    val remainingMinutes = minutes % 60
+    return if (remainingMinutes == 0) "$hours hr" else "$hours hr $remainingMinutes min"
 }
 
 @Composable
@@ -7112,6 +11971,8 @@ private fun ReaderControlBar(
     settingsVisible: Boolean,
     chaptersVisible: Boolean,
     statsVisible: Boolean,
+    showPageStrip: Boolean,
+    bottomButtons: List<String>,
     cropActive: Boolean,
     showPercentage: Boolean,
     onOpenChapterUrl: (() -> Unit)?,
@@ -7120,68 +11981,110 @@ private fun ReaderControlBar(
     onToggleChapters: () -> Unit,
     onToggleStats: () -> Unit,
     onToggleCrop: () -> Unit,
+    onPreviousPage: () -> Unit,
+    onNextPage: () -> Unit,
 ) {
+    val actionTint = readerHudContent(canvas)
+    val showInlinePageControls = !showPageStrip && pageCount > 0
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
-            .background(readerHudBackground(canvas))
-            .padding(horizontal = 16.dp, vertical = 7.dp),
+            .height(64.dp)
+            .background(readerHudBackground(canvas).copy(alpha = 0.97f))
+            .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Label(
-            text = if (showPercentage) readerProgressText(currentPage, pageCount) else "$currentPage / $pageCount",
-            color = readerHudContent(canvas).copy(alpha = 0.74f),
-            size = 13,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+        if (showInlinePageControls) {
+            Row(
+                modifier = Modifier
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(readerHudContent(canvas).copy(alpha = 0.08f))
+                    .border(1.dp, readerHudContent(canvas).copy(alpha = 0.06f), RoundedCornerShape(22.dp))
+                    .padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                ReaderAction(
+                    icon = UiIcon.Back,
+                    contentDescription = "Previous page",
+                    tint = actionTint,
+                    onClick = onPreviousPage,
+                )
+                Label(
+                    text = if (showPercentage) readerProgressText(currentPage, pageCount) else "$currentPage / $pageCount",
+                    color = readerHudContent(canvas).copy(alpha = 0.74f),
+                    size = 11,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier.widthIn(min = 56.dp),
+                )
+                ReaderAction(
+                    icon = UiIcon.Forward,
+                    contentDescription = "Next page",
+                    tint = actionTint,
+                    onClick = onNextPage,
+                )
+            }
+        }
         Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = if (showInlinePageControls) 8.dp else 0.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ReaderAction(
-                icon = UiIcon.Chapters,
-                contentDescription = "Chapters",
-                active = chaptersVisible,
-                tint = readerHudContent(canvas),
-                onClick = onToggleChapters,
-            )
-            ReaderAction(
-                icon = UiIcon.Settings,
-                contentDescription = "Appearance",
-                active = settingsVisible,
-                tint = readerHudContent(canvas),
-                onClick = onToggleSettings,
-            )
-            ReaderAction(
-                icon = UiIcon.Statistics,
-                contentDescription = "Statistics",
-                active = statsVisible,
-                tint = readerHudContent(canvas),
-                onClick = onToggleStats,
-            )
-            ReaderAction(
-                icon = UiIcon.Crop,
-                contentDescription = "Crop borders",
-                active = cropActive,
-                tint = readerHudContent(canvas),
-                onClick = onToggleCrop,
-            )
-            onOpenChapterUrl?.let {
+            if ("chapters" in bottomButtons) {
+                ReaderAction(
+                    icon = UiIcon.Chapters,
+                    contentDescription = "Chapters",
+                    active = chaptersVisible,
+                    tint = actionTint,
+                    onClick = onToggleChapters,
+                )
+            }
+            if ("source" in bottomButtons) onOpenChapterUrl?.let {
                 ReaderAction(
                     icon = UiIcon.Web,
                     contentDescription = "Open source page",
-                    tint = readerHudContent(canvas),
+                    tint = actionTint,
                     onClick = it,
                 )
             }
+            if ("mode" in bottomButtons) {
+                ReaderAction(
+                    icon = UiIcon.Swap,
+                    contentDescription = "Reading mode: ${mode.title}",
+                    tint = actionTint,
+                    onClick = onCycleMode,
+                )
+            }
+            if ("crop" in bottomButtons) {
+                ReaderAction(
+                    icon = UiIcon.Crop,
+                    contentDescription = "Crop borders",
+                    active = cropActive,
+                    tint = actionTint,
+                    onClick = onToggleCrop,
+                )
+            }
+            if ("stats" in bottomButtons) {
+                ReaderAction(
+                    icon = UiIcon.Statistics,
+                    contentDescription = "Statistics",
+                    active = statsVisible,
+                    tint = actionTint,
+                    onClick = onToggleStats,
+                )
+            }
             ReaderAction(
-                icon = UiIcon.Swap,
-                contentDescription = "Reading mode: ${mode.title}",
-                tint = readerHudContent(canvas),
-                onClick = onCycleMode,
+                icon = UiIcon.Settings,
+                contentDescription = "Reader settings",
+                active = settingsVisible,
+                tint = actionTint,
+                onClick = onToggleSettings,
             )
         }
     }
@@ -7203,6 +12106,7 @@ private fun ReaderPageImage(
     var pageActionsVisible by remember(page) { mutableStateOf(false) }
     var pageActionBusy by remember(page) { mutableStateOf<String?>(null) }
     var pageActionMessage by remember(page) { mutableStateOf<String?>(null) }
+    var panOffset by remember(page, scale, readerSettings.navigateToPan) { mutableStateOf(Offset.Zero) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(page, retryKey) {
@@ -7267,12 +12171,8 @@ private fun ReaderPageImage(
                 val aspectRatio = pageState.image.width.toFloat() /
                     pageState.image.height.coerceAtLeast(1).toFloat()
                 val colorFilter = readerSettings.readerColorFilter()
-                Image(
-                    bitmap = pageState.image,
-                    contentDescription = "Page ${page.index + 1}",
-                    contentScale = if (readerSettings.cropBorders) ContentScale.Crop else ContentScale.Fit,
-                    colorFilter = colorFilter,
-                    modifier = when {
+                val panEnabled = paged && readerSettings.navigateToPan && scale != ReaderScale.FitScreen
+                val baseImageModifier = when {
                         paged && readerSettings.cropBorders -> Modifier.fillMaxSize()
                         paged && scale == ReaderScale.FitScreen -> Modifier.fillMaxSize()
                         paged && scale == ReaderScale.FitHeight -> Modifier
@@ -7281,15 +12181,49 @@ private fun ReaderPageImage(
                         else -> Modifier
                             .fillMaxWidth()
                             .aspectRatio(aspectRatio)
-                    }.pointerInput(page) {
+                    }
+                val imageModifier = baseImageModifier
+                    .graphicsLayer {
+                        if (panEnabled) {
+                            translationX = panOffset.x
+                            translationY = panOffset.y
+                        }
+                    }
+                    .pointerInput(page, panEnabled) {
+                        if (panEnabled) {
+                            detectDragGestures(
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    panOffset += dragAmount
+                                },
+                            )
+                        }
+                    }
+                    .pointerInput(page) {
                         detectTapGestures(
                             onLongPress = {
                                 pageActionMessage = null
                                 pageActionsVisible = true
                             },
                         )
-                    },
-                )
+                    }
+                if (paged && readerSettings.splitWidePages && aspectRatio >= 1.25f) {
+                    ReaderSplitWidePageImage(
+                        bitmap = pageState.image,
+                        contentDescription = "Page ${page.index + 1} split spread",
+                        rtl = readerSettings.mode == ChimahonReaderMode.RightToLeft,
+                        colorFilter = colorFilter,
+                        modifier = imageModifier,
+                    )
+                } else {
+                    Image(
+                        bitmap = pageState.image,
+                        contentDescription = "Page ${page.index + 1}",
+                        contentScale = if (readerSettings.cropBorders) ContentScale.Crop else ContentScale.Fit,
+                        colorFilter = colorFilter,
+                        modifier = imageModifier,
+                    )
+                }
                 readerSettings.readerBrightnessOverlay()?.let { overlay ->
                     Box(
                         modifier = Modifier
@@ -7318,6 +12252,10 @@ private fun ReaderPageImage(
             onShareInfo = {
                 pageActionMessage = ChimahonReaderPageActions.sharePageText(request, page).message
             },
+            onResetView = {
+                panOffset = Offset.Zero
+                pageActionMessage = "Page view reset."
+            },
             onSaveImage = {
                 if (pageActionBusy == null) {
                     scope.launch {
@@ -7342,6 +12280,53 @@ private fun ReaderPageImage(
                     }
                 }
             },
+        )
+    }
+}
+
+@Composable
+private fun ReaderSplitWidePageImage(
+    bitmap: ImageBitmap,
+    contentDescription: String,
+    rtl: Boolean,
+    colorFilter: ColorFilter?,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(
+        modifier = modifier.semantics {
+            this.contentDescription = contentDescription
+        },
+    ) {
+        val halfWidth = (bitmap.width / 2).coerceAtLeast(1)
+        val leftHalf = 0 to halfWidth
+        val rightHalf = halfWidth to (bitmap.width - halfWidth).coerceAtLeast(1)
+        val halves = if (rtl) listOf(rightHalf, leftHalf) else listOf(leftHalf, rightHalf)
+        val gutter = min(size.width * 0.018f, 16f)
+        val panelWidth = ((size.width - gutter) / 2f).coerceAtLeast(1f)
+
+        halves.forEachIndexed { index, (srcX, srcWidth) ->
+            val fitScale = min(
+                panelWidth / srcWidth.toFloat(),
+                size.height / bitmap.height.coerceAtLeast(1).toFloat(),
+            )
+            val dstWidth = (srcWidth * fitScale).coerceAtLeast(1f)
+            val dstHeight = (bitmap.height * fitScale).coerceAtLeast(1f)
+            val panelStart = index * (panelWidth + gutter)
+            val dstX = panelStart + ((panelWidth - dstWidth) / 2f)
+            val dstY = (size.height - dstHeight) / 2f
+            drawImage(
+                image = bitmap,
+                srcOffset = IntOffset(srcX, 0),
+                srcSize = IntSize(srcWidth, bitmap.height),
+                dstOffset = IntOffset(dstX.roundToInt(), dstY.roundToInt()),
+                dstSize = IntSize(dstWidth.roundToInt(), dstHeight.roundToInt()),
+                colorFilter = colorFilter,
+            )
+        }
+        drawRect(
+            color = Color.Black.copy(alpha = 0.20f),
+            topLeft = Offset((size.width - gutter) / 2f, 0f),
+            size = Size(gutter, size.height),
         )
     }
 }
@@ -7386,29 +12371,23 @@ private fun ReaderPageActionsDialog(
     onCopyUrl: () -> Unit,
     onCopyInfo: () -> Unit,
     onShareInfo: () -> Unit,
+    onResetView: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
-                .widthIn(min = 280.dp, max = 420.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(ReaderPalette.chrome)
-                .border(1.dp, ReaderPalette.divider, RoundedCornerShape(8.dp))
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .widthIn(min = 300.dp, max = 420.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(ReaderPalette.chrome.copy(alpha = 0.99f))
+                .border(1.dp, ReaderPalette.divider.copy(alpha = 0.82f), RoundedCornerShape(18.dp))
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Label(
-                "Page actions",
-                Color.White,
-                17,
-                weight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-            Label(
-                "${request.chapterName} - page ${page.index + 1}",
-                ReaderPalette.secondaryText,
-                11,
-                maxLines = 2,
+            ReaderSheetDragHandle()
+            ReaderSheetHeader(
+                title = "Page actions",
+                subtitle = "${request.chapterName} - page ${page.index + 1}",
+                icon = UiIcon.Info,
             )
             ReaderPageActionRow(
                 title = if (busyAction == "save") "Saving image" else "Save image",
@@ -7442,6 +12421,12 @@ private fun ReaderPageActionsDialog(
                 enabled = busyAction == null,
                 onClick = onShareInfo,
             )
+            ReaderPageActionRow(
+                title = "Reset page view",
+                icon = UiIcon.Crop,
+                enabled = busyAction == null,
+                onClick = onResetView,
+            )
             message?.let {
                 Label(
                     it,
@@ -7449,6 +12434,11 @@ private fun ReaderPageActionsDialog(
                     11,
                     lineHeight = 16,
                     maxLines = 3,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(ReaderPalette.control.copy(alpha = 0.32f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
             Row(
@@ -7476,9 +12466,9 @@ private fun ReaderPageActionRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(42.dp)
+            .height(48.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(if (active) ReaderPalette.selectedControl else ReaderPalette.control)
+            .background(if (active) ReaderPalette.selectedControl else ReaderPalette.control.copy(alpha = 0.34f))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -7514,13 +12504,20 @@ private fun ReaderMessage(
             .background(ReaderPalette.background),
         contentAlignment = Alignment.Center,
     ) {
-        ReaderPageMessage(
-            marker = marker,
-            title = title,
-            detail = detail,
-            action = action,
-            onAction = onAction,
-        )
+        Column(
+            modifier = Modifier
+                .widthIn(max = 420.dp)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            ReaderPageMessage(
+                marker = marker,
+                title = title,
+                detail = detail,
+                action = action,
+                onAction = onAction,
+            )
+        }
     }
 }
 
@@ -7534,19 +12531,14 @@ private fun ReaderPageMessage(
 ) {
     Column(
         modifier = Modifier
-            .widthIn(max = 360.dp)
-            .padding(24.dp),
+            .widthIn(min = 220.dp, max = 380.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(ReaderPalette.chrome.copy(alpha = 0.88f))
+            .border(1.dp, ReaderPalette.divider, RoundedCornerShape(10.dp))
+            .padding(horizontal = 20.dp, vertical = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(ReaderPalette.control),
-            contentAlignment = Alignment.Center,
-        ) {
-            Label(marker, Color.White, 13, weight = FontWeight.Bold, maxLines = 1)
-        }
+        ReaderStatusGlyph(marker)
         Label(
             text = title,
             color = Color.White,
@@ -7570,6 +12562,26 @@ private fun ReaderPageMessage(
                 modifier = Modifier.padding(top = 12.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun ReaderStatusGlyph(marker: String) {
+    Box(
+        modifier = Modifier
+            .size(54.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(ReaderPalette.selectedControl.copy(alpha = 0.30f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            marker,
+            Color.White,
+            if (marker.length <= 2) 15 else 11,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -7605,42 +12617,54 @@ private fun FeedSection(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
             }
-            items(sources, key = { it.id }) { source ->
-                val enabled = enabledSources[source.id] != false
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(ChimahonPalette.surface)
-                        .clickable { enabledSources[source.id] = !enabled }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconGlyph(
-                        icon = if (enabled) UiIcon.CheckCircle else UiIcon.Circle,
-                        contentDescription = if (enabled) "Disable feed" else "Enable feed",
-                        tint = if (enabled) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Column(
+            sources.sourceGroups(groupByLanguage = true).forEach { (language, group) ->
+                if (language != null) {
+                    item { SourceLanguageHeader(language, group.size) }
+                }
+                items(group, key = { it.id }) { source ->
+                    val enabled = enabledSources[source.id] != false
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 14.dp),
+                            .fillMaxWidth()
+                            .background(ChimahonPalette.surface)
+                            .clickable { enabledSources[source.id] = !enabled }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Label(source.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
-                        Label(
-                            source.language.ifBlank { "multi" }.uppercase(),
-                            ChimahonPalette.secondaryText,
-                            11,
-                            maxLines = 1,
-                            modifier = Modifier.padding(top = 2.dp),
+                        IconGlyph(
+                            icon = if (enabled) UiIcon.CheckCircle else UiIcon.Circle,
+                            contentDescription = if (enabled) "Disable feed" else "Enable feed",
+                            tint = if (enabled) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                            modifier = Modifier.size(22.dp),
+                        )
+                        SourceIconTile(
+                            source = source,
+                            size = 34.dp,
+                            cornerRadius = 10.dp,
+                            compact = true,
+                            modifier = Modifier.padding(start = 12.dp),
+                        )
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 12.dp),
+                        ) {
+                            Label(source.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                            Label(
+                                "${source.language.ifBlank { "multi" }.uppercase()}  -  ${if (source.supportsLatest) "Latest" else "Popular"}",
+                                ChimahonPalette.secondaryText,
+                                11,
+                                maxLines = 1,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                        IconGlyph(
+                            icon = UiIcon.Reorder,
+                            contentDescription = "Reorder ${source.name}",
+                            tint = ChimahonPalette.secondaryText,
+                            modifier = Modifier.size(20.dp),
                         )
                     }
-                    IconGlyph(
-                        icon = UiIcon.Reorder,
-                        contentDescription = "Reorder ${source.name}",
-                        tint = ChimahonPalette.secondaryText,
-                        modifier = Modifier.size(20.dp),
-                    )
                 }
             }
         }
@@ -7660,24 +12684,97 @@ private fun FeedSection(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
-        items(visibleSources, key = { it.id }) { source ->
-            SourceFeedBlock(
-                source = source,
-                onLoadSourcePreview = onLoadSourcePreview,
-                onOpenRemoteManga = onOpenRemoteManga,
-                onOpenSource = {
-                    onOpenSource(
-                        source.id,
-                        if (source.supportsLatest) {
-                            ChimahonSourceBrowseMode.Latest
-                        } else {
-                            ChimahonSourceBrowseMode.Popular
-                        },
-                    )
-                },
-            )
+        visibleSources.sourceGroups(groupByLanguage = true).forEach { (language, group) ->
+            if (language != null) {
+                item { SourceLanguageHeader(language, group.size) }
+            }
+            items(group, key = { it.id }) { source ->
+                SourceFeedBlock(
+                    source = source,
+                    onLoadSourcePreview = onLoadSourcePreview,
+                    onOpenRemoteManga = onOpenRemoteManga,
+                    onOpenSource = {
+                        onOpenSource(
+                            source.id,
+                            if (source.supportsLatest) {
+                                ChimahonSourceBrowseMode.Latest
+                            } else {
+                                ChimahonSourceBrowseMode.Popular
+                            },
+                        )
+                    },
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun BrowseStatusRow(
+    icon: UiIcon,
+    title: String,
+    subtitle: String,
+    action: String? = null,
+    error: Boolean = false,
+    onAction: () -> Unit = {},
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(if (error) ChimahonPalette.error.copy(alpha = 0.12f) else ChimahonPalette.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = "",
+                tint = if (error) ChimahonPalette.error else ChimahonPalette.primary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp, end = 10.dp),
+        ) {
+            Label(
+                title,
+                if (error) ChimahonPalette.error else ChimahonPalette.onSurface,
+                14,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Label(
+                subtitle,
+                ChimahonPalette.secondaryText,
+                12,
+                lineHeight = 17,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        action?.let {
+            TextButtonLike(it, onClick = onAction)
+        }
+    }
+}
+
+@Composable
+private fun BrowseRowDivider(start: androidx.compose.ui.unit.Dp) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = start)
+            .height(1.dp)
+            .background(ChimahonPalette.divider),
+    )
 }
 
 @Composable
@@ -7695,8 +12792,9 @@ private fun SourceFeedBlock(
     var state by remember(source.id) {
         mutableStateOf<SourcePreviewUiState>(SourcePreviewUiState.Loading)
     }
+    var retryKey by remember(source.id) { mutableIntStateOf(0) }
 
-    LaunchedEffect(source.id, mode) {
+    LaunchedEffect(source.id, mode, retryKey) {
         state = SourcePreviewUiState.Loading
         state = runCatching { onLoadSourcePreview(source.id, mode, "", 1) }
             .fold(
@@ -7713,11 +12811,17 @@ private fun SourceFeedBlock(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(ChimahonPalette.surface)
                 .clickable(onClick = onOpenSource)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            SourceIconTile(source = source, size = 38.dp, cornerRadius = 11.dp)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp),
+            ) {
                 Label(
                     source.name,
                     ChimahonPalette.onSurface,
@@ -7744,29 +12848,28 @@ private fun SourceFeedBlock(
             SourcePreviewUiState.Idle,
             SourcePreviewUiState.Loading,
             -> {
-                Label(
-                    "Loading feed...",
-                    ChimahonPalette.secondaryText,
-                    12,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
+                BrowseStatusRow(
+                    icon = UiIcon.Refresh,
+                    title = "Loading feed",
+                    subtitle = "Fetching ${source.name} ${mode.title.lowercase()} entries.",
                 )
             }
             is SourcePreviewUiState.Failed -> {
-                Label(
-                    current.message,
-                    ChimahonPalette.error,
-                    11,
-                    maxLines = 2,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                BrowseStatusRow(
+                    icon = UiIcon.Info,
+                    title = "Feed unavailable",
+                    subtitle = current.message,
+                    action = "Retry",
+                    error = true,
+                    onAction = { retryKey++ },
                 )
             }
             is SourcePreviewUiState.Ready -> {
                 if (current.preview.entries.isEmpty()) {
-                    Label(
-                        "No results",
-                        ChimahonPalette.secondaryText,
-                        12,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
+                    BrowseStatusRow(
+                        icon = UiIcon.Search,
+                        title = "No feed entries",
+                        subtitle = "${source.name} returned an empty ${mode.title.lowercase()} page.",
                     )
                 } else {
                     LazyRow(
@@ -7829,6 +12932,7 @@ private fun ExtensionsSection(
     onInstallExtension: suspend (ChimahonRepoExtensionEntry) -> ChimahonInstalledExtensionEntry,
     onUninstallExtension: suspend (String, ChimahonExtensionPackageType) -> ChimahonExtensionUninstallResult,
     onRepoSaved: () -> Unit,
+    onOpenExternalUrl: (String) -> Boolean,
 ) {
     var repoUrl by remember { mutableStateOf("") }
     var repoMessage by remember { mutableStateOf<String?>(null) }
@@ -7837,6 +12941,8 @@ private fun ExtensionsSection(
     var repoPendingDeletion by remember { mutableStateOf<ChimahonExtensionRepoEntry?>(null) }
     var deletingRepoUrl by remember { mutableStateOf<String?>(null) }
     var repoDeleteMessage by remember { mutableStateOf<String?>(null) }
+    var repoActionMessage by remember { mutableStateOf<String?>(null) }
+    var catalogRequestKey by remember { mutableIntStateOf(0) }
     var catalogState by remember { mutableStateOf<ExtensionRepoCatalogUiState>(ExtensionRepoCatalogUiState.Idle) }
     var installingExtensionId by remember { mutableStateOf<String?>(null) }
     var uninstallingExtensionId by remember { mutableStateOf<String?>(null) }
@@ -7845,15 +12951,60 @@ private fun ExtensionsSection(
     var selectedFilter by remember { mutableStateOf(ExtensionFilter.All) }
     var showRepoInput by remember { mutableStateOf(snapshot.extensionRepos.isEmpty()) }
     val scope = rememberCoroutineScope()
-    val installedExtensionIds = snapshot.installedExtensions.map { it.id }.toSet()
+    val listState = rememberLazyListState()
+    val installedExtensionsByKey = snapshot.installedExtensions.associateBy(ChimahonInstalledExtensionEntry::installKey)
     val filteredInstalledExtensions = snapshot.installedExtensions.filter { extension ->
         query.isBlank() ||
             extension.name.contains(query, ignoreCase = true) ||
             extension.id.contains(query, ignoreCase = true)
     }
+    val readyCatalog = catalogState as? ExtensionRepoCatalogUiState.Ready
+    val availableUpdatesByKey = readyCatalog
+        ?.catalog
+        ?.extensions
+        .orEmpty()
+        .groupBy(ChimahonRepoExtensionEntry::installKey)
+        .mapValues { (_, entries) ->
+            entries.maxWithOrNull { first, second -> compareVersionStrings(first.version, second.version) }
+        }
+    val filteredExtensions = readyCatalog
+        ?.catalog
+        ?.extensions
+        .orEmpty()
+        .filter { extension ->
+            (
+                query.isBlank() ||
+                    extension.name.contains(query, ignoreCase = true) ||
+                    extension.id.contains(query, ignoreCase = true) ||
+                    extension.language.contains(query, ignoreCase = true)
+                ) &&
+                (
+                    browseSettings.enabledLanguages.isEmpty() ||
+                        extension.language.sourceLanguageCode() in browseSettings.enabledLanguages
+                    ) &&
+                (browseSettings.showNsfwSources || !extension.isNsfw) &&
+                when (selectedFilter) {
+                    ExtensionFilter.All,
+                    ExtensionFilter.Available,
+                    -> true
+                    ExtensionFilter.Installed -> false
+                    ExtensionFilter.Nsfw -> extension.isNsfw
+                }
+        }
+    var visibleExtensionCount by remember(
+        readyCatalog?.catalog?.repo?.baseUrl,
+        query,
+        selectedFilter,
+        browseSettings.enabledLanguages.joinToString(),
+        browseSettings.showNsfwSources,
+    ) {
+        mutableIntStateOf(EXTENSION_CATALOG_PAGE_SIZE)
+    }
+    val visibleExtensions = filteredExtensions.take(visibleExtensionCount)
+    val hasMoreExtensions = visibleExtensionCount < filteredExtensions.size
 
     LaunchedEffect(snapshot.extensionRepos) {
-        if (selectedRepo == null) {
+        if (selectedRepo == null || snapshot.extensionRepos.none { it.baseUrl == selectedRepo?.baseUrl }) {
             selectedRepo = snapshot.extensionRepos.firstOrNull()
         }
     }
@@ -7864,7 +13015,7 @@ private fun ExtensionsSection(
         }
     }
 
-    LaunchedEffect(selectedRepo?.baseUrl) {
+    LaunchedEffect(selectedRepo?.baseUrl, catalogRequestKey) {
         val repo = selectedRepo ?: run {
             catalogState = ExtensionRepoCatalogUiState.Idle
             return@LaunchedEffect
@@ -7872,9 +13023,51 @@ private fun ExtensionsSection(
         catalogState = ExtensionRepoCatalogUiState.Loading
         catalogState = runCatching { onLoadExtensionRepoCatalog(repo) }
             .fold(
-                onSuccess = ExtensionRepoCatalogUiState::Ready,
+                onSuccess = { catalog ->
+                    repoActionMessage = "${catalog.extensions.size} extension(s) loaded from ${repo.name}"
+                    ExtensionRepoCatalogUiState.Ready(catalog)
+                },
                 onFailure = { ExtensionRepoCatalogUiState.Failed(it.message ?: "Could not load repository") },
             )
+    }
+
+    LaunchedEffect(
+        listState,
+        browseSettings.autoLoadMore,
+        hasMoreExtensions,
+        visibleExtensionCount,
+        filteredExtensions.size,
+    ) {
+        if (!browseSettings.autoLoadMore || !hasMoreExtensions) return@LaunchedEffect
+        snapshotFlow {
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            lastVisibleIndex >= (layoutInfo.totalItemsCount - 5).coerceAtLeast(0)
+        }
+            .distinctUntilChanged()
+            .collect { nearEnd ->
+                if (nearEnd) {
+                    visibleExtensionCount = (visibleExtensionCount + EXTENSION_CATALOG_PAGE_SIZE)
+                        .coerceAtMost(filteredExtensions.size)
+                }
+            }
+    }
+
+    LaunchedEffect(
+        selectedRepo?.baseUrl,
+        query,
+        selectedFilter,
+        browseSettings.enabledLanguages.joinToString(),
+        browseSettings.showNsfwSources,
+        browseSettings.autoLoadMore,
+        filteredExtensions.size,
+    ) {
+        if (!browseSettings.autoLoadMore) return@LaunchedEffect
+        while (visibleExtensionCount < filteredExtensions.size) {
+            delay(48)
+            visibleExtensionCount = (visibleExtensionCount + EXTENSION_CATALOG_PAGE_SIZE)
+                .coerceAtMost(filteredExtensions.size)
+        }
     }
 
     repoPendingDeletion?.let { repo ->
@@ -7892,10 +13085,11 @@ private fun ExtensionsSection(
                     scope.launch {
                         runCatching { onDeleteExtensionRepo(repo.baseUrl) }
                             .onSuccess {
-                                selectedRepo = null
+                                selectedRepo = snapshot.extensionRepos.firstOrNull { it.baseUrl != repo.baseUrl }
                                 catalogState = ExtensionRepoCatalogUiState.Idle
                                 installMessage = null
                                 repoDeleteMessage = null
+                                repoActionMessage = "Deleted ${repo.name}"
                                 repoPendingDeletion = null
                                 onRepoSaved()
                             }
@@ -7911,6 +13105,7 @@ private fun ExtensionsSection(
     }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 16.dp),
     ) {
@@ -7918,12 +13113,19 @@ private fun ExtensionsSection(
             ExtensionSectionToolbar(
                 extensionCount = snapshot.summary.extensionCount,
                 repoCount = snapshot.extensionRepos.size,
+                selectedRepo = selectedRepo?.name,
                 onAddRepo = { showRepoInput = !showRepoInput },
+                onRefreshRepo = {
+                    repoDeleteMessage = null
+                    repoActionMessage = null
+                    installMessage = null
+                    selectedRepo?.let { catalogRequestKey++ }
+                },
             )
         }
         if (filtersVisible) {
             item {
-                FilterChips(
+                ScrollableFilterChips(
                     chips = ExtensionFilter.entries.map { it.title },
                     selected = selectedFilter.title,
                     onSelect = { title ->
@@ -7951,6 +13153,9 @@ private fun ExtensionsSection(
                                     .onSuccess { repo ->
                                         repoUrl = ""
                                         repoMessage = "Saved ${repo.name}"
+                                        selectedRepo = repo
+                                        repoActionMessage = null
+                                        catalogRequestKey++
                                         showRepoInput = false
                                         onRepoSaved()
                                     }
@@ -7965,10 +13170,21 @@ private fun ExtensionsSection(
             }
         }
         if (selectedFilter in listOf(ExtensionFilter.All, ExtensionFilter.Installed)) {
-            item { ListGroupHeader("Installed") }
+            item {
+                ExtensionManagerHeader(
+                    title = "Installed extensions",
+                    count = filteredInstalledExtensions.size,
+                    detail = if (snapshot.installedExtensions.isEmpty()) {
+                        "Nothing installed yet"
+                    } else {
+                        "${snapshot.installedExtensions.size} installed"
+                    },
+                )
+            }
             if (filteredInstalledExtensions.isEmpty()) {
                 item {
-                    ExtensionStatusRow(
+                    ExtensionManagerStatusRow(
+                        icon = UiIcon.Extensions,
                         title = if (snapshot.installedExtensions.isEmpty()) {
                             "No extensions installed"
                         } else {
@@ -7978,10 +13194,32 @@ private fun ExtensionsSection(
                     )
                 }
             } else {
-                items(filteredInstalledExtensions, key = { it.id }) { extension ->
+                items(filteredInstalledExtensions, key = { "${it.packageType}:${it.id}" }) { extension ->
+                    val availableUpdate = availableUpdatesByKey[extension.installKey()]
+                        ?.takeIf { it.version.isNewerThan(extension.version) }
                     InstalledExtensionListItem(
                         extension = extension,
+                        availableUpdate = availableUpdate,
                         uninstalling = uninstallingExtensionId == extension.id,
+                        updating = installingExtensionId == extension.id,
+                        onUpdate = {
+                            val update = availableUpdate
+                            if (update != null && installingExtensionId == null) {
+                                installingExtensionId = update.id
+                                installMessage = null
+                                scope.launch {
+                                    runCatching { onInstallExtension(update) }
+                                        .onSuccess { installed ->
+                                            installMessage = "Updated ${installed.name}"
+                                            onRepoSaved()
+                                        }
+                                        .onFailure { error ->
+                                            installMessage = error.message ?: "Could not update extension"
+                                        }
+                                    installingExtensionId = null
+                                }
+                            }
+                        },
                         onUninstall = {
                             if (uninstallingExtensionId == null) {
                                 uninstallingExtensionId = extension.id
@@ -8008,25 +13246,25 @@ private fun ExtensionsSection(
             }
             uninstallMessage?.let { message ->
                 item {
-                    Label(
-                        text = message,
-                        color = if (message.startsWith("Could not")) {
-                            ChimahonPalette.error
-                        } else {
-                            ChimahonPalette.primary
-                        },
-                        size = 12,
-                        maxLines = 2,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    ExtensionManagerMessageRow(
+                        message = message,
+                        error = message.startsWith("Could not"),
                     )
                 }
             }
         }
-        item { ListGroupHeader("Extension repositories") }
+        item {
+            ExtensionManagerHeader(
+                title = "Extension repos",
+                count = snapshot.extensionRepos.size,
+                detail = selectedRepo?.name ?: "Choose a repo to browse",
+            )
+        }
         if (snapshot.extensionRepos.isEmpty()) {
             item {
-                ExtensionStatusRow(
-                    title = "More extensions...",
+                ExtensionManagerStatusRow(
+                    icon = UiIcon.Link,
+                    title = "No repositories",
                     subtitle = "Add a repository to browse available extensions.",
                     action = "Add repo",
                     onAction = { showRepoInput = true },
@@ -8045,12 +13283,29 @@ private fun ExtensionsSection(
                         repoDeleteMessage = null
                         repoPendingDeletion = repo
                     },
+                    onOpen = {
+                        val opened = onOpenExternalUrl(repo.website.ifBlank { repo.baseUrl })
+                        repoActionMessage = if (opened) null else "Could not open ${repo.website.ifBlank { repo.baseUrl }}"
+                    },
+                )
+            }
+        }
+        repoActionMessage?.let { message ->
+            item {
+                ExtensionManagerStatusRow(
+                    icon = if (message.startsWith("Could not")) UiIcon.Info else UiIcon.CheckCircle,
+                    title = message,
+                    subtitle = selectedRepo?.baseUrl ?: "Extension repository",
+                    action = selectedRepo?.let { "Refresh" },
+                    error = message.startsWith("Could not"),
+                    onAction = { catalogRequestKey++ },
                 )
             }
         }
         repoDeleteMessage?.let { message ->
             item {
-                ExtensionStatusRow(
+                ExtensionManagerStatusRow(
+                    icon = UiIcon.Info,
                     title = "Could not delete repository",
                     subtitle = message,
                     error = true,
@@ -8061,49 +13316,42 @@ private fun ExtensionsSection(
             ExtensionRepoCatalogUiState.Idle -> Unit
             ExtensionRepoCatalogUiState.Loading -> {
                 item {
-                    ExtensionStatusRow(
-                        title = "Loading repository",
+                    ExtensionManagerStatusRow(
+                        icon = UiIcon.Refresh,
+                        title = "Loading ${selectedRepo?.name ?: "repository"}",
                         subtitle = "Fetching the extension catalog.",
                     )
                 }
             }
             is ExtensionRepoCatalogUiState.Failed -> {
                 item {
-                    ExtensionStatusRow(
+                    ExtensionManagerStatusRow(
+                        icon = UiIcon.Info,
                         title = "Repository unavailable",
                         subtitle = catalog.message,
+                        action = "Retry",
                         error = true,
+                        onAction = { catalogRequestKey++ },
                     )
                 }
             }
             is ExtensionRepoCatalogUiState.Ready -> {
-                val filteredExtensions = catalog.catalog.extensions.filter { extension ->
-                    (
-                        query.isBlank() ||
-                            extension.name.contains(query, ignoreCase = true) ||
-                            extension.id.contains(query, ignoreCase = true) ||
-                            extension.language.contains(query, ignoreCase = true)
-                        ) &&
-                        (
-                            browseSettings.enabledLanguages.isEmpty() ||
-                                extension.language.sourceLanguageCode() in browseSettings.enabledLanguages
-                            ) &&
-                        (browseSettings.showNsfwSources || !extension.isNsfw) &&
-                        when (selectedFilter) {
-                            ExtensionFilter.All,
-                            ExtensionFilter.Available,
-                            -> true
-                            ExtensionFilter.Installed -> false
-                            ExtensionFilter.Nsfw -> extension.isNsfw
-                        }
-                }
                 if (selectedFilter != ExtensionFilter.Installed) {
                     item {
-                        ListGroupHeader("Available")
+                        ExtensionManagerHeader(
+                            title = "Available extensions",
+                            count = filteredExtensions.size,
+                            detail = if (filteredExtensions.size == catalog.catalog.extensions.size) {
+                                catalog.catalog.repo.name
+                            } else {
+                                "Filtered from ${catalog.catalog.extensions.size}"
+                            },
+                        )
                     }
                     if (catalog.catalog.extensions.isEmpty()) {
                         item {
-                            ExtensionStatusRow(
+                            ExtensionManagerStatusRow(
+                                icon = UiIcon.Extensions,
                                 title = "No compatible extensions",
                                 subtitle = "This repository did not expose a supported extension package.",
                             )
@@ -8111,25 +13359,30 @@ private fun ExtensionsSection(
                     } else {
                         if (filteredExtensions.isEmpty()) {
                             item {
-                                ExtensionStatusRow(
+                                ExtensionManagerStatusRow(
+                                    icon = UiIcon.Search,
                                     title = "No results found",
                                     subtitle = "Try another name, package, language, or filter.",
                                 )
                             }
                         }
-                        filteredExtensions
+                        visibleExtensions
                             .extensionGroups(browseSettings.groupSourcesByLanguage)
                             .forEach { (language, extensions) ->
                                 if (language != null) {
                                     item {
-                                        ListGroupHeader(language)
+                                        ExtensionLanguageHeader(language, extensions.size)
                                     }
                                 }
-                                items(extensions, key = { it.id }) { extension ->
+                                items(extensions, key = { "${it.packageType}:${it.id}" }) { extension ->
+                                    val installed = installedExtensionsByKey[extension.installKey()]
+                                    val updateAvailable = installed != null &&
+                                        extension.version.isNewerThan(installed.version)
                                     RepoExtensionListItem(
                                         extension = extension,
                                         showLanguage = browseSettings.showSourceLanguage,
-                                        installed = extension.id in installedExtensionIds,
+                                        installed = installed != null,
+                                        updateAvailable = updateAvailable,
                                         installing = installingExtensionId == extension.id,
                                         onInstall = {
                                             if (installingExtensionId == null) {
@@ -8138,7 +13391,11 @@ private fun ExtensionsSection(
                                                 scope.launch {
                                                     runCatching { onInstallExtension(extension) }
                                                         .onSuccess { installed ->
-                                                            installMessage = "Installed ${installed.name}"
+                                                            installMessage = if (updateAvailable) {
+                                                                "Updated ${installed.name}"
+                                                            } else {
+                                                                "Installed ${installed.name}"
+                                                            }
                                                             onRepoSaved()
                                                         }
                                                         .onFailure { error ->
@@ -8152,14 +13409,25 @@ private fun ExtensionsSection(
                                 }
                             }
                     }
+                    if (hasMoreExtensions) {
+                        item {
+                            ExtensionAutoLoadFooter(
+                                visibleCount = visibleExtensionCount,
+                                totalCount = filteredExtensions.size,
+                                autoLoadMore = browseSettings.autoLoadMore,
+                                onLoadMore = {
+                                    visibleExtensionCount =
+                                        (visibleExtensionCount + EXTENSION_CATALOG_PAGE_SIZE)
+                                            .coerceAtMost(filteredExtensions.size)
+                                },
+                            )
+                        }
+                    }
                     installMessage?.let { message ->
                         item {
-                            Label(
-                                text = message,
-                                color = ChimahonPalette.primary,
-                                size = 12,
-                                maxLines = 2,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            ExtensionManagerMessageRow(
+                                message = message,
+                                error = message.startsWith("Could not"),
                             )
                         }
                     }
@@ -8173,32 +13441,183 @@ private fun ExtensionsSection(
 private fun ExtensionSectionToolbar(
     extensionCount: Int,
     repoCount: Int,
+    selectedRepo: String?,
     onAddRepo: () -> Unit,
+    onRefreshRepo: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ExtensionIdentityTile(
+                marker = "EXT",
+                active = extensionCount > 0 || repoCount > 0,
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 14.dp, end = 8.dp),
+            ) {
+                Label(
+                    "Extensions",
+                    ChimahonPalette.onSurface,
+                    14,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    selectedRepo?.let { "$extensionCount installed  -  $repoCount repos  -  $it" }
+                        ?: "$extensionCount installed  -  $repoCount repos",
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            if (selectedRepo != null) {
+                ChapterQuickAction(
+                    icon = UiIcon.Refresh,
+                    contentDescription = "Refresh selected repository",
+                    active = false,
+                    onClick = onRefreshRepo,
+                )
+            }
+            TextButtonLike("Add repo", onClick = onAddRepo)
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(ChimahonPalette.divider),
+        )
+    }
+}
+
+@Composable
+private fun ExtensionManagerHeader(
+    title: String,
+    count: Int,
+    detail: String? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ChimahonPalette.surface)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .background(ChimahonPalette.background)
+            .padding(start = 16.dp, end = 16.dp, top = 17.dp, bottom = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Label(
+            text = title.uppercase(),
+            color = ChimahonPalette.primary,
+            size = 11,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        detail?.let {
             Label(
-                "$extensionCount extensions",
-                ChimahonPalette.onSurface,
-                14,
-                weight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-            Label(
-                "$repoCount repositories",
+                it,
                 ChimahonPalette.secondaryText,
-                11,
+                10,
                 maxLines = 1,
-                modifier = Modifier.padding(top = 2.dp),
+                modifier = Modifier.padding(end = 8.dp),
             )
         }
-        TextButtonLike("Add repo", onClick = onAddRepo)
+        ExtensionBadge(text = count.toString(), active = count > 0)
+    }
+}
+
+@Composable
+private fun ExtensionLanguageHeader(
+    language: String,
+    count: Int,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.background)
+            .padding(start = 16.dp, end = 16.dp, top = 13.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ExtensionBadge(text = language.uppercase(), active = true)
+        Label(
+            "$count available",
+            ChimahonPalette.secondaryText,
+            10,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun ExtensionManagerStatusRow(
+    icon: UiIcon,
+    title: String,
+    subtitle: String,
+    action: String? = null,
+    error: Boolean = false,
+    onAction: () -> Unit = {},
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 64.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(if (error) ChimahonPalette.error.copy(alpha = 0.12f) else ChimahonPalette.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                IconGlyph(
+                    icon = icon,
+                    contentDescription = "",
+                    tint = if (error) ChimahonPalette.error else ChimahonPalette.primary,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 14.dp, end = 10.dp),
+            ) {
+                Label(
+                    title,
+                    if (error) ChimahonPalette.error else ChimahonPalette.onSurface,
+                    14,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    subtitle,
+                    ChimahonPalette.secondaryText,
+                    12,
+                    lineHeight = 17,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            action?.let {
+                TextButtonLike(it, onClick = onAction)
+            }
+        }
+        BrowseRowDivider(start = 72.dp)
     }
 }
 
@@ -8213,17 +13632,18 @@ private fun ExtensionStatusRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 58.dp)
             .background(ChimahonPalette.surface)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(start = 16.dp, end = 12.dp, top = 11.dp, bottom = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Label(
                 title,
                 if (error) ChimahonPalette.error else ChimahonPalette.onSurface,
-                13,
+                14,
                 weight = FontWeight.SemiBold,
-                maxLines = 1,
+                maxLines = 2,
             )
             Label(
                 subtitle,
@@ -8235,6 +13655,243 @@ private fun ExtensionStatusRow(
         }
         action?.let {
             TextButtonLike(it, onClick = onAction)
+        }
+    }
+}
+
+private data class TrackingAccountUi(
+    val marker: String,
+    val title: String,
+    val subtitle: String,
+)
+
+private fun trackingAccountRows(): List<TrackingAccountUi> {
+    return listOf(
+        TrackingAccountUi(
+            marker = "AL",
+            title = "AniList",
+            subtitle = "Connect adapter pending - last sync never",
+        ),
+        TrackingAccountUi(
+            marker = "MAL",
+            title = "MyAnimeList",
+            subtitle = "Connect adapter pending - last sync never",
+        ),
+        TrackingAccountUi(
+            marker = "KT",
+            title = "Kitsu",
+            subtitle = "Connect adapter pending - last sync never",
+        ),
+        TrackingAccountUi(
+            marker = "MU",
+            title = "MangaUpdates",
+            subtitle = "Connect adapter pending - last sync never",
+        ),
+    )
+}
+
+@Composable
+private fun TrackingStatusOverview(
+    settings: ChimahonTrackingSettings,
+    summary: ReadingProgressSummary,
+    incognitoMode: Boolean,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PreferenceIconBox(
+                icon = UiIcon.History,
+                active = !incognitoMode && summary.historyEntries > 0,
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 14.dp, end = 10.dp),
+            ) {
+                Label(
+                    "Tracking status",
+                    ChimahonPalette.onSurface,
+                    15,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    if (incognitoMode) {
+                        "History writes paused; local progress remains visible"
+                    } else {
+                        "${summary.historyEntries} history record(s), ${summary.readChapters} read chapter(s)"
+                    },
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            UpdateHistoryStatusChip(
+                text = if (incognitoMode) "Paused" else "Local",
+                active = !incognitoMode,
+            )
+        }
+        ProgressSummaryBar(
+            progress = summary.readProgressFraction,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 11.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val chips = listOf(
+                (if (settings.autoSyncEnabled) "Auto sync on" else "Auto sync off") to settings.autoSyncEnabled,
+                (if (settings.trackOnAddToLibrary) "Track new library" else "Manual add") to
+                    settings.trackOnAddToLibrary,
+                (if (settings.syncLibraryEntriesOnly) "Library only" else "All entries") to
+                    settings.syncLibraryEntriesOnly,
+                settings.autoUpdateOnMarkRead.title to (settings.autoUpdateOnMarkRead != ChimahonAutoTrackOnMarkRead.Never),
+                "${summary.inProgressManga} in progress" to (summary.inProgressManga > 0),
+            )
+            items(chips, key = { it.first }) { chip ->
+                UpdateHistoryStatusChip(text = chip.first, active = chip.second)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExtensionManagerMessageRow(
+    message: String,
+    error: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ExtensionBadge(
+            text = if (error) "ERROR" else "DONE",
+            active = !error,
+            error = error,
+        )
+        Label(
+            text = message,
+            color = if (error) ChimahonPalette.error else ChimahonPalette.secondaryText,
+            size = 12,
+            maxLines = 2,
+            modifier = Modifier.padding(start = 10.dp).weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun AccountStatusRow(
+    marker: String,
+    title: String,
+    subtitle: String,
+    status: String,
+    icon: UiIcon? = null,
+    statusColor: Color = ChimahonPalette.secondaryText,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(ChimahonPalette.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (icon != null) {
+                IconGlyph(
+                    icon = icon,
+                    contentDescription = "",
+                    tint = ChimahonPalette.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+            } else {
+                Label(marker, ChimahonPalette.primary, 12, weight = FontWeight.Bold, maxLines = 1)
+            }
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 14.dp),
+        ) {
+            Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(
+                subtitle,
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(statusColor.copy(alpha = 0.12f))
+                .padding(horizontal = 9.dp, vertical = 5.dp),
+        ) {
+            Label(status, statusColor, 10, weight = FontWeight.SemiBold, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun SettingsInfoPanel(
+    title: String,
+    detail: String,
+    icon: UiIcon,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(8.dp))
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(ChimahonPalette.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp),
+        ) {
+            Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(
+                detail,
+                ChimahonPalette.secondaryText,
+                12,
+                lineHeight = 17,
+                maxLines = 3,
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }
@@ -8302,10 +13959,24 @@ private fun ExtensionRepoInputPanel(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Label("Add extension repo", ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconGlyph(
+                icon = UiIcon.Add,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(18.dp),
+            )
+            Label(
+                "Add extension repository",
+                ChimahonPalette.onSurface,
+                14,
+                weight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -8318,7 +13989,7 @@ private fun ExtensionRepoInputPanel(
         ) {
             if (repoUrl.isBlank()) {
                 Label(
-                    "https://example.org/repo/index.min.json",
+                    "https://example.org/repo",
                     ChimahonPalette.secondaryText,
                     12,
                     maxLines = 1,
@@ -8356,69 +14027,137 @@ private fun ExtensionRepoInputPanel(
 }
 
 @Composable
+private fun ExtensionIdentityTile(
+    marker: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val color = coverColor(marker.hashCode().toLong(), marker)
+    Box(
+        modifier = modifier
+            .size(42.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(if (active) color.copy(alpha = 0.18f) else ChimahonPalette.surfaceVariant)
+            .border(
+                1.dp,
+                if (active) color.copy(alpha = 0.24f) else ChimahonPalette.divider,
+                RoundedCornerShape(11.dp),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            marker.take(3).uppercase(),
+            if (active) color else ChimahonPalette.secondaryText,
+            if (marker.length > 2) 10 else 12,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun ExtensionRepoIconTile(
+    repo: ChimahonExtensionRepoEntry,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val host = repo.baseUrl.extensionRepoHost()
+    val color = coverColor(host.hashCode().toLong(), host)
+    Box(
+        modifier = modifier
+            .size(42.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(if (selected) color.copy(alpha = 0.18f) else ChimahonPalette.surfaceVariant)
+            .border(
+                1.dp,
+                if (selected) color.copy(alpha = 0.28f) else ChimahonPalette.divider,
+                RoundedCornerShape(11.dp),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(repo.repoInitial(), if (selected) color else ChimahonPalette.secondaryText, 13, weight = FontWeight.Bold)
+    }
+}
+
+@Composable
 private fun ExtensionRepoListItem(
     repo: ChimahonExtensionRepoEntry,
     selected: Boolean,
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    onOpen: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ChimahonPalette.surface)
-            .clickable(onClick = onClick)
-            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.12f) else ChimahonPalette.surface),
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(if (selected) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            Label(
-                "R",
-                if (selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                11,
-                weight = FontWeight.Bold,
-                maxLines = 1,
-            )
-        }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 16.dp),
-        ) {
-            Label(repo.name, ChimahonPalette.onSurface, 13, weight = FontWeight.SemiBold, maxLines = 1)
-            Label(
-                repo.baseUrl,
-                ChimahonPalette.secondaryText,
-                11,
-                maxLines = 2,
-                modifier = Modifier.padding(top = 3.dp),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(18.dp))
+                .fillMaxWidth()
+                .heightIn(min = 66.dp)
                 .clickable(onClick = onClick)
-                .padding(horizontal = 10.dp, vertical = 7.dp),
+                .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Label(
-                if (selected) "Selected" else "Browse",
-                if (selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                11,
-                weight = FontWeight.SemiBold,
-                maxLines = 1,
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(if (selected) ChimahonPalette.primary else Color.Transparent),
+            )
+            ExtensionRepoIconTile(
+                repo = repo,
+                selected = selected,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 14.dp, end = 10.dp),
+            ) {
+                Label(repo.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                Label(
+                    repo.baseUrl,
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(
+                        listOfNotNull(
+                            ExtensionBadgeSpec(repo.baseUrl.extensionRepoHost(), active = selected),
+                            repo.website.takeIf { it.isNotBlank() }?.let { ExtensionBadgeSpec("Website") },
+                            repo.signingKeyFingerprint.takeIf { it.isNotBlank() }?.let { ExtensionBadgeSpec("Signed") },
+                            if (selected) ExtensionBadgeSpec("Selected", active = true) else null,
+                        ),
+                        key = { it.text },
+                    ) { badge ->
+                        ExtensionBadge(badge)
+                    }
+                }
+            }
+            ChapterQuickAction(
+                icon = UiIcon.Link,
+                contentDescription = "Open ${repo.name} repository",
+                active = false,
+                onClick = onOpen,
+            )
+            ChapterQuickAction(
+                icon = UiIcon.Delete,
+                contentDescription = "Delete ${repo.name} repository",
+                active = false,
+                onClick = onDelete,
             )
         }
-        ChapterQuickAction(
-            icon = UiIcon.Delete,
-            contentDescription = "Delete ${repo.name} repository",
-            active = false,
-            onClick = onDelete,
-        )
+        BrowseRowDivider(start = 72.dp)
     }
 }
 
@@ -8504,17 +14243,40 @@ private fun ExtensionRepoDialogAction(
 @Composable
 private fun InstalledExtensionListItem(
     extension: ChimahonInstalledExtensionEntry,
+    availableUpdate: ChimahonRepoExtensionEntry?,
     uninstalling: Boolean,
+    updating: Boolean,
+    onUpdate: () -> Unit,
     onUninstall: () -> Unit,
 ) {
     ExtensionListRow(
         marker = extension.packageType.marker,
         title = extension.name,
-        subtitle = "${extension.sourceCount} source(s)  \u00b7  ${extension.version}",
-        action = if (uninstalling) "Removing" else "Uninstall",
+        subtitle = extension.id,
+        badges = listOfNotNull(
+            ExtensionBadgeSpec(extension.packageType.marker, active = true),
+            ExtensionBadgeSpec("${extension.sourceCount} source(s)"),
+            ExtensionBadgeSpec(extension.version),
+            availableUpdate?.let { ExtensionBadgeSpec("Update ${it.version}", active = true) },
+        ),
+        action = when {
+            updating -> "Updating"
+            availableUpdate != null -> "Update"
+            uninstalling -> "Removing"
+            else -> "Uninstall"
+        },
         active = true,
-        onClick = if (uninstalling) {
+        secondaryAction = availableUpdate?.let { if (uninstalling) "Removing" else "Uninstall" },
+        secondaryActive = false,
+        onSecondaryClick = if (uninstalling) {
             {}
+        } else {
+            onUninstall
+        },
+        onClick = if (updating || uninstalling) {
+            {}
+        } else if (availableUpdate != null) {
+            onUpdate
         } else {
             onUninstall
         },
@@ -8526,30 +14288,36 @@ private fun RepoExtensionListItem(
     extension: ChimahonRepoExtensionEntry,
     showLanguage: Boolean,
     installed: Boolean,
+    updateAvailable: Boolean,
     installing: Boolean,
     onInstall: () -> Unit,
 ) {
     ExtensionListRow(
         marker = extension.packageType.marker,
         title = extension.name,
-        subtitle = buildString {
-            if (showLanguage) {
-                append(extension.language.ifBlank { "multi" }.uppercase())
-                append("  \u00b7  ")
-            }
-            append(extension.version)
-            append("  \u00b7  ")
-            append(extension.sourceCount)
-            append(" source(s)")
-            if (extension.isNsfw) append("  \u00b7  NSFW")
-        },
+        subtitle = extension.id,
+        badges = listOfNotNull(
+            ExtensionBadgeSpec(extension.packageType.marker, active = installed || updateAvailable),
+            if (showLanguage) ExtensionBadgeSpec(extension.language.ifBlank { "multi" }.uppercase()) else null,
+            ExtensionBadgeSpec(extension.version),
+            ExtensionBadgeSpec("${extension.sourceCount} source(s)"),
+            if (extension.isNsfw) ExtensionBadgeSpec("18+", error = true) else null,
+            if (updateAvailable) {
+                ExtensionBadgeSpec("Update", active = true)
+            } else if (installed) {
+                ExtensionBadgeSpec("Installed", active = true)
+            } else {
+                null
+            },
+        ),
         action = when {
             installing -> "Installing"
+            updateAvailable -> "Update"
             installed -> "Installed"
             else -> "Install"
         },
-        active = installed,
-        onClick = if (installed || installing) {
+        active = installed || updateAvailable,
+        onClick = if ((installed && !updateAvailable) || installing) {
             {}
         } else {
             onInstall
@@ -8562,60 +14330,196 @@ private fun ExtensionListRow(
     marker: String,
     title: String,
     subtitle: String,
+    badges: List<ExtensionBadgeSpec>,
     action: String,
     active: Boolean = false,
+    secondaryAction: String? = null,
+    secondaryActive: Boolean = false,
+    onSecondaryClick: () -> Unit = {},
     onClick: () -> Unit = {},
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 68.dp)
+                .clickable(onClick = onClick)
+                .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ExtensionIdentityTile(
+                marker = marker,
+                active = active,
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 14.dp, end = 10.dp),
+            ) {
+                Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                Label(
+                    subtitle,
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+                if (badges.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 7.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        items(badges, key = { it.text }) { badge ->
+                            ExtensionBadge(badge)
+                        }
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable(onClick = onClick)
+                    .background(if (active) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant)
+                    .padding(horizontal = 11.dp, vertical = 7.dp),
+            ) {
+                Label(
+                    action,
+                    if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                    11,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
+            secondaryAction?.let { secondary ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable(onClick = onSecondaryClick)
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                ) {
+                    Label(
+                        secondary,
+                        if (secondaryActive) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                        11,
+                        weight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        BrowseRowDivider(start = 72.dp)
+    }
+}
+
+private data class ExtensionBadgeSpec(
+    val text: String,
+    val active: Boolean = false,
+    val error: Boolean = false,
+)
+
+@Composable
+private fun ExtensionBadge(
+    spec: ExtensionBadgeSpec,
+) {
+    ExtensionBadge(
+        text = spec.text,
+        active = spec.active,
+        error = spec.error,
+    )
+}
+
+@Composable
+private fun ExtensionBadge(
+    text: String,
+    active: Boolean = false,
+    error: Boolean = false,
+) {
+    val background = when {
+        error -> ChimahonPalette.error.copy(alpha = 0.12f)
+        active -> ChimahonPalette.primaryContainer
+        else -> ChimahonPalette.surfaceVariant
+    }
+    val foreground = when {
+        error -> ChimahonPalette.error
+        active -> ChimahonPalette.primary
+        else -> ChimahonPalette.secondaryText
+    }
+    Box(
+        modifier = Modifier
+            .heightIn(min = 22.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(background)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            text,
+            foreground,
+            10,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun ExtensionAutoLoadFooter(
+    visibleCount: Int,
+    totalCount: Int,
+    autoLoadMore: Boolean,
+    onLoadMore: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(if (active) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant),
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
-            Label(
-                marker,
-                if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                11,
-                weight = FontWeight.Bold,
-                maxLines = 1,
+            IconGlyph(
+                icon = if (autoLoadMore) UiIcon.Refresh else UiIcon.Add,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(18.dp),
             )
         }
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 16.dp),
-        ) {
-            Label(title, ChimahonPalette.onSurface, 13, weight = FontWeight.SemiBold, maxLines = 1)
-            Label(
-                subtitle,
-                ChimahonPalette.secondaryText,
-                11,
-                maxLines = 2,
-                modifier = Modifier.padding(top = 3.dp),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(18.dp))
-                .clickable(onClick = onClick)
-                .padding(horizontal = 10.dp, vertical = 7.dp),
+                .padding(horizontal = 12.dp),
         ) {
             Label(
-                action,
-                if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                11,
+                if (autoLoadMore) "Loading more extensions" else "More extensions available",
+                ChimahonPalette.onSurface,
+                13,
                 weight = FontWeight.SemiBold,
                 maxLines = 1,
             )
+            Label(
+                "$visibleCount of $totalCount shown",
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        if (!autoLoadMore) {
+            TextButtonLike("Load more", onClick = onLoadMore)
+        } else {
+            ExtensionBadge("Auto", active = true)
         }
     }
 }
@@ -8625,6 +14529,21 @@ private val ChimahonExtensionPackageType.marker: String
         ChimahonExtensionPackageType.JavaScript -> "JS"
         ChimahonExtensionPackageType.AndroidApk -> "APK"
     }
+
+private fun ChimahonExtensionRepoEntry.repoInitial(): String {
+    return name
+        .trim()
+        .firstOrNull()
+        ?.uppercaseChar()
+        ?.toString()
+        ?: "R"
+}
+
+private fun String.extensionRepoHost(): String {
+    return substringAfter("://", this)
+        .substringBefore('/')
+        .ifBlank { "repo" }
+}
 
 @Composable
 private fun MigrateSection(
@@ -8648,6 +14567,7 @@ private fun MigrateSection(
     var migrationMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val libraryBySource = library.groupBy { it.sourceId }
+    val migratableSources = sources.filter { libraryBySource[it.id].orEmpty().isNotEmpty() }
     val selectedSource = sources.firstOrNull { it.id == selectedSourceId }
     val sourceManga = selectedSourceId?.let { libraryBySource[it].orEmpty() }.orEmpty()
     val selectedManga = library.firstOrNull { it.id == selectedMangaId }
@@ -8709,54 +14629,74 @@ private fun MigrateSection(
         }
         when {
             selectedSource == null -> {
-            item {
-                Label(
-                    "Select a source to migrate from",
-                    ChimahonPalette.onSurface,
-                    16,
-                    weight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
-                )
-            }
-            sources
-                .filter { libraryBySource[it.id].orEmpty().isNotEmpty() }
-                .groupBy { it.language.ifBlank { "multi" }.uppercase() }
-                .forEach { (language, sourceGroup) ->
+                item {
+                    MigrateStepHeader(
+                        title = "Select source",
+                        subtitle = "${migratableSources.sumOf { libraryBySource[it.id].orEmpty().size }} titles across ${migratableSources.size} source(s)",
+                    )
+                }
+                if (migratableSources.isEmpty()) {
                     item {
-                        ListGroupHeader(language)
-                    }
-                    items(sourceGroup, key = { it.id }) { source ->
-                        MigrateSourceListItem(
-                            source = source,
-                            mangaCount = libraryBySource[source.id].orEmpty().size,
-                            onClick = {
-                                selectedSourceId = source.id
-                                selectedMangaId = null
-                                targetSourceId = null
-                            },
+                        BrowseStatusRow(
+                            icon = UiIcon.Info,
+                            title = "No migratable sources",
+                            subtitle = "Installed sources do not currently match any library entries.",
                         )
+                    }
+                } else {
+                    migratableSources.sourceGroups(groupByLanguage = true).forEach { (language, sourceGroup) ->
+                        if (language != null) {
+                            item { SourceLanguageHeader(language, sourceGroup.size) }
+                        }
+                        items(sourceGroup, key = { it.id }) { source ->
+                            MigrateSourceListItem(
+                                source = source,
+                                mangaCount = libraryBySource[source.id].orEmpty().size,
+                                onClick = {
+                                    selectedSourceId = source.id
+                                    selectedMangaId = null
+                                    targetSourceId = null
+                                },
+                            )
+                        }
                     }
                 }
             }
             selectedManga == null -> {
-            item {
-                MigrateBackHeader(
-                    title = selectedSource.name,
-                    subtitle = "${sourceManga.size} manga to migrate",
-                    onBack = { selectedSourceId = null },
-                )
-            }
-            items(sourceManga, key = { it.id }) { entry ->
-                MigrateMangaListItem(
-                    manga = entry,
-                    onOpen = { onOpenManga(entry.id) },
-                    onMigrate = {
-                        selectedMangaId = entry.id
-                        targetSourceId = null
-                        migrationMessage = null
-                    },
-                )
-            }
+                item {
+                    MigrateBackHeader(
+                        title = selectedSource.name,
+                        subtitle = "${sourceManga.size} manga to migrate",
+                        onBack = { selectedSourceId = null },
+                    )
+                }
+                item {
+                    MigrateStepHeader(
+                        title = "Select title",
+                        subtitle = "Choose one library entry to search on another source.",
+                    )
+                }
+                if (sourceManga.isEmpty()) {
+                    item {
+                        BrowseStatusRow(
+                            icon = UiIcon.Info,
+                            title = "No titles on this source",
+                            subtitle = "Go back and choose another source.",
+                        )
+                    }
+                } else {
+                    items(sourceManga.sortedBy { it.title.lowercase() }, key = { it.id }) { entry ->
+                        MigrateMangaListItem(
+                            manga = entry,
+                            onOpen = { onOpenManga(entry.id) },
+                            onMigrate = {
+                                selectedMangaId = entry.id
+                                targetSourceId = null
+                                migrationMessage = null
+                            },
+                        )
+                    }
+                }
             }
             targetSource == null -> {
                 item {
@@ -8766,11 +14706,26 @@ private fun MigrateSection(
                         onBack = { selectedMangaId = null },
                     )
                 }
-                sources
-                    .filterNot { it.id == selectedManga.sourceId }
-                    .groupBy { it.language.ifBlank { "multi" }.uppercase() }
-                    .forEach { (language, sourceGroup) ->
-                        item { ListGroupHeader(language) }
+                item {
+                    MigrateStepHeader(
+                        title = "Select target",
+                        subtitle = "Search ${selectedManga.title} on a replacement source.",
+                    )
+                }
+                val targetSources = sources.filterNot { it.id == selectedManga.sourceId }
+                if (targetSources.isEmpty()) {
+                    item {
+                        BrowseStatusRow(
+                            icon = UiIcon.Browse,
+                            title = "No replacement sources",
+                            subtitle = "Install another source before migrating this title.",
+                        )
+                    }
+                } else {
+                    targetSources.sourceGroups(groupByLanguage = true).forEach { (language, sourceGroup) ->
+                        if (language != null) {
+                            item { SourceLanguageHeader(language, sourceGroup.size) }
+                        }
                         items(sourceGroup, key = { it.id }) { source ->
                             MigrateSourceListItem(
                                 source = source,
@@ -8785,6 +14740,7 @@ private fun MigrateSection(
                             )
                         }
                     }
+                }
             }
             else -> {
                 item {
@@ -8810,30 +14766,46 @@ private fun MigrateSection(
                 }
                 migrationMessage?.let { message ->
                     item {
-                        Label(
-                            message,
-                            if (message.startsWith("Migrated")) ChimahonPalette.primary else ChimahonPalette.error,
-                            12,
-                            lineHeight = 17,
-                            maxLines = 3,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        val migrated = message.startsWith("Migrated")
+                        BrowseStatusRow(
+                            icon = if (migrated) UiIcon.CheckCircle else UiIcon.Info,
+                            title = if (migrated) "Migration complete" else "Migration failed",
+                            subtitle = message,
+                            error = !migrated,
                         )
                     }
                 }
                 when (val preview = previewState) {
                     SourcePreviewUiState.Idle -> item {
-                        EmptyListPanel("Q", "Search the target source", "Enter a title to find a replacement manga.")
+                        BrowseStatusRow(
+                            icon = UiIcon.Search,
+                            title = "Search the target source",
+                            subtitle = "Enter a title to find a replacement manga.",
+                        )
                     }
                     SourcePreviewUiState.Loading -> item {
-                        EmptyListPanel("M", "Searching ${targetSource.name}", "Looking for matching manga.")
+                        BrowseStatusRow(
+                            icon = UiIcon.Refresh,
+                            title = "Searching ${targetSource.name}",
+                            subtitle = "Looking for matching manga.",
+                        )
                     }
                     is SourcePreviewUiState.Failed -> item {
-                        EmptyListPanel("!", "Search failed", preview.message)
+                        BrowseStatusRow(
+                            icon = UiIcon.Info,
+                            title = "Search failed",
+                            subtitle = preview.message,
+                            error = true,
+                        )
                     }
                     is SourcePreviewUiState.Ready -> {
                         if (preview.preview.entries.isEmpty()) {
                             item {
-                                EmptyListPanel("M", "No matches found", "Try a shorter or alternate title.")
+                                BrowseStatusRow(
+                                    icon = UiIcon.Search,
+                                    title = "No matches found",
+                                    subtitle = "Try a shorter or alternate title.",
+                                )
                             }
                         } else {
                             items(preview.preview.entries, key = { "${it.sourceId}:${it.url}" }) { candidate ->
@@ -8871,6 +14843,49 @@ private fun MigrateSection(
 }
 
 @Composable
+private fun MigrateStepHeader(
+    title: String,
+    subtitle: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.background)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(ChimahonPalette.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = UiIcon.Swap,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp),
+        ) {
+            Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(
+                subtitle,
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun MigrateSourceListItem(
     source: ChimahonSourceEntry,
     mangaCount: Int,
@@ -8885,21 +14900,7 @@ private fun MigrateSourceListItem(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(42.dp)
-                .clip(CircleShape)
-                .background(coverColor(source.id, source.name).copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Label(
-                source.name.firstOrNull()?.uppercase() ?: "S",
-                coverColor(source.id, source.name),
-                14,
-                weight = FontWeight.Bold,
-                maxLines = 1,
-            )
-        }
+        SourceIconTile(source = source, size = 38.dp, cornerRadius = 11.dp, compact = true)
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -8907,7 +14908,7 @@ private fun MigrateSourceListItem(
         ) {
             Label(source.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
             Label(
-                source.language.ifBlank { "multi" }.uppercase(),
+                "${source.language.sourceLanguageCode()} - ${if (source.supportsLatest) "Latest supported" else "Popular only"}",
                 ChimahonPalette.secondaryText,
                 11,
                 maxLines = 1,
@@ -8915,21 +14916,13 @@ private fun MigrateSourceListItem(
             )
         }
         if (showCount) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(ChimahonPalette.primaryContainer)
-                    .padding(horizontal = 9.dp, vertical = 4.dp),
-            ) {
-                Label(
-                    mangaCount.toString(),
-                    ChimahonPalette.primary,
-                    11,
-                    weight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-            }
+            SourceCapabilityBadge(text = mangaCount.toString(), active = mangaCount > 0)
         } else {
+            SourceCapabilityBadge(
+                text = if (source.supportsLatest) "LATEST" else "POPULAR",
+                active = source.supportsLatest,
+                modifier = Modifier.padding(end = 4.dp),
+            )
             IconGlyph(
                 icon = UiIcon.Forward,
                 contentDescription = "Select ${source.name}",
@@ -8979,16 +14972,20 @@ private fun MigrateMangaListItem(
                 modifier = Modifier.padding(top = 3.dp),
             )
         }
-        Label(
-            "Migrate",
-            ChimahonPalette.primary,
-            11,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
-            modifier = Modifier
-                .clickable(onClick = onMigrate)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            ChapterQuickAction(
+                icon = UiIcon.Chapters,
+                contentDescription = "Open ${manga.title}",
+                active = false,
+                onClick = onOpen,
+            )
+            ChapterQuickAction(
+                icon = UiIcon.Swap,
+                contentDescription = "Migrate ${manga.title}",
+                active = true,
+                onClick = onMigrate,
+            )
+        }
     }
 }
 
@@ -9040,7 +15037,7 @@ private fun MigrateCandidateListItem(
             .fillMaxWidth()
             .height(92.dp)
             .background(ChimahonPalette.surface)
-            .clickable(onClick = onMigrate)
+            .clickable(enabled = !migrating, onClick = onMigrate)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -9067,13 +15064,16 @@ private fun MigrateCandidateListItem(
                 modifier = Modifier.padding(top = 3.dp),
             )
         }
-        Label(
-            if (migrating) "Migrating" else "Migrate",
-            ChimahonPalette.primary,
-            11,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+        if (migrating) {
+            SourceCapabilityBadge("MIGRATING", active = true)
+        } else {
+            ChapterQuickAction(
+                icon = UiIcon.Swap,
+                contentDescription = "Migrate ${candidate.title}",
+                active = true,
+                onClick = onMigrate,
+            )
+        }
     }
 }
 
@@ -9107,6 +15107,7 @@ private fun MangaDetailHome(
 
     val chapters = snapshot.chaptersByMangaId[mangaId].orEmpty()
     var selectedChapterFilter by remember(mangaId) { mutableStateOf(ChapterFilter.All) }
+    var selectedChapterSort by remember(mangaId) { mutableStateOf(ChapterSort.ChapterNumber) }
     var chapterDescending by remember(mangaId) { mutableStateOf(true) }
     var chapterFiltersVisible by remember(mangaId) { mutableStateOf(false) }
     var chapterQuery by remember(mangaId) { mutableStateOf("") }
@@ -9119,11 +15120,22 @@ private fun MangaDetailHome(
     val refreshDownloadSnapshot: suspend () -> Unit = {
         downloadSnapshot = runCatching { onLoadDownloadSnapshot() }.getOrNull() ?: downloadSnapshot
     }
+    val chapterDownloadStatuses = downloadSnapshot?.chaptersById.orEmpty()
+    val chapterSourceOrder = remember(chapters) {
+        chapters.mapIndexed { index, chapter -> chapter.id to index }.toMap()
+    }
+    val chapterListSummary = remember(chapters, chapterDownloadStatuses) {
+        chapters.toChapterListSummary(chapterDownloadStatuses)
+    }
+    val clearChapterFilters: () -> Unit = {
+        selectedChapterFilter = ChapterFilter.All
+        selectedChapterSort = ChapterSort.ChapterNumber
+        chapterDescending = true
+        chapterQuery = ""
+    }
     val visibleChapters = chapters
         .filter { chapter ->
-            chapterQuery.isBlank() ||
-                chapter.name.contains(chapterQuery, ignoreCase = true) ||
-                chapter.scanlator.orEmpty().contains(chapterQuery, ignoreCase = true)
+            chapter.matchesChapterQuery(chapterQuery)
         }
         .filter { chapter ->
             when (selectedChapterFilter) {
@@ -9134,12 +15146,28 @@ private fun MangaDetailHome(
             }
         }
         .let { entries ->
-            if (chapterDescending) {
-                entries.sortedWith(compareByDescending<ChimahonChapterEntry> { it.chapterNumber }.thenBy { it.name })
-            } else {
-                entries.sortedWith(compareBy<ChimahonChapterEntry> { it.chapterNumber }.thenBy { it.name })
+            entries.sortedForDetail(
+                sort = selectedChapterSort,
+                descending = chapterDescending,
+                sourceOrder = chapterSourceOrder,
+            )
+        }
+    LaunchedEffect(visibleChapters.map { it.id }.joinToString()) {
+        selectedChapterIds.keys
+            .filterNot { chapterId -> visibleChapters.any { it.id == chapterId } }
+            .forEach(selectedChapterIds::remove)
+    }
+    val selectedChapterCount = selectedChapterIds.count { it.value }
+    val downloadVisibleChapters: () -> Unit = {
+        val chapterIds = visibleChapters.map { it.id }
+        if (chapterIds.isNotEmpty()) {
+            scope.launch {
+                if (runCatching { onEnqueueDownloads(chapterIds) }.isSuccess) {
+                    refreshDownloadSnapshot()
+                }
             }
         }
+    }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         if (maxWidth >= 900.dp) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -9154,11 +15182,14 @@ private fun MangaDetailHome(
                         manga = manga,
                         sourceName = snapshot.sourceName(manga.sourceId),
                         chapterCount = chapters.size,
+                        readCount = chapterListSummary.readCount,
+                        downloadedCount = chapterListSummary.downloadedCount,
                         centered = true,
                     )
                     MangaActionRow(
                         manga = manga,
                         chapters = chapters,
+                        downloadedCount = chapterListSummary.downloadedCount,
                         onOpenReader = onOpenReader,
                         onSetMangaFavorite = onSetMangaFavorite,
                         onSetMangaChaptersRead = onSetMangaChaptersRead,
@@ -9185,6 +15216,7 @@ private fun MangaDetailHome(
                     )
                     MangaDescriptionPanel(
                         manga = manga,
+                        sourceName = snapshot.sourceName(manga.sourceId),
                         onSetMangaNotes = onSetMangaNotes,
                         modifier = Modifier.padding(top = 8.dp),
                     )
@@ -9200,13 +15232,19 @@ private fun MangaDetailHome(
                     allChapterCount = chapters.size,
                     manga = manga,
                     selectedFilter = selectedChapterFilter,
+                    selectedSort = selectedChapterSort,
                     descending = chapterDescending,
+                    summary = chapterListSummary,
                     filtersVisible = chapterFiltersVisible,
                     query = chapterQuery,
                     onToggleFilters = { chapterFiltersVisible = !chapterFiltersVisible },
                     onQueryChange = { chapterQuery = it },
                     onFilterChange = { selectedChapterFilter = it },
+                    onSortChange = { selectedChapterSort = it },
                     onSortDirectionChange = { chapterDescending = it },
+                    onDownloadVisible = downloadVisibleChapters,
+                    onClearFilters = clearChapterFilters,
+                    onSelectBrowse = onSelectBrowse,
                     onOpenReader = onOpenReader,
                     onSetChapterRead = onSetChapterRead,
                     onSetChapterBookmark = onSetChapterBookmark,
@@ -9215,7 +15253,7 @@ private fun MangaDetailHome(
                         refreshDownloadSnapshot()
                         result
                     },
-                    downloadStatuses = downloadSnapshot?.chaptersById.orEmpty(),
+                    downloadStatuses = chapterDownloadStatuses,
                     selectedChapterIds = selectedChapterIds.filterValues { it }.keys,
                     onToggleChapterSelected = { chapterId ->
                         selectedChapterIds[chapterId] = selectedChapterIds[chapterId] != true
@@ -9238,11 +15276,29 @@ private fun MangaDetailHome(
                             selectedChapterIds.clear()
                         }
                     },
+                    onMarkSelectedUnread = {
+                        val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                        scope.launch {
+                            selected.forEach { chapter ->
+                                runCatching { onSetChapterRead(chapter.id, false) }
+                            }
+                            selectedChapterIds.clear()
+                        }
+                    },
                     onBookmarkSelected = {
                         val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
                         scope.launch {
                             selected.forEach { chapter ->
                                 runCatching { onSetChapterBookmark(chapter.id, true) }
+                            }
+                            selectedChapterIds.clear()
+                        }
+                    },
+                    onUnbookmarkSelected = {
+                        val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                        scope.launch {
+                            selected.forEach { chapter ->
+                                runCatching { onSetChapterBookmark(chapter.id, false) }
                             }
                             selectedChapterIds.clear()
                         }
@@ -9262,22 +15318,29 @@ private fun MangaDetailHome(
                 )
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = 12.dp),
-            ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        top = 8.dp,
+                        bottom = if (selectedChapterCount > 0) 116.dp else 12.dp,
+                    ),
+                ) {
                 item {
                     MangaDetailHeader(
                         manga = manga,
                         sourceName = snapshot.sourceName(manga.sourceId),
                         chapterCount = chapters.size,
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                        readCount = chapterListSummary.readCount,
+                        downloadedCount = chapterListSummary.downloadedCount,
+                        modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
                 item {
                     MangaActionRow(
                         manga = manga,
                         chapters = chapters,
+                        downloadedCount = chapterListSummary.downloadedCount,
                         onOpenReader = onOpenReader,
                         onSetMangaFavorite = onSetMangaFavorite,
                         onSetMangaChaptersRead = onSetMangaChaptersRead,
@@ -9287,7 +15350,7 @@ private fun MangaDetailHome(
                             result
                         },
                         onSelectBrowse = onSelectBrowse,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                     )
                 }
                 item {
@@ -9303,93 +15366,58 @@ private fun MangaDetailHome(
                                 ),
                             )
                         },
-                        modifier = Modifier.padding(horizontal = 12.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp),
                     )
                 }
                 item {
                     MangaDescriptionPanel(
                         manga = manga,
+                        sourceName = snapshot.sourceName(manga.sourceId),
                         onSetMangaNotes = onSetMangaNotes,
-                        modifier = Modifier.padding(horizontal = 12.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp),
                     )
                 }
                 item {
                     ChapterHeader(
                         visibleChapterCount = visibleChapters.size,
                         allChapterCount = chapters.size,
+                        selectedCount = selectedChapterCount,
+                        summary = chapterListSummary,
+                        selectedFilter = selectedChapterFilter,
+                        selectedSort = selectedChapterSort,
+                        descending = chapterDescending,
+                        query = chapterQuery,
                         filtersVisible = chapterFiltersVisible,
                         onToggleFilters = { chapterFiltersVisible = !chapterFiltersVisible },
-                        modifier = Modifier.padding(top = 12.dp),
+                        onSortDirectionChange = { chapterDescending = it },
+                        onDownloadVisible = downloadVisibleChapters,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
                 }
                 if (chapterFiltersVisible) {
                     item {
                         ChapterFilterPanel(
                             selectedFilter = selectedChapterFilter,
+                            selectedSort = selectedChapterSort,
                             descending = chapterDescending,
+                            summary = chapterListSummary,
                             query = chapterQuery,
                             onQueryChange = { chapterQuery = it },
                             onFilterChange = { selectedChapterFilter = it },
+                            onSortChange = { selectedChapterSort = it },
                             onSortDirectionChange = { chapterDescending = it },
-                        )
-                    }
-                }
-                if (visibleChapters.isNotEmpty()) {
-                    item {
-                        MultiSelectionBar(
-                            selectedCount = selectedChapterIds.count { it.value },
-                            totalCount = visibleChapters.size,
-                            onSelectAll = {
-                                visibleChapters.forEach { selectedChapterIds[it.id] = true }
-                            },
-                            onInvert = {
-                                visibleChapters.forEach { chapter ->
-                                    selectedChapterIds[chapter.id] = selectedChapterIds[chapter.id] != true
-                                }
-                            },
-                            onClear = { selectedChapterIds.clear() },
-                            actions = listOf(
-                                SelectionAction("Mark read", UiIcon.DoneAll) {
-                                    val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
-                                    scope.launch {
-                                        selected.forEach { chapter ->
-                                            runCatching { onSetChapterRead(chapter.id, true) }
-                                        }
-                                        selectedChapterIds.clear()
-                                    }
-                                },
-                                SelectionAction("Bookmark", UiIcon.Bookmark) {
-                                    val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
-                                    scope.launch {
-                                        selected.forEach { chapter ->
-                                            runCatching { onSetChapterBookmark(chapter.id, true) }
-                                        }
-                                        selectedChapterIds.clear()
-                                    }
-                                },
-                                SelectionAction("Download", UiIcon.Download) {
-                                    val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
-                                    scope.launch {
-                                        if (runCatching { onEnqueueDownloads(selected.map { it.id }) }.isSuccess) {
-                                            refreshDownloadSnapshot()
-                                        }
-                                        selectedChapterIds.clear()
-                                    }
-                                },
-                            ),
+                            onClearFilters = clearChapterFilters,
                         )
                     }
                 }
                 if (visibleChapters.isEmpty()) {
                     item {
-                        EmptyListPanel(
-                            marker = "C",
-                            title = if (chapters.isEmpty()) "No chapters" else "No matching chapters",
-                            detail = if (chapters.isEmpty()) {
-                                "Chapters from the shared database will appear here after this manga is initialized."
-                            } else {
-                                "Change the chapter filter to show more chapters."
-                            },
+                        MangaChapterEmptyPanel(
+                            manga = manga,
+                            allChapterCount = chapters.size,
+                            hasActiveFilters = selectedChapterFilter != ChapterFilter.All || chapterQuery.isNotBlank(),
+                            onClearFilters = clearChapterFilters,
+                            onSelectBrowse = onSelectBrowse,
                         )
                     }
                 } else {
@@ -9397,11 +15425,16 @@ private fun MangaDetailHome(
                         MangaChapterListItem(
                             chapter = chapter,
                             selected = selectedChapterIds[chapter.id] == true,
+                            selectionActive = selectedChapterCount > 0,
                             onToggleSelected = {
                                 selectedChapterIds[chapter.id] = selectedChapterIds[chapter.id] != true
                             },
                             onClick = {
-                                onOpenReader(chapter.toReaderRequest(manga, chapters))
+                                if (selectedChapterCount > 0) {
+                                    selectedChapterIds[chapter.id] = selectedChapterIds[chapter.id] != true
+                                } else {
+                                    onOpenReader(chapter.toReaderRequest(manga, visibleChapters))
+                                }
                             },
                             onSetRead = { read -> onSetChapterRead(chapter.id, read) },
                             onSetBookmark = { bookmarked -> onSetChapterBookmark(chapter.id, bookmarked) },
@@ -9410,10 +15443,72 @@ private fun MangaDetailHome(
                                 refreshDownloadSnapshot()
                                 result
                             },
-                            downloadStatus = downloadSnapshot?.statusForChapter(chapter.id),
+                            downloadStatus = chapterDownloadStatuses[chapter.id],
                         )
                     }
                 }
+            }
+                SelectionBottomActionMenu(
+                    selectedCount = selectedChapterCount,
+                    totalCount = visibleChapters.size,
+                    onSelectAll = {
+                        visibleChapters.forEach { selectedChapterIds[it.id] = true }
+                    },
+                    onInvert = {
+                        visibleChapters.forEach { chapter ->
+                            selectedChapterIds[chapter.id] = selectedChapterIds[chapter.id] != true
+                        }
+                    },
+                    onClear = { selectedChapterIds.clear() },
+                    actions = listOf(
+                        SelectionAction("Read", UiIcon.DoneAll) {
+                            val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                            scope.launch {
+                                selected.forEach { chapter ->
+                                    runCatching { onSetChapterRead(chapter.id, true) }
+                                }
+                                selectedChapterIds.clear()
+                            }
+                        },
+                        SelectionAction("Unread", UiIcon.Circle) {
+                            val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                            scope.launch {
+                                selected.forEach { chapter ->
+                                    runCatching { onSetChapterRead(chapter.id, false) }
+                                }
+                                selectedChapterIds.clear()
+                            }
+                        },
+                        SelectionAction("Bookmark", UiIcon.Bookmark) {
+                            val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                            scope.launch {
+                                selected.forEach { chapter ->
+                                    runCatching { onSetChapterBookmark(chapter.id, true) }
+                                }
+                                selectedChapterIds.clear()
+                            }
+                        },
+                        SelectionAction("Remove", UiIcon.BookmarkBorder) {
+                            val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                            scope.launch {
+                                selected.forEach { chapter ->
+                                    runCatching { onSetChapterBookmark(chapter.id, false) }
+                                }
+                                selectedChapterIds.clear()
+                            }
+                        },
+                        SelectionAction("Download", UiIcon.Download) {
+                            val selected = visibleChapters.filter { selectedChapterIds[it.id] == true }
+                            scope.launch {
+                                if (runCatching { onEnqueueDownloads(selected.map { it.id }) }.isSuccess) {
+                                    refreshDownloadSnapshot()
+                                }
+                                selectedChapterIds.clear()
+                            }
+                        },
+                    ),
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
             }
         }
     }
@@ -9425,13 +15520,19 @@ private fun MangaChapterPane(
     allChapterCount: Int,
     manga: ChimahonMangaEntry,
     selectedFilter: ChapterFilter,
+    selectedSort: ChapterSort,
     descending: Boolean,
+    summary: ChapterListSummary,
     filtersVisible: Boolean,
     query: String,
     onToggleFilters: () -> Unit,
     onQueryChange: (String) -> Unit,
     onFilterChange: (ChapterFilter) -> Unit,
+    onSortChange: (ChapterSort) -> Unit,
     onSortDirectionChange: (Boolean) -> Unit,
+    onDownloadVisible: () -> Unit,
+    onClearFilters: () -> Unit,
+    onSelectBrowse: () -> Unit,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
@@ -9443,76 +15544,164 @@ private fun MangaChapterPane(
     onInvertChapterSelection: () -> Unit,
     onClearChapterSelection: () -> Unit,
     onMarkSelectedRead: () -> Unit,
+    onMarkSelectedUnread: () -> Unit,
     onBookmarkSelected: () -> Unit,
+    onUnbookmarkSelected: () -> Unit,
     onDownloadSelected: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(top = 10.dp, bottom = 18.dp),
+    val selectedCount = selectedChapterIds.size
+    Box(modifier = modifier) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                top = 6.dp,
+                bottom = if (selectedCount > 0) 116.dp else 18.dp,
+            ),
+        ) {
+            item {
+                ChapterHeader(
+                    visibleChapterCount = chapters.size,
+                    allChapterCount = allChapterCount,
+                    selectedCount = selectedCount,
+                    summary = summary,
+                    selectedFilter = selectedFilter,
+                    selectedSort = selectedSort,
+                    descending = descending,
+                    query = query,
+                    filtersVisible = filtersVisible,
+                    onToggleFilters = onToggleFilters,
+                    onSortDirectionChange = onSortDirectionChange,
+                    onDownloadVisible = onDownloadVisible,
+                )
+            }
+            if (filtersVisible) {
+                item {
+                    ChapterFilterPanel(
+                        selectedFilter = selectedFilter,
+                        selectedSort = selectedSort,
+                        descending = descending,
+                        summary = summary,
+                        query = query,
+                        onQueryChange = onQueryChange,
+                        onFilterChange = onFilterChange,
+                        onSortChange = onSortChange,
+                        onSortDirectionChange = onSortDirectionChange,
+                        onClearFilters = onClearFilters,
+                    )
+                }
+            }
+            if (chapters.isEmpty()) {
+                item {
+                    MangaChapterEmptyPanel(
+                        manga = manga,
+                        allChapterCount = allChapterCount,
+                        hasActiveFilters = selectedFilter != ChapterFilter.All || query.isNotBlank(),
+                        onClearFilters = onClearFilters,
+                        onSelectBrowse = onSelectBrowse,
+                    )
+                }
+            } else {
+                items(chapters, key = { it.id }) { chapter ->
+                    MangaChapterListItem(
+                        chapter = chapter,
+                        selected = chapter.id in selectedChapterIds,
+                        selectionActive = selectedCount > 0,
+                        onToggleSelected = { onToggleChapterSelected(chapter.id) },
+                        onClick = {
+                            if (selectedCount > 0) {
+                                onToggleChapterSelected(chapter.id)
+                            } else {
+                                onOpenReader(chapter.toReaderRequest(manga, chapters))
+                            }
+                        },
+                        onSetRead = { read -> onSetChapterRead(chapter.id, read) },
+                        onSetBookmark = { bookmarked -> onSetChapterBookmark(chapter.id, bookmarked) },
+                        onEnqueueDownload = { onEnqueueDownload(chapter.id) },
+                        downloadStatus = downloadStatuses[chapter.id],
+                    )
+                }
+            }
+        }
+        SelectionBottomActionMenu(
+            selectedCount = selectedCount,
+            totalCount = chapters.size,
+            onSelectAll = onSelectAllChapters,
+            onInvert = onInvertChapterSelection,
+            onClear = onClearChapterSelection,
+            actions = listOf(
+                SelectionAction("Read", UiIcon.DoneAll, onMarkSelectedRead),
+                SelectionAction("Unread", UiIcon.Circle, onMarkSelectedUnread),
+                SelectionAction("Bookmark", UiIcon.Bookmark, onBookmarkSelected),
+                SelectionAction("Remove", UiIcon.BookmarkBorder, onUnbookmarkSelected),
+                SelectionAction("Download", UiIcon.Download, onDownloadSelected),
+            ),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+@Composable
+private fun MangaChapterEmptyPanel(
+    manga: ChimahonMangaEntry,
+    allChapterCount: Int,
+    hasActiveFilters: Boolean,
+    onClearFilters: () -> Unit,
+    onSelectBrowse: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 204.dp)
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 24.dp, vertical = 22.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        item {
-            ChapterHeader(
-                visibleChapterCount = chapters.size,
-                allChapterCount = allChapterCount,
-                filtersVisible = filtersVisible,
-                onToggleFilters = onToggleFilters,
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(ChimahonPalette.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = if (allChapterCount == 0) UiIcon.Info else UiIcon.Filter,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(23.dp),
             )
         }
-        if (filtersVisible) {
-            item {
-                ChapterFilterPanel(
-                selectedFilter = selectedFilter,
-                descending = descending,
-                query = query,
-                onQueryChange = onQueryChange,
-                onFilterChange = onFilterChange,
-                    onSortDirectionChange = onSortDirectionChange,
-                )
+        Label(
+            text = if (allChapterCount == 0) "No chapters found" else "No matching chapters",
+            color = ChimahonPalette.onSurface,
+            size = 15,
+            weight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        Label(
+            text = when {
+                allChapterCount == 0 && !manga.initialized ->
+                    "This manga is not fully initialized yet. Open the source entry and refresh details to fetch chapters."
+                allChapterCount == 0 ->
+                    "The shared database has the manga record, but no chapters are stored for it yet."
+                else ->
+                    "Your current search and filters hide every chapter. Reset them to show the full chapter list."
+            },
+            color = ChimahonPalette.secondaryText,
+            size = 12,
+            lineHeight = 18,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Row(
+            modifier = Modifier.padding(top = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (hasActiveFilters) {
+                TextButtonLike("Reset filters", onClick = onClearFilters)
             }
-        }
-        if (chapters.isNotEmpty()) {
-            item {
-                MultiSelectionBar(
-                    selectedCount = selectedChapterIds.size,
-                    totalCount = chapters.size,
-                    onSelectAll = onSelectAllChapters,
-                    onInvert = onInvertChapterSelection,
-                    onClear = onClearChapterSelection,
-                    actions = listOf(
-                        SelectionAction("Mark read", UiIcon.DoneAll, onMarkSelectedRead),
-                        SelectionAction("Bookmark", UiIcon.Bookmark, onBookmarkSelected),
-                        SelectionAction("Download", UiIcon.Download, onDownloadSelected),
-                    ),
-                )
-            }
-        }
-        if (chapters.isEmpty()) {
-            item {
-                EmptyListPanel(
-                    marker = "C",
-                    title = if (allChapterCount == 0) "No chapters" else "No matching chapters",
-                    detail = if (allChapterCount == 0) {
-                        "Chapters from the shared database will appear here after this manga is initialized."
-                    } else {
-                        "Change the chapter filter to show more chapters."
-                    },
-                )
-            }
-        } else {
-            items(chapters, key = { it.id }) { chapter ->
-                MangaChapterListItem(
-                    chapter = chapter,
-                    selected = chapter.id in selectedChapterIds,
-                    onToggleSelected = { onToggleChapterSelected(chapter.id) },
-                    onClick = {
-                        onOpenReader(chapter.toReaderRequest(manga, chapters))
-                    },
-                    onSetRead = { read -> onSetChapterRead(chapter.id, read) },
-                    onSetBookmark = { bookmarked -> onSetChapterBookmark(chapter.id, bookmarked) },
-                    onEnqueueDownload = { onEnqueueDownload(chapter.id) },
-                    downloadStatus = downloadStatuses[chapter.id],
-                )
+            if (allChapterCount == 0) {
+                TextButtonLike("Source", onClick = onSelectBrowse)
             }
         }
     }
@@ -9523,46 +15712,75 @@ private fun MangaDetailHeader(
     manga: ChimahonMangaEntry,
     sourceName: String,
     chapterCount: Int,
+    readCount: Int = 0,
+    downloadedCount: Int = 0,
     centered: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(ChimahonPalette.surface),
     ) {
+        ThumbnailArtwork(
+            url = manga.thumbnailUrl,
+            title = manga.title,
+            fallbackColor = coverColor(manga.id, manga.title),
+            modifier = Modifier
+                .matchParentSize()
+                .alpha(0.16f),
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(ChimahonPalette.background.copy(alpha = 0.74f)),
+        )
         val useCenteredLayout = centered || maxWidth < 420.dp
         if (!useCenteredLayout) {
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
                 MangaCoverTile(
                     manga = manga,
                     modifier = Modifier
                         .width(154.dp)
-                        .height(226.dp),
+                        .height(224.dp),
                 )
                 MangaInfoColumn(
                     manga = manga,
                     sourceName = sourceName,
                     chapterCount = chapterCount,
+                    readCount = readCount,
+                    downloadedCount = downloadedCount,
                     modifier = Modifier
                         .weight(1f)
                         .align(Alignment.CenterVertically),
                 )
             }
         } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 MangaCoverTile(
                     manga = manga,
                     modifier = Modifier
-                        .width(if (centered) 176.dp else 132.dp)
-                        .height(if (centered) 258.dp else 194.dp),
+                        .width(if (centered) 164.dp else 132.dp)
+                        .height(if (centered) 238.dp else 194.dp),
                 )
                 MangaInfoColumn(
                     manga = manga,
                     sourceName = sourceName,
                     chapterCount = chapterCount,
+                    readCount = readCount,
+                    downloadedCount = downloadedCount,
                     centered = true,
-                    modifier = Modifier.padding(top = 14.dp),
+                    modifier = Modifier.padding(top = 12.dp),
                 )
             }
         }
@@ -9575,14 +15793,15 @@ private fun MangaCoverTile(
     modifier: Modifier = Modifier,
     topStartLabel: String? = null,
     topStartLabels: List<String> = emptyList(),
+    topStartBadges: List<CoverBadgeSpec> = emptyList(),
+    topEndBadges: List<CoverBadgeSpec> = emptyList(),
     showStatus: Boolean = true,
     showLibraryBadge: Boolean = true,
     bottomEndAction: (() -> Unit)? = null,
 ) {
-    val coverLabels = if (topStartLabels.isNotEmpty()) {
-        topStartLabels
-    } else {
-        topStartLabel?.let(::listOf).orEmpty()
+    val coverLabels = if (topStartLabels.isNotEmpty()) topStartLabels else topStartLabel?.let(::listOf).orEmpty()
+    val startBadges = topStartBadges.ifEmpty {
+        coverLabels.map { CoverBadgeSpec(it, Color.Black.copy(alpha = 0.48f), Color.White) }
     }
     Box(
         modifier = modifier
@@ -9595,22 +15814,28 @@ private fun MangaCoverTile(
             fallbackColor = coverColor(manga.id, manga.title),
             modifier = Modifier.fillMaxSize(),
         )
-        if (coverLabels.isNotEmpty()) {
+        if (startBadges.isNotEmpty()) {
             Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                coverLabels.forEach { label ->
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.Black.copy(alpha = 0.48f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    ) {
-                        Label(label, Color.White, 10, weight = FontWeight.SemiBold, maxLines = 1)
-                    }
+                startBadges.forEach { badge ->
+                    CoverBadge(badge)
+                }
+            }
+        }
+        if (topEndBadges.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalAlignment = Alignment.End,
+            ) {
+                topEndBadges.forEach { badge ->
+                    CoverBadge(badge)
                 }
             }
         }
@@ -9661,6 +15886,37 @@ private fun MangaCoverTile(
                     modifier = Modifier.size(18.dp),
                 )
             }
+        }
+    }
+}
+
+private data class CoverBadgeSpec(
+    val text: String,
+    val containerColor: Color,
+    val textColor: Color,
+    val icon: UiIcon? = null,
+)
+
+@Composable
+private fun CoverBadge(badge: CoverBadgeSpec) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(badge.containerColor)
+            .padding(horizontal = if (badge.text.isBlank()) 5.dp else 7.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        badge.icon?.let { icon ->
+            IconGlyph(
+                icon = icon,
+                contentDescription = badge.text.ifBlank { "Badge" },
+                tint = badge.textColor,
+                modifier = Modifier.size(11.dp),
+            )
+        }
+        if (badge.text.isNotBlank()) {
+            Label(badge.text, badge.textColor, 10, weight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
@@ -9722,9 +15978,34 @@ private fun MangaInfoColumn(
     manga: ChimahonMangaEntry,
     sourceName: String,
     chapterCount: Int,
+    readCount: Int = 0,
+    downloadedCount: Int = 0,
     centered: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val safeReadCount = readCount.coerceIn(0, chapterCount.coerceAtLeast(0))
+    val safeDownloadedCount = downloadedCount.coerceIn(0, chapterCount.coerceAtLeast(0))
+    val unreadCount = (chapterCount - safeReadCount).coerceAtLeast(0)
+    val infoPills = listOfNotNull(
+        MangaInfoChipSpec(manga.status.ifBlank { "Unknown status" }, active = true),
+        MangaInfoChipSpec(sourceName, icon = UiIcon.Web),
+        MangaInfoChipSpec("${chapterCount} chapters", icon = UiIcon.Chapters),
+        safeDownloadedCount.takeIf { it > 0 }?.let {
+            MangaInfoChipSpec("$it downloaded", icon = UiIcon.Download, active = true)
+        },
+        safeReadCount.takeIf { it > 0 }?.let {
+            MangaInfoChipSpec("$it read", icon = UiIcon.DoneAll)
+        },
+        unreadCount.takeIf { it > 0 }?.let {
+            MangaInfoChipSpec("$it unread", icon = UiIcon.Updates)
+        },
+        MangaInfoChipSpec(
+            if (manga.favorite) "In library" else "Not in library",
+            icon = if (manga.favorite) UiIcon.Favorite else UiIcon.FavoriteBorder,
+            active = manga.favorite,
+        ),
+        MangaInfoChipSpec(if (manga.initialized) "Initialized" else "Needs refresh"),
+    )
     Column(
         modifier = modifier,
         horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
@@ -9732,9 +16013,10 @@ private fun MangaInfoColumn(
         Label(
             manga.title,
             ChimahonPalette.onSurface,
-            22,
+            if (centered) 20 else 22,
             weight = FontWeight.SemiBold,
-            lineHeight = 27,
+            lineHeight = if (centered) 25 else 27,
+            maxLines = if (centered) 3 else 4,
         )
         Label(
             text = manga.author ?: manga.artist ?: "Unknown author",
@@ -9743,19 +16025,54 @@ private fun MangaInfoColumn(
             maxLines = 1,
             modifier = Modifier.padding(top = 5.dp),
         )
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(infoPills, key = { it.text }) { pill ->
+                MangaInfoPill(pill)
+            }
+        }
+    }
+}
+
+private data class MangaInfoChipSpec(
+    val text: String,
+    val icon: UiIcon? = null,
+    val active: Boolean = false,
+)
+
+@Composable
+private fun MangaInfoPill(chip: MangaInfoChipSpec) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (chip.active) ChimahonPalette.primaryContainer.copy(alpha = 0.88f) else ChimahonPalette.surfaceVariant)
+            .border(
+                1.dp,
+                if (chip.active) ChimahonPalette.primary.copy(alpha = 0.2f) else ChimahonPalette.divider.copy(alpha = 0.5f),
+                RoundedCornerShape(14.dp),
+            )
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        chip.icon?.let { icon ->
+            IconGlyph(
+                icon = icon,
+                contentDescription = chip.text,
+                tint = if (chip.active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                modifier = Modifier.size(12.dp),
+            )
+        }
         Label(
-            text = "${manga.status}  \u00b7  $sourceName",
-            color = ChimahonPalette.secondaryText,
-            size = 12,
+            chip.text,
+            if (chip.active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            10,
+            weight = FontWeight.SemiBold,
             maxLines = 1,
-            modifier = Modifier.padding(top = 5.dp),
-        )
-        Label(
-            text = "$chapterCount chapters",
-            color = ChimahonPalette.secondaryText,
-            size = 11,
-            maxLines = 1,
-            modifier = Modifier.padding(top = 3.dp),
         )
     }
 }
@@ -9765,11 +16082,11 @@ private fun DetailStatRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp),
+            .padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Label(label, ChimahonPalette.secondaryText, 11, weight = FontWeight.SemiBold, modifier = Modifier.width(92.dp))
-        Label(value, ChimahonPalette.onSurface, 12, maxLines = 1, modifier = Modifier.weight(1f))
+        Label(label, ChimahonPalette.secondaryText, 11, weight = FontWeight.SemiBold, modifier = Modifier.width(76.dp))
+        Label(value, ChimahonPalette.onSurface, 12, maxLines = 2, modifier = Modifier.weight(1f))
     }
 }
 
@@ -9777,6 +16094,7 @@ private fun DetailStatRow(label: String, value: String) {
 private fun MangaActionRow(
     manga: ChimahonMangaEntry,
     chapters: List<ChimahonChapterEntry>,
+    downloadedCount: Int = 0,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     onSetMangaFavorite: suspend (Long, Boolean) -> Unit,
     onSetMangaChaptersRead: suspend (Long, Boolean) -> Unit,
@@ -9785,69 +16103,22 @@ private fun MangaActionRow(
     modifier: Modifier = Modifier,
 ) {
     val unread = chapters.count { !it.read }
+    val hasChapters = chapters.isNotEmpty()
+    val allDownloaded = hasChapters && downloadedCount >= chapters.size
     var busyAction by remember(manga.id) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .clip(RoundedCornerShape(8.dp))
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.56f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 2.dp, vertical = 3.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
         MangaActionButton(
-            icon = UiIcon.Play,
-            title = if (chapters.any { it.lastPageRead > 0L }) "Resume" else "Start",
-            modifier = Modifier.weight(1f),
-            onClick = {
-                (
-                    chapters.firstOrNull { it.lastPageRead > 0L }
-                        ?: chapters.lastOrNull { !it.read }
-                        ?: chapters.lastOrNull()
-                    )?.let { chapter ->
-                    onOpenReader(chapter.toReaderRequest(manga, chapters))
-                }
-            },
-        )
-        MangaActionButton(
-            icon = UiIcon.DoneAll,
-            title = if (unread > 0) "Mark read" else "Mark unread",
-            active = busyAction == "read",
-            modifier = Modifier.weight(1f),
-            onClick = {
-                if (chapters.isNotEmpty() && busyAction == null) {
-                    scope.launch {
-                        busyAction = "read"
-                        runCatching {
-                            onSetMangaChaptersRead(manga.id, unread > 0)
-                        }
-                        busyAction = null
-                    }
-                }
-            },
-        )
-        MangaActionButton(
-            icon = UiIcon.Download,
-            title = if (busyAction == "download") "Queued" else "Download",
-            active = busyAction == "download",
-            modifier = Modifier.weight(1f),
-            onClick = {
-                if (chapters.isNotEmpty() && busyAction == null) {
-                    scope.launch {
-                        busyAction = "download"
-                        runCatching { onEnqueueDownloads(chapters.map { it.id }) }
-                        busyAction = null
-                    }
-                }
-            },
-        )
-        MangaActionButton(
-            icon = UiIcon.Swap,
-            title = "Migrate",
-            modifier = Modifier.weight(1f),
-            onClick = onSelectBrowse,
-        )
-        MangaActionButton(
             icon = if (manga.favorite) UiIcon.Favorite else UiIcon.FavoriteBorder,
-            title = if (manga.favorite) "In library" else "Favorite",
+            title = if (manga.favorite) "Library" else "Add",
             active = manga.favorite || busyAction == "favorite",
             modifier = Modifier.weight(1f),
             onClick = {
@@ -9862,6 +16133,66 @@ private fun MangaActionRow(
                 }
             },
         )
+        MangaActionButton(
+            icon = UiIcon.Play,
+            title = if (chapters.any { it.lastPageRead > 0L }) "Resume" else "Start",
+            enabled = hasChapters,
+            modifier = Modifier.weight(1f),
+            onClick = {
+                (
+                    chapters.firstOrNull { it.lastPageRead > 0L }
+                        ?: chapters.lastOrNull { !it.read }
+                        ?: chapters.lastOrNull()
+                    )?.let { chapter ->
+                        onOpenReader(chapter.toReaderRequest(manga, chapters))
+                    }
+            },
+        )
+        MangaActionButton(
+            icon = UiIcon.DoneAll,
+            title = if (unread > 0) "Mark read" else "Mark unread",
+            active = busyAction == "read",
+            enabled = hasChapters,
+            modifier = Modifier.weight(1f),
+            onClick = {
+                if (hasChapters && busyAction == null) {
+                    scope.launch {
+                        busyAction = "read"
+                        runCatching {
+                            onSetMangaChaptersRead(manga.id, unread > 0)
+                        }
+                        busyAction = null
+                    }
+                }
+            },
+        )
+        MangaActionButton(
+            icon = UiIcon.Download,
+            title = when {
+                allDownloaded -> "Downloaded"
+                busyAction == "download" -> "Queued"
+                downloadedCount > 0 -> "$downloadedCount saved"
+                else -> "Download"
+            },
+            active = busyAction == "download" || downloadedCount > 0,
+            enabled = hasChapters && !allDownloaded,
+            modifier = Modifier.weight(1f),
+            onClick = {
+                if (hasChapters && !allDownloaded && busyAction == null) {
+                    scope.launch {
+                        busyAction = "download"
+                        runCatching { onEnqueueDownloads(chapters.map { it.id }) }
+                        busyAction = null
+                    }
+                }
+            },
+        )
+        MangaActionButton(
+            icon = UiIcon.Web,
+            title = "Source",
+            modifier = Modifier.weight(1f),
+            onClick = onSelectBrowse,
+        )
     }
 }
 
@@ -9870,31 +16201,41 @@ private fun MangaActionButton(
     icon: UiIcon,
     title: String,
     active: Boolean = false,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
-            .height(70.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 7.dp),
+            .height(56.dp)
+            .alpha(if (enabled) 1f else 0.44f)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 3.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        IconGlyph(
-            icon = icon,
-            contentDescription = title,
-            tint = if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-            modifier = Modifier.size(24.dp),
-        )
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(if (active) ChimahonPalette.primaryContainer.copy(alpha = 0.86f) else Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = title,
+                tint = if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                modifier = Modifier.size(20.dp),
+            )
+        }
         Label(
             title,
             if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-            11,
+            10,
             weight = FontWeight.SemiBold,
             maxLines = 1,
-            modifier = Modifier.padding(top = 6.dp),
+            modifier = Modifier.padding(top = 2.dp),
         )
     }
 }
@@ -9902,6 +16243,7 @@ private fun MangaActionButton(
 @Composable
 private fun MangaDescriptionPanel(
     manga: ChimahonMangaEntry,
+    sourceName: String,
     onSetMangaNotes: suspend (Long, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -9913,16 +16255,19 @@ private fun MangaDescriptionPanel(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 8.dp),
+            .clip(RoundedCornerShape(8.dp))
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.48f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        SectionHeader("About")
+        SectionHeader("Description")
         Label(
             text = manga.description?.takeIf { it.isNotBlank() } ?: "No description available.",
             color = ChimahonPalette.onSurface,
             size = 13,
             lineHeight = 19,
             maxLines = if (descriptionExpanded) Int.MAX_VALUE else 7,
-            modifier = Modifier.padding(top = 4.dp),
+            modifier = Modifier.padding(top = 3.dp),
         )
         if (!manga.description.isNullOrBlank()) {
             Label(
@@ -9937,12 +16282,19 @@ private fun MangaDescriptionPanel(
             )
         }
         if (manga.genres.isNotEmpty()) {
-            FilterChips(
+            ScrollableFilterChips(
                 chips = manga.genres,
                 selected = "",
-                modifier = Modifier.padding(top = 12.dp),
+                modifier = Modifier.padding(top = 10.dp),
             )
         }
+        SectionHeader("Details")
+        DetailStatRow("Status", manga.status)
+        DetailStatRow("Source", sourceName)
+        manga.author?.takeIf { it.isNotBlank() }?.let { DetailStatRow("Author", it) }
+        manga.artist?.takeIf { it.isNotBlank() && it != manga.author }?.let { DetailStatRow("Artist", it) }
+        DetailStatRow("Added", manga.dateAdded.toDateBucket("Day"))
+        manga.lastUpdate?.let { DetailStatRow("Updated", it.toDateBucket("Day")) }
         SectionHeader("Notes")
         if (notesEditing) {
             Box(
@@ -10008,9 +16360,6 @@ private fun MangaDescriptionPanel(
                     .padding(vertical = 7.dp),
             )
         }
-        DetailStatRow("Added", manga.dateAdded.toDateBucket("Day"))
-        manga.lastUpdate?.let { DetailStatRow("Updated", it.toDateBucket("Day")) }
-        DetailStatRow("Source id", manga.sourceId.toString())
     }
 }
 
@@ -10026,12 +16375,15 @@ private fun MangaCategoryPanel(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+            .clip(RoundedCornerShape(8.dp))
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.48f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         SectionHeader("Categories")
         LazyRow(
-            contentPadding = PaddingValues(vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            contentPadding = PaddingValues(vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             items(categories, key = { it.id }) { category ->
                 val selected = category.id in selectedCategoryIds
@@ -10044,12 +16396,17 @@ private fun MangaCategoryPanel(
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
                         .background(if (selected) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant)
+                        .border(
+                            1.dp,
+                            if (selected) ChimahonPalette.primary.copy(alpha = 0.22f) else ChimahonPalette.divider.copy(alpha = 0.36f),
+                            RoundedCornerShape(14.dp),
+                        )
                         .clickable {
                             scope.launch {
                                 onToggleCategory(category.id)
                             }
                         }
-                        .padding(horizontal = 11.dp, vertical = 7.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                 )
             }
         }
@@ -10080,73 +16437,215 @@ private fun toggledCategoryIds(
 private fun ChapterHeader(
     visibleChapterCount: Int,
     allChapterCount: Int,
+    selectedCount: Int,
+    summary: ChapterListSummary,
+    selectedFilter: ChapterFilter,
+    selectedSort: ChapterSort,
+    descending: Boolean,
+    query: String,
     filtersVisible: Boolean,
     onToggleFilters: () -> Unit,
+    onSortDirectionChange: (Boolean) -> Unit,
+    onDownloadVisible: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(ChimahonPalette.surface)
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.45f))
+            .padding(top = 8.dp, bottom = 7.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Label(
+                    if (selectedCount > 0) "$selectedCount selected" else "Chapters",
+                    ChimahonPalette.onSurface,
+                    15,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    if (visibleChapterCount == allChapterCount) {
+                        "$allChapterCount chapters"
+                    } else {
+                        "$visibleChapterCount of $allChapterCount chapters"
+                    },
+                    if (selectedCount > 0) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                ChapterHeaderAction(
+                    icon = UiIcon.Swap,
+                    contentDescription = if (descending) "Sort ascending" else "Sort descending",
+                    active = !descending,
+                    onClick = { onSortDirectionChange(!descending) },
+                )
+                ChapterHeaderAction(
+                    icon = UiIcon.Download,
+                    contentDescription = "Download visible chapters",
+                    enabled = visibleChapterCount > 0,
+                    onClick = onDownloadVisible,
+                )
+                ChapterHeaderAction(
+                    icon = UiIcon.Filter,
+                    contentDescription = "Chapter filters",
+                    active = filtersVisible,
+                    onClick = onToggleFilters,
+                )
+            }
+        }
+        val summaryItems = listOfNotNull(
+            summary.readCount.takeIf { it > 0 }?.let { "$it read" to false },
+            "${summary.unreadCount} unread" to false,
+            summary.startedCount.takeIf { it > 0 }?.let { "$it started" to false },
+            summary.bookmarkedCount.takeIf { it > 0 }?.let { "$it bookmarked" to false },
+            summary.downloadedCount.takeIf { it > 0 }?.let { "$it downloaded" to false },
+            selectedFilter.takeIf { it != ChapterFilter.All }?.title?.let { it to true },
+            selectedSort.title.takeIf { selectedSort != ChapterSort.ChapterNumber }?.let { it to true },
+            query.takeIf { it.isNotBlank() }?.let { "Search" to true },
+            selectedCount.takeIf { it > 0 }?.let { "$it selected" to true },
+        )
+        LazyRow(
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(summaryItems, key = { it.first }) { item ->
+                ChapterSummaryPill(text = item.first, active = item.second)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChapterSummaryPill(text: String, active: Boolean) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (active) ChimahonPalette.primaryContainer.copy(alpha = 0.88f) else ChimahonPalette.surfaceVariant)
+            .border(
+                1.dp,
+                if (active) ChimahonPalette.primary.copy(alpha = 0.22f) else ChimahonPalette.divider.copy(alpha = 0.36f),
+                RoundedCornerShape(12.dp),
+            )
+            .padding(horizontal = 9.dp, vertical = 4.dp),
     ) {
         Label(
-            if (visibleChapterCount == allChapterCount) {
-                "$allChapterCount chapters"
-            } else {
-                "$visibleChapterCount of $allChapterCount chapters"
-            },
-            ChimahonPalette.onSurface,
-            16,
+            text,
+            if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            10,
             weight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f),
+            maxLines = 1,
         )
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(if (filtersVisible) ChimahonPalette.primaryContainer else Color.Transparent)
-                .clickable(onClick = onToggleFilters),
-            contentAlignment = Alignment.Center,
-        ) {
-            IconGlyph(
-                icon = UiIcon.Filter,
-                contentDescription = "Chapter filters",
-                tint = if (filtersVisible) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                modifier = Modifier.size(19.dp),
-            )
-        }
+    }
+}
+
+@Composable
+private fun ChapterHeaderAction(
+    icon: UiIcon,
+    contentDescription: String,
+    active: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(if (active) ChimahonPalette.primaryContainer.copy(alpha = 0.9f) else Color.Transparent)
+            .alpha(if (enabled) 1f else 0.42f)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = contentDescription,
+            tint = if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
 @Composable
 private fun ChapterFilterPanel(
     selectedFilter: ChapterFilter,
+    selectedSort: ChapterSort,
     descending: Boolean,
+    summary: ChapterListSummary,
     query: String,
     onQueryChange: (String) -> Unit,
     onFilterChange: (ChapterFilter) -> Unit,
+    onSortChange: (ChapterSort) -> Unit,
     onSortDirectionChange: (Boolean) -> Unit,
+    onClearFilters: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
-            .padding(bottom = 10.dp),
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.45f))
+            .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 6.dp, bottom = 8.dp)
+                .width(38.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(ChimahonPalette.divider),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Label("Chapter filters", ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                Label(
+                    "${summary.readCount} read - ${summary.unreadCount} unread - ${summary.downloadedCount} downloaded",
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                )
+            }
+            if (selectedFilter != ChapterFilter.All || selectedSort != ChapterSort.ChapterNumber || !descending || query.isNotBlank()) {
+                TextButtonLike("Reset", onClick = onClearFilters)
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(42.dp)
-                .padding(horizontal = 12.dp, vertical = 2.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(ChimahonPalette.background)
                 .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(8.dp))
                 .padding(horizontal = 12.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
+            IconGlyph(
+                icon = UiIcon.Search,
+                contentDescription = "Search chapters",
+                tint = ChimahonPalette.secondaryText,
+                modifier = Modifier.size(17.dp),
+            )
             if (query.isBlank()) {
-                Label("Search chapters", ChimahonPalette.secondaryText, 12, maxLines = 1)
+                Label(
+                    "Search chapters",
+                    ChimahonPalette.secondaryText,
+                    12,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 26.dp),
+                )
             }
             BasicTextField(
                 value = query,
@@ -10157,30 +16656,60 @@ private fun ChapterFilterPanel(
                     fontSize = 13.sp,
                     lineHeight = 17.sp,
                 ),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 26.dp),
             )
         }
-        FilterChips(
+        FilterPanelLabel(
+            "Show  -  ${summary.startedCount} started, ${summary.bookmarkedCount} bookmarked",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp, bottom = 4.dp),
+        )
+        ScrollableFilterChips(
             chips = ChapterFilter.entries.map { it.title },
             selected = selectedFilter.title,
             onSelect = { title ->
                 ChapterFilter.entries.firstOrNull { it.title == title }?.let(onFilterChange)
             },
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            modifier = Modifier.padding(vertical = 2.dp),
         )
-        FilterChips(
-            chips = listOf("Newest first", "Oldest first"),
-            selected = if (descending) "Newest first" else "Oldest first",
-            onSelect = { onSortDirectionChange(it == "Newest first") },
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        FilterPanelLabel(
+            "Sort by  -  ${summary.scanlatorCount} scanlator group(s)",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp, bottom = 4.dp),
+        )
+        ScrollableFilterChips(
+            chips = ChapterSort.entries.map { it.title },
+            selected = selectedSort.title,
+            onSelect = { title ->
+                ChapterSort.entries.firstOrNull { it.title == title }?.let(onSortChange)
+            },
+            modifier = Modifier.padding(vertical = 2.dp),
+        )
+        FilterPanelLabel(
+            "Direction",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp, bottom = 4.dp),
+        )
+        SegmentTabs(
+            values = listOf(true, false),
+            selected = descending,
+            label = { if (it) "Descending" else "Ascending" },
+            onSelect = onSortDirectionChange,
         )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MangaChapterListItem(
     chapter: ChimahonChapterEntry,
     selected: Boolean,
+    selectionActive: Boolean,
     onToggleSelected: () -> Unit,
     onClick: () -> Unit,
     onSetRead: suspend (Boolean) -> Unit,
@@ -10189,136 +16718,436 @@ private fun MangaChapterListItem(
     downloadStatus: ChimahonChapterDownloadStatus? = null,
 ) {
     var busyAction by remember(chapter.id) { mutableStateOf<String?>(null) }
+    var actionsVisible by remember(chapter.id) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val downloadState = downloadStatus?.status
-    Row(
+    val isDownloaded = downloadState == ChimahonDownloadState.Downloaded
+    val titleColor = when {
+        selected -> ChimahonPalette.onPrimaryContainer
+        chapter.read -> ChimahonPalette.secondaryText
+        else -> ChimahonPalette.onSurface
+    }
+    val metadata = chapter.chapterDetailMetadata(downloadStatus)
+    val statePills = listOfNotNull(
+        "Read".takeIf { chapter.read },
+        "Unread".takeIf { !chapter.read && chapter.lastPageRead <= 0L },
+        "Page ${chapter.lastPageRead + 1}".takeIf { chapter.lastPageRead > 0L && !chapter.read },
+        downloadStatus?.chapterListBadgeLabel(),
+        "Bookmarked".takeIf { chapter.bookmarked },
+    ).distinct()
+    val markerActive = !chapter.read || chapter.lastPageRead > 0L || chapter.bookmarked || downloadStatus != null
+    val stripeColor = when {
+        selected -> ChimahonPalette.primary
+        chapter.bookmarked -> ChimahonPalette.primary
+        chapter.lastPageRead > 0L && !chapter.read -> ChimahonPalette.primary.copy(alpha = 0.82f)
+        isDownloaded -> ChimahonPalette.primary.copy(alpha = 0.64f)
+        !chapter.read -> ChimahonPalette.primary.copy(alpha = 0.44f)
+        else -> Color.Transparent
+    }
+    val startAction: () -> Unit = {
+        actionsVisible = false
+        onClick()
+    }
+    val toggleRead: () -> Unit = {
+        if (busyAction == null) {
+            scope.launch {
+                busyAction = "read"
+                runCatching { onSetRead(!chapter.read) }
+                busyAction = null
+                actionsVisible = false
+            }
+        }
+    }
+    val toggleBookmark: () -> Unit = {
+        if (busyAction == null) {
+            scope.launch {
+                busyAction = "bookmark"
+                runCatching { onSetBookmark(!chapter.bookmarked) }
+                busyAction = null
+                actionsVisible = false
+            }
+        }
+    }
+    val enqueueDownload: () -> Unit = {
+        if (busyAction == null && !isDownloaded) {
+            scope.launch {
+                busyAction = "download"
+                runCatching { onEnqueueDownload() }
+                busyAction = null
+                actionsVisible = false
+            }
+        }
+    }
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ChimahonPalette.surface)
-            .clickable(onClick = onClick)
-            .padding(start = 16.dp, top = 12.dp, end = 8.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.68f) else ChimahonPalette.surface)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onToggleSelected,
+            )
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(start = 0.dp, top = 6.dp, end = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (!chapter.read) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(ChimahonPalette.primary),
-                    )
-                }
-                if (chapter.bookmarked) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                    .background(stripeColor),
+            )
+            if (selectionActive || selected) {
+                Box(
+                    modifier = Modifier
+                        .padding(start = 11.dp)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) ChimahonPalette.primary else ChimahonPalette.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
                     IconGlyph(
-                        icon = UiIcon.Bookmark,
-                        contentDescription = "Bookmarked",
-                        tint = ChimahonPalette.primary,
-                        modifier = Modifier.size(16.dp),
+                        icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+                        contentDescription = if (selected) "Selected" else "Not selected",
+                        tint = if (selected) Color.White else ChimahonPalette.secondaryText,
+                        modifier = Modifier.size(19.dp),
                     )
                 }
-                Label(
-                    chapter.name,
-                    if (chapter.read) ChimahonPalette.secondaryText else ChimahonPalette.onSurface,
-                    13,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
+            } else {
+                ChapterMarkerBadge(
+                    text = chapter.chapterMarker(),
+                    active = markerActive,
+                    modifier = Modifier.padding(start = 11.dp),
                 )
             }
-            Label(
-                text = buildString {
-                    if (chapter.dateUpload > 0L) {
-                        append(chapter.dateUpload.toDateBucket("Uploaded"))
-                    }
-                    if (chapter.lastPageRead > 0L) {
-                        if (isNotEmpty()) append("  \u00b7  ")
-                        append("Page ${chapter.lastPageRead + 1}")
-                    }
-                    chapter.scanlator?.takeIf { it.isNotBlank() }?.let {
-                        if (isNotEmpty()) append("  \u00b7  ")
-                        append(it)
-                    }
-                },
-                color = ChimahonPalette.secondaryText.copy(alpha = if (chapter.read) 0.58f else 1f),
-                size = 11,
-                maxLines = 1,
-            )
-            if (downloadStatus != null) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 11.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconGlyph(
-                        icon = downloadState?.statusIcon() ?: UiIcon.Download,
-                        contentDescription = downloadState?.queueTitle() ?: "Download",
-                        tint = downloadState?.statusColor() ?: ChimahonPalette.primary,
-                        modifier = Modifier.size(14.dp),
-                    )
                     Label(
-                        downloadStatus.chapterDownloadStatusLabel(),
-                        downloadState?.statusColor() ?: ChimahonPalette.secondaryText,
-                        11,
+                        chapter.name.ifBlank { "Chapter ${chapter.chapterMarker()}" },
+                        titleColor,
+                        13,
+                        weight = if (chapter.read) FontWeight.Normal else FontWeight.SemiBold,
                         maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (chapter.bookmarked) {
+                        IconGlyph(
+                            icon = UiIcon.Bookmark,
+                            contentDescription = "Bookmarked",
+                            tint = ChimahonPalette.primary,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Label(
+                        text = metadata,
+                        color = if (selected) {
+                            ChimahonPalette.onPrimaryContainer
+                        } else {
+                            ChimahonPalette.secondaryText.copy(alpha = if (chapter.read) 0.62f else 1f)
+                        },
+                        size = 11,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (statePills.isNotEmpty()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        statePills.take(3).forEach { pill ->
+                            MangaChapterStatePill(pill, selected = selected)
+                        }
+                    }
+                }
+            }
+            ChapterQuickAction(
+                icon = downloadState?.statusIcon() ?: UiIcon.Download,
+                contentDescription = downloadState?.queueTitle() ?: "Download chapter",
+                active = busyAction == "download" || downloadState != null,
+                onClick = enqueueDownload,
+            )
+            ChapterQuickAction(
+                icon = UiIcon.More,
+                contentDescription = "Chapter actions",
+                active = actionsVisible || busyAction != null,
+                onClick = { actionsVisible = true },
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .padding(start = if (selectionActive || selected) 58.dp else 61.dp)
+                .background(ChimahonPalette.divider.copy(alpha = if (selected) 0.38f else 0.68f)),
+        )
+    }
+    if (actionsVisible) {
+        MangaChapterActionsDialog(
+            chapter = chapter,
+            downloadStatus = downloadStatus,
+            busyAction = busyAction,
+            selected = selected,
+            onDismiss = { actionsVisible = false },
+            onOpen = startAction,
+            onToggleSelected = {
+                onToggleSelected()
+                actionsVisible = false
+            },
+            onToggleRead = toggleRead,
+            onToggleBookmark = toggleBookmark,
+            onDownload = enqueueDownload,
+        )
+    }
+}
+
+@Composable
+private fun ChapterMarkerBadge(
+    text: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (active) ChimahonPalette.primaryContainer.copy(alpha = 0.86f) else ChimahonPalette.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            text,
+            if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            11,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun MangaChapterStatePill(text: String, selected: Boolean) {
+    val active = text != "Read"
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                when {
+                    selected -> ChimahonPalette.surface.copy(alpha = 0.72f)
+                    active -> ChimahonPalette.primaryContainer.copy(alpha = 0.84f)
+                    else -> ChimahonPalette.surfaceVariant
+                },
+            )
+            .border(
+                1.dp,
+                if (active) ChimahonPalette.primary.copy(alpha = 0.18f) else ChimahonPalette.divider.copy(alpha = 0.32f),
+                RoundedCornerShape(10.dp),
+            )
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    ) {
+        Label(
+            text,
+            if (active || selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            9,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun MangaChapterActionsDialog(
+    chapter: ChimahonChapterEntry,
+    downloadStatus: ChimahonChapterDownloadStatus?,
+    busyAction: String?,
+    selected: Boolean,
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit,
+    onToggleSelected: () -> Unit,
+    onToggleRead: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        val sheetShape = RoundedCornerShape(
+            topStart = 24.dp,
+            topEnd = 24.dp,
+            bottomStart = 0.dp,
+            bottomEnd = 0.dp,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 48.dp),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 520.dp)
+                    .clip(sheetShape)
+                    .background(ChimahonPalette.surface)
+                    .border(1.dp, ChimahonPalette.divider, sheetShape),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .width(38.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(ChimahonPalette.divider),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 18.dp, top = 16.dp, end = 10.dp, bottom = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ChimahonPalette.primaryContainer),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Label(chapter.chapterMarker(), ChimahonPalette.primary, 12, weight = FontWeight.Bold)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Label("Chapter actions", ChimahonPalette.secondaryText, 10, weight = FontWeight.Bold, maxLines = 1)
+                        Label(chapter.name, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 2)
+                        Label(
+                            chapter.chapterDetailMetadata(downloadStatus),
+                            ChimahonPalette.secondaryText,
+                            11,
+                            maxLines = 2,
+                            modifier = Modifier.padding(top = 3.dp),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        IconGlyph(
+                            icon = UiIcon.Close,
+                            contentDescription = "Close chapter actions",
+                            tint = ChimahonPalette.secondaryText,
+                            modifier = Modifier.size(19.dp),
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(ChimahonPalette.divider),
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    MangaChapterDialogAction(
+                        title = if (chapter.lastPageRead > 0L && !chapter.read) "Resume chapter" else "Open chapter",
+                        icon = UiIcon.Play,
+                        enabled = busyAction == null,
+                        onClick = onOpen,
+                    )
+                    MangaChapterDialogAction(
+                        title = if (chapter.read) "Mark unread" else "Mark read",
+                        icon = if (chapter.read) UiIcon.Circle else UiIcon.DoneAll,
+                        active = busyAction == "read",
+                        enabled = busyAction == null,
+                        onClick = onToggleRead,
+                    )
+                    MangaChapterDialogAction(
+                        title = if (chapter.bookmarked) "Remove bookmark" else "Bookmark",
+                        icon = if (chapter.bookmarked) UiIcon.Bookmark else UiIcon.BookmarkBorder,
+                        active = chapter.bookmarked || busyAction == "bookmark",
+                        enabled = busyAction == null,
+                        onClick = onToggleBookmark,
+                    )
+                    MangaChapterDialogAction(
+                        title = downloadStatus?.chapterDownloadStatusLabel() ?: "Download chapter",
+                        icon = downloadStatus?.status?.statusIcon() ?: UiIcon.Download,
+                        active = busyAction == "download" || downloadStatus?.status == ChimahonDownloadState.Downloaded,
+                        enabled = busyAction == null && downloadStatus?.status != ChimahonDownloadState.Downloaded,
+                        onClick = onDownload,
+                    )
+                    MangaChapterDialogAction(
+                        title = if (selected) "Deselect chapter" else "Select chapter",
+                        icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
+                        active = selected,
+                        enabled = busyAction == null,
+                        onClick = onToggleSelected,
                     )
                 }
             }
         }
-        ChapterQuickAction(
-            icon = if (selected) UiIcon.CheckCircle else UiIcon.Circle,
-            contentDescription = if (selected) "Deselect chapter" else "Select chapter",
-            active = selected,
-            onClick = onToggleSelected,
-        )
-        ChapterQuickAction(
-            icon = if (chapter.read) UiIcon.Circle else UiIcon.CheckCircle,
-            contentDescription = if (chapter.read) "Mark unread" else "Mark read",
-            active = busyAction == "read",
-            onClick = {
-                if (busyAction == null) {
-                    scope.launch {
-                        busyAction = "read"
-                        runCatching { onSetRead(!chapter.read) }
-                        busyAction = null
-                    }
-                }
+    }
+}
+
+@Composable
+private fun MangaChapterDialogAction(
+    title: String,
+    icon: UiIcon,
+    enabled: Boolean,
+    active: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (active) ChimahonPalette.primaryContainer else Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = title,
+            tint = when {
+                active -> ChimahonPalette.primary
+                enabled -> ChimahonPalette.onSurface
+                else -> ChimahonPalette.secondaryText.copy(alpha = 0.45f)
             },
+            modifier = Modifier.size(19.dp),
         )
-        ChapterQuickAction(
-            icon = if (chapter.bookmarked) UiIcon.Bookmark else UiIcon.BookmarkBorder,
-            contentDescription = if (chapter.bookmarked) "Unbookmark" else "Bookmark",
-            active = chapter.bookmarked || busyAction == "bookmark",
-            onClick = {
-                if (busyAction == null) {
-                    scope.launch {
-                        busyAction = "bookmark"
-                        runCatching { onSetBookmark(!chapter.bookmarked) }
-                        busyAction = null
-                    }
-                }
+        Label(
+            title,
+            when {
+                active -> ChimahonPalette.primary
+                enabled -> ChimahonPalette.onSurface
+                else -> ChimahonPalette.secondaryText.copy(alpha = 0.45f)
             },
-        )
-        ChapterQuickAction(
-            icon = downloadState?.statusIcon() ?: UiIcon.Download,
-            contentDescription = downloadState?.queueTitle() ?: "Download chapter",
-            active = busyAction == "download" ||
-                downloadState == ChimahonDownloadState.Queued ||
-                downloadState == ChimahonDownloadState.Downloading ||
-                downloadState == ChimahonDownloadState.Downloaded,
-            onClick = {
-                if (busyAction == null && downloadState != ChimahonDownloadState.Downloaded) {
-                    scope.launch {
-                        busyAction = "download"
-                        runCatching { onEnqueueDownload() }
-                        busyAction = null
-                    }
-                }
-            },
+            12,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -10352,6 +17181,9 @@ private fun MoreHome(
     onSelectTab: (HomeTab) -> Unit,
     onCreateCategory: suspend (String) -> Long,
     onDeleteCategory: suspend (Long) -> Unit,
+    onRenameCategory: suspend (Long, String) -> Unit,
+    onSetCategoryHidden: suspend (Long, Boolean) -> Unit,
+    onMoveCategory: suspend (Long, Int) -> Unit,
     onCategoriesChanged: () -> Unit,
     onLoadDataMaintenance: suspend () -> ChimahonDataMaintenanceSnapshot,
     onClearThumbnailCache: suspend () -> ChimahonCacheClearResult,
@@ -10383,12 +17215,35 @@ private fun MoreHome(
     onOpenExternalUrl: (String) -> Boolean,
     onDownloadedOnlyModeChange: (Boolean) -> Unit,
     onIncognitoModeChange: (Boolean) -> Unit,
+    requestedPage: MorePage?,
+    onRequestedPageConsumed: () -> Unit,
+    backRequestId: Long?,
     onOpenBrowseSection: (BrowseSection) -> Unit,
 ) {
     var pageStack by remember { mutableStateOf(listOf(MorePage.Main)) }
     val selectedPage = pageStack.last()
+    var moreDownloadQueue by remember { mutableStateOf<ChimahonDownloadQueueData?>(null) }
     val openPage: (MorePage) -> Unit = { page ->
         if (page != selectedPage) pageStack = pageStack + page
+    }
+    LaunchedEffect(requestedPage) {
+        requestedPage?.let { page ->
+            pageStack = if (page == MorePage.Main) {
+                listOf(MorePage.Main)
+            } else {
+                listOf(MorePage.Main, page)
+            }
+            onRequestedPageConsumed()
+        }
+    }
+    LaunchedEffect(backRequestId) {
+        backRequestId ?: return@LaunchedEffect
+        pageStack = if (pageStack.size > 1) pageStack.dropLast(1) else listOf(MorePage.Main)
+    }
+    LaunchedEffect(selectedPage) {
+        if (selectedPage == MorePage.Main) {
+            moreDownloadQueue = runCatching { onLoadDownloadQueue() }.getOrNull()
+        }
     }
     if (selectedPage != MorePage.Main) {
         MoreDetailPage(
@@ -10396,6 +17251,9 @@ private fun MoreHome(
             snapshot = snapshot,
             onCreateCategory = onCreateCategory,
             onDeleteCategory = onDeleteCategory,
+            onRenameCategory = onRenameCategory,
+            onSetCategoryHidden = onSetCategoryHidden,
+            onMoveCategory = onMoveCategory,
             onCategoriesChanged = onCategoriesChanged,
             onLoadDataMaintenance = onLoadDataMaintenance,
             onClearThumbnailCache = onClearThumbnailCache,
@@ -10435,12 +17293,15 @@ private fun MoreHome(
         return
     }
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ChimahonPalette.background),
         contentPadding = PaddingValues(bottom = 16.dp),
     ) {
         item {
-            MoreLogoHeader(snapshot, settings.appearance.appIcon)
+            MoreMainHeader(snapshot, settings.appearance.appIcon)
         }
+        item { ListGroupHeader("Mode") }
         item {
             PreferenceSwitchRow(
                 title = "Downloaded only",
@@ -10460,14 +17321,16 @@ private fun MoreHome(
             )
         }
         item { PreferenceDivider() }
+        item { ListGroupHeader("Library") }
         item {
             PreferenceRow(
                 "Download queue",
-                "No pending downloads",
+                moreDownloadQueue?.downloadQueueHomeSummary() ?: "Queue and offline downloads",
                 UiIcon.Download,
                 onClick = { openPage(MorePage.Downloads) },
             )
         }
+        item { PreferenceDivider() }
         item {
             PreferenceRow(
                 "Categories",
@@ -10476,6 +17339,7 @@ private fun MoreHome(
                 onClick = { openPage(MorePage.Categories) },
             )
         }
+        item { PreferenceDivider() }
         item {
             PreferenceRow(
                 "Statistics",
@@ -10484,7 +17348,18 @@ private fun MoreHome(
                 onClick = { openPage(MorePage.Statistics) },
             )
         }
+        item { PreferenceDivider() }
+        item { ListGroupHeader("Data") }
+        item {
+            PreferenceRow(
+                "Data and storage",
+                snapshot.runtime.filesDir,
+                UiIcon.Storage,
+                onClick = { openPage(MorePage.Storage) },
+            )
+        }
         if (snapshot.updateIssues.isNotEmpty()) {
+            item { PreferenceDivider() }
             item {
                 PreferenceRow(
                     title = "Library update errors",
@@ -10494,14 +17369,8 @@ private fun MoreHome(
                 )
             }
         }
-        item {
-            PreferenceRow(
-                "Data and storage",
-                snapshot.runtime.filesDir,
-                UiIcon.Storage,
-                onClick = { openPage(MorePage.Storage) },
-            )
-        }
+        item { PreferenceDivider() }
+        item { ListGroupHeader("Browse") }
         item {
             PreferenceRow(
                 title = "Sources",
@@ -10510,6 +17379,7 @@ private fun MoreHome(
                 onClick = { onOpenBrowseSection(BrowseSection.Sources) },
             )
         }
+        item { PreferenceDivider() }
         item {
             PreferenceRow(
                 "Extension repositories",
@@ -10519,6 +17389,7 @@ private fun MoreHome(
             )
         }
         item { PreferenceDivider() }
+        item { ListGroupHeader("Settings") }
         item {
             PreferenceRow(
                 "Settings",
@@ -10527,6 +17398,7 @@ private fun MoreHome(
                 onClick = { openPage(MorePage.Settings) },
             )
         }
+        item { PreferenceDivider() }
         item {
             PreferenceRow(
                 "About",
@@ -10535,6 +17407,7 @@ private fun MoreHome(
                 onClick = { openPage(MorePage.About) },
             )
         }
+        item { PreferenceDivider() }
         item {
             PreferenceRow(
                 "Help",
@@ -10583,6 +17456,9 @@ private fun MoreDetailPage(
     snapshot: ChimahonSnapshot,
     onCreateCategory: suspend (String) -> Long,
     onDeleteCategory: suspend (Long) -> Unit,
+    onRenameCategory: suspend (Long, String) -> Unit,
+    onSetCategoryHidden: suspend (Long, Boolean) -> Unit,
+    onMoveCategory: suspend (Long, Int) -> Unit,
     onCategoriesChanged: () -> Unit,
     onLoadDataMaintenance: suspend () -> ChimahonDataMaintenanceSnapshot,
     onClearThumbnailCache: suspend () -> ChimahonCacheClearResult,
@@ -10620,6 +17496,8 @@ private fun MoreDetailPage(
     var categoryName by remember { mutableStateOf("") }
     var categoryMessage by remember { mutableStateOf<String?>(null) }
     var categoryBusy by remember { mutableStateOf(false) }
+    var editingCategoryId by remember { mutableStateOf<Long?>(null) }
+    var editingCategoryName by remember { mutableStateOf("") }
     var downloadQueue by remember { mutableStateOf<ChimahonDownloadQueueData?>(null) }
     var downloadQueueMessage by remember { mutableStateOf<String?>(null) }
     var downloadAutoRun by remember { mutableStateOf(true) }
@@ -10675,20 +17553,15 @@ private fun MoreDetailPage(
         }
     }
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(58.dp)
-                .background(ChimahonPalette.surface)
-                .border(1.dp, ChimahonPalette.divider)
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TopAction(UiIcon.Back, "Back", onClick = onBack)
-            Label(page.title, ChimahonPalette.onSurface, 17, weight = FontWeight.SemiBold, maxLines = 1)
-        }
+        SettingsTopBar(
+            page = page,
+            subtitle = page.morePageSubtitle(snapshot),
+            onBack = onBack,
+        )
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(ChimahonPalette.background),
             contentPadding = PaddingValues(bottom = 20.dp),
         ) {
             when (page) {
@@ -10698,6 +17571,7 @@ private fun MoreDetailPage(
                         MoreDownloadSummary(
                             downloadsDirectory = snapshot.runtime.downloadsDir,
                             downloadedOnlyMode = downloadedOnlyMode,
+                            queue = queue,
                             onOpenSettings = { onOpenPage(MorePage.DownloadSettings) },
                         )
                     }
@@ -10770,52 +17644,79 @@ private fun MoreDetailPage(
                             )
                         }
                     } else {
-                        items(queue.entries, key = { it.id }) { entry ->
-                            DownloadQueueEntryRow(
-                                entry = entry,
-                                onPrimaryAction = {
-                                    scope.launch {
-                                        downloadQueue = runCatching {
-                                            when (entry.status) {
-                                                ChimahonDownloadState.Paused -> onResumeDownload(entry.chapterId)
-                                                ChimahonDownloadState.Error -> onRetryDownload(entry.chapterId)
-                                                ChimahonDownloadState.Downloaded -> onRemoveDownload(entry.chapterId)
-                                                ChimahonDownloadState.Queued,
-                                                ChimahonDownloadState.Downloading,
-                                                -> onPauseDownload(entry.chapterId)
+                        queue.toDownloadSourceGroups(snapshot).forEach { group ->
+                            item(key = "download-source-${group.sourceId}") {
+                                DownloadQueueSourceHeader(group)
+                            }
+                            items(group.entries, key = { it.id }) { entry ->
+                                val position = queue.entries.indexOfFirst { it.id == entry.id }.coerceAtLeast(0) + 1
+                                DownloadQueueEntryRow(
+                                    entry = entry,
+                                    sourceName = group.sourceName,
+                                    position = position,
+                                    onPrimaryAction = {
+                                        scope.launch {
+                                            downloadQueue = runCatching {
+                                                when (entry.status) {
+                                                    ChimahonDownloadState.Paused -> onResumeDownload(entry.chapterId)
+                                                    ChimahonDownloadState.Error -> onRetryDownload(entry.chapterId)
+                                                    ChimahonDownloadState.Downloaded -> onRemoveDownload(entry.chapterId)
+                                                    ChimahonDownloadState.Queued,
+                                                    ChimahonDownloadState.Downloading,
+                                                    -> onPauseDownload(entry.chapterId)
+                                                }
                                             }
+                                                .onFailure { downloadQueueMessage = it.message ?: "Could not update download" }
+                                                .getOrNull() ?: downloadQueue
                                         }
-                                            .onFailure { downloadQueueMessage = it.message ?: "Could not update download" }
-                                            .getOrNull() ?: downloadQueue
-                                    }
-                                },
-                                onMoveTop = {
-                                    scope.launch {
-                                        downloadQueue = runCatching { onMoveDownloadToTop(entry.chapterId) }
-                                            .onFailure { downloadQueueMessage = it.message ?: "Could not move download" }
-                                            .getOrNull() ?: downloadQueue
-                                    }
-                                },
-                                onMoveBottom = {
-                                    scope.launch {
-                                        downloadQueue = runCatching { onMoveDownloadToBottom(entry.chapterId) }
-                                            .onFailure { downloadQueueMessage = it.message ?: "Could not move download" }
-                                            .getOrNull() ?: downloadQueue
-                                    }
-                                },
-                                onRemove = {
-                                    scope.launch {
-                                        downloadQueue = runCatching { onRemoveDownload(entry.chapterId) }
-                                            .onFailure { downloadQueueMessage = it.message ?: "Could not remove download" }
-                                            .getOrNull() ?: downloadQueue
-                                    }
-                                },
-                            )
+                                    },
+                                    onMoveTop = {
+                                        scope.launch {
+                                            downloadQueue = runCatching { onMoveDownloadToTop(entry.chapterId) }
+                                                .onFailure { downloadQueueMessage = it.message ?: "Could not move download" }
+                                                .getOrNull() ?: downloadQueue
+                                        }
+                                    },
+                                    onMoveBottom = {
+                                        scope.launch {
+                                            downloadQueue = runCatching { onMoveDownloadToBottom(entry.chapterId) }
+                                                .onFailure { downloadQueueMessage = it.message ?: "Could not move download" }
+                                                .getOrNull() ?: downloadQueue
+                                        }
+                                    },
+                                    onRemove = {
+                                        scope.launch {
+                                            downloadQueue = runCatching { onRemoveDownload(entry.chapterId) }
+                                                .onFailure { downloadQueueMessage = it.message ?: "Could not remove download" }
+                                                .getOrNull() ?: downloadQueue
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
                 }
                 MorePage.Categories -> {
-                    item { ListGroupHeader("Library categories") }
+                    val defaultCategory = snapshot.libraryCategories.firstOrNull { it.id == DEFAULT_LIBRARY_CATEGORY_ID }
+                        ?: ChimahonLibraryCategory(
+                            id = DEFAULT_LIBRARY_CATEGORY_ID,
+                            name = "",
+                            order = -1L,
+                            hidden = false,
+                        )
+                    val userCategories = snapshot.libraryCategories
+                        .filter { it.id > DEFAULT_LIBRARY_CATEGORY_ID }
+                        .sortedWith(compareBy<ChimahonLibraryCategory> { it.order }.thenBy { it.displayName().lowercase() })
+                    val categories = listOf(defaultCategory.copy(hidden = false)) + userCategories
+                    item {
+                        CategoryManagementSummary(
+                            categoryCount = userCategories.size,
+                            visibleCount = userCategories.count { !it.hidden } + 1,
+                            hiddenCount = userCategories.count { it.hidden },
+                            mangaCount = snapshot.library.size,
+                        )
+                    }
+                    item { ListGroupHeader("Create category") }
                     item {
                         CategoryInputRow(
                             name = categoryName,
@@ -10844,29 +17745,128 @@ private fun MoreDetailPage(
                             },
                         )
                     }
-                    val categories = snapshot.libraryCategories
-                        .filterNot { it.hidden }
-                        .sortedBy { it.order }
+                    item { ListGroupHeader("Categories") }
                     if (categories.isEmpty()) {
                         item {
-                            ExtensionStatusRow(
-                                title = "Default",
-                                subtitle = "${snapshot.library.size} manga",
+                            EmptyListPanel(
+                                marker = "C",
+                                title = "No categories",
+                                detail = "Create categories to organize your library.",
                             )
                         }
                     } else {
                         items(categories, key = { it.id }) { category ->
-                            ExtensionStatusRow(
-                                title = category.displayName(),
-                                subtitle = "${snapshot.libraryForCategory(category.id).size} manga",
-                                action = "Delete".takeIf { category.id > DEFAULT_LIBRARY_CATEGORY_ID },
-                                onAction = {
+                            val userIndex = userCategories.indexOfFirst { it.id == category.id }
+                            val categoryManga = snapshot.libraryForCategory(category.id)
+                            val unreadCount = categoryManga.sumOf { manga ->
+                                snapshot.chaptersByMangaId[manga.id].orEmpty().count { !it.read }
+                            }
+                            LibraryCategoryManagementRow(
+                                category = category,
+                                mangaCount = categoryManga.size,
+                                unreadCount = unreadCount,
+                                editing = editingCategoryId == category.id,
+                                editName = editingCategoryName,
+                                busy = categoryBusy,
+                                canMoveUp = userIndex > 0,
+                                canMoveDown = userIndex in 0 until userCategories.lastIndex,
+                                onStartEdit = {
+                                    if (category.id > DEFAULT_LIBRARY_CATEGORY_ID) {
+                                        editingCategoryId = category.id
+                                        editingCategoryName = category.displayName()
+                                        categoryMessage = null
+                                    }
+                                },
+                                onEditNameChange = {
+                                    editingCategoryName = it
+                                    categoryMessage = null
+                                },
+                                onCancelEdit = {
+                                    editingCategoryId = null
+                                    editingCategoryName = ""
+                                },
+                                onSaveEdit = {
+                                    val categoryId = category.id
+                                    if (categoryId > DEFAULT_LIBRARY_CATEGORY_ID && editingCategoryName.isNotBlank() && !categoryBusy) {
+                                        categoryBusy = true
+                                        scope.launch {
+                                            runCatching { onRenameCategory(categoryId, editingCategoryName) }
+                                                .onSuccess {
+                                                    categoryMessage = "Renamed ${category.displayName()}."
+                                                    editingCategoryId = null
+                                                    editingCategoryName = ""
+                                                    onCategoriesChanged()
+                                                }
+                                                .onFailure { error ->
+                                                    categoryMessage = error.message ?: "Could not rename category."
+                                                }
+                                            categoryBusy = false
+                                        }
+                                    }
+                                },
+                                onToggleHidden = {
+                                    if (!categoryBusy) {
+                                        categoryBusy = true
+                                        scope.launch {
+                                            runCatching { onSetCategoryHidden(category.id, !category.hidden) }
+                                                .onSuccess {
+                                                    categoryMessage = if (category.hidden) {
+                                                        "Shown ${category.displayName()}."
+                                                    } else {
+                                                        "Hidden ${category.displayName()}."
+                                                    }
+                                                    onCategoriesChanged()
+                                                }
+                                                .onFailure { error ->
+                                                    categoryMessage = error.message ?: "Could not update category visibility."
+                                                }
+                                            categoryBusy = false
+                                        }
+                                    }
+                                },
+                                onMoveUp = {
+                                    if (!categoryBusy && userIndex > 0) {
+                                        categoryBusy = true
+                                        scope.launch {
+                                            runCatching { onMoveCategory(category.id, userIndex - 1) }
+                                                .onSuccess {
+                                                    categoryMessage = "Moved ${category.displayName()} up."
+                                                    onCategoriesChanged()
+                                                }
+                                                .onFailure { error ->
+                                                    categoryMessage = error.message ?: "Could not move category."
+                                                }
+                                            categoryBusy = false
+                                        }
+                                    }
+                                },
+                                onMoveDown = {
+                                    if (!categoryBusy && userIndex in 0 until userCategories.lastIndex) {
+                                        categoryBusy = true
+                                        scope.launch {
+                                            runCatching { onMoveCategory(category.id, userIndex + 1) }
+                                                .onSuccess {
+                                                    categoryMessage = "Moved ${category.displayName()} down."
+                                                    onCategoriesChanged()
+                                                }
+                                                .onFailure { error ->
+                                                    categoryMessage = error.message ?: "Could not move category."
+                                                }
+                                            categoryBusy = false
+                                        }
+                                    }
+                                },
+                                onDelete = {
                                     if (!categoryBusy) {
                                         categoryBusy = true
                                         scope.launch {
                                             runCatching { onDeleteCategory(category.id) }
                                                 .onSuccess {
                                                     categoryMessage = "Deleted ${category.displayName()}."
+                                                    if (editingCategoryId == category.id) {
+                                                        editingCategoryId = null
+                                                        editingCategoryName = ""
+                                                    }
                                                     onCategoriesChanged()
                                                 }
                                                 .onFailure { error ->
@@ -10881,51 +17881,21 @@ private fun MoreDetailPage(
                     }
                 }
                 MorePage.Statistics -> {
-                    val allChapters = snapshot.library.flatMap { manga ->
-                        snapshot.chaptersByMangaId[manga.id].orEmpty()
-                    }
-                    val readDuration = snapshot.history.sumOf { it.readDuration }
+                    val progressSummary = snapshot.readingProgressSummary()
                     item {
                         MoreStatisticsHero(
-                            readDuration = readDuration,
-                            readChapters = allChapters.count { it.read },
-                            totalChapters = allChapters.size,
+                            summary = progressSummary,
                         )
+                    }
+                    item {
+                        ReadingProgressOverview(summary = progressSummary)
                     }
                     item { ListGroupHeader("Library") }
                     item {
                         MoreStatisticRow(
                             "Manga",
-                            snapshot.library.size.toString(),
+                            progressSummary.libraryManga.toString(),
                             UiIcon.Library,
-                        )
-                    }
-                    item {
-                        MoreStatisticRow(
-                            "Read chapters",
-                            allChapters.count { it.read }.toString(),
-                            UiIcon.DoneAll,
-                        )
-                    }
-                    item {
-                        MoreStatisticRow(
-                            "Unread chapters",
-                            allChapters.count { !it.read }.toString(),
-                            UiIcon.Updates,
-                        )
-                    }
-                    item {
-                        MoreStatisticRow(
-                            "Bookmarked chapters",
-                            allChapters.count { it.bookmarked }.toString(),
-                            UiIcon.Bookmark,
-                        )
-                    }
-                    item {
-                        MoreStatisticRow(
-                            "History entries",
-                            snapshot.history.size.toString(),
-                            UiIcon.History,
                         )
                     }
                     item {
@@ -10933,6 +17903,85 @@ private fun MoreDetailPage(
                             "Categories",
                             snapshot.libraryCategories.count { !it.hidden }.toString(),
                             UiIcon.Tag,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Read chapters",
+                            progressSummary.readChapters.toString(),
+                            UiIcon.DoneAll,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Started chapters",
+                            progressSummary.startedChapters.toString(),
+                            UiIcon.Play,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Unread chapters",
+                            progressSummary.unreadChapters.toString(),
+                            UiIcon.Updates,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Bookmarked chapters",
+                            progressSummary.bookmarkedChapters.toString(),
+                            UiIcon.Bookmark,
+                        )
+                    }
+                    item { ListGroupHeader("Manga progress") }
+                    item {
+                        MoreStatisticRow(
+                            "In progress",
+                            progressSummary.inProgressManga.toString(),
+                            UiIcon.Play,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Completed",
+                            progressSummary.completedManga.toString(),
+                            UiIcon.CheckCircle,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Not started",
+                            progressSummary.untouchedManga.toString(),
+                            UiIcon.Circle,
+                        )
+                    }
+                    item { ListGroupHeader("History") }
+                    item {
+                        MoreStatisticRow(
+                            "History entries",
+                            progressSummary.historyEntries.toString(),
+                            UiIcon.History,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Manga in history",
+                            progressSummary.historyManga.toString(),
+                            UiIcon.Library,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Reading time",
+                            progressSummary.readDuration.toReadingDuration(),
+                            UiIcon.Statistics,
+                        )
+                    }
+                    item {
+                        MoreStatisticRow(
+                            "Last read",
+                            progressSummary.lastReadAt?.toDateBucket("Read") ?: "Never",
+                            UiIcon.History,
                         )
                     }
                     item { ListGroupHeader("Sources") }
@@ -10975,6 +18024,14 @@ private fun MoreDetailPage(
                         }
                         item {
                             StorageSectionRow("Downloads", maintenance.storage.downloads)
+                        }
+                        item {
+                            ExtensionStatusRow(
+                                title = "Offline downloads",
+                                subtitle = "${maintenance.storage.downloadedMangaCount} manga, ${maintenance.storage.downloadedChapterCount} chapter(s), ${maintenance.storage.downloads.sizeBytes.toReadableBytes()} in ${maintenance.storage.downloads.path}",
+                                action = "Queue",
+                                onAction = { onOpenPage(MorePage.Downloads) },
+                            )
                         }
                         item { ListGroupHeader("Maintenance") }
                         item {
@@ -11058,6 +18115,7 @@ private fun MoreDetailPage(
                     item { RuntimeLineRow("History records", snapshot.history.size.toString()) }
                 }
                 MorePage.Settings -> {
+                    item { ListGroupHeader("App") }
                     item {
                         PreferenceRow(
                             "Appearance",
@@ -11066,6 +18124,23 @@ private fun MoreDetailPage(
                             onClick = { onOpenPage(MorePage.AppearanceSettings) },
                         )
                     }
+                    item {
+                        PreferenceRow(
+                            "Security",
+                            "Privacy and protected access",
+                            UiIcon.Incognito,
+                            onClick = { onOpenPage(MorePage.SecuritySettings) },
+                        )
+                    }
+                    item {
+                        PreferenceRow(
+                            "Advanced",
+                            "Incognito mode, data tools, and runtime diagnostics",
+                            UiIcon.Settings,
+                            onClick = { onOpenPage(MorePage.AdvancedSettings) },
+                        )
+                    }
+                    item { ListGroupHeader("Library and reading") }
                     item {
                         PreferenceRow(
                             "Library",
@@ -11090,6 +18165,7 @@ private fun MoreDetailPage(
                             onClick = { onOpenPage(MorePage.DownloadSettings) },
                         )
                     }
+                    item { ListGroupHeader("Browse and services") }
                     item {
                         PreferenceRow(
                             "Tracking",
@@ -11122,6 +18198,7 @@ private fun MoreDetailPage(
                             onClick = { onOpenPage(MorePage.DictionarySettings) },
                         )
                     }
+                    item { ListGroupHeader("Data") }
                     item {
                         PreferenceRow(
                             "Data and storage",
@@ -11132,20 +18209,13 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceRow(
-                            "Security",
-                            "Privacy and protected access",
-                            UiIcon.Incognito,
-                            onClick = { onOpenPage(MorePage.SecuritySettings) },
+                            "Backup and restore",
+                            "Import, export, and migration checkpoints",
+                            UiIcon.Download,
+                            onClick = { onOpenPage(MorePage.BackupSettings) },
                         )
                     }
-                    item {
-                        PreferenceRow(
-                            "Advanced",
-                            "Incognito mode and runtime diagnostics",
-                            UiIcon.Settings,
-                            onClick = { onOpenPage(MorePage.AdvancedSettings) },
-                        )
-                    }
+                    item { ListGroupHeader("About") }
                     item {
                         PreferenceRow(
                             "About",
@@ -11192,6 +18262,18 @@ private fun MoreDetailPage(
                     }
                     item {
                         SettingsChoiceRow(
+                            title = "Custom theme style",
+                            options = ChimahonMaterialPaletteStyle.entries.map { it.title },
+                            selected = settings.appearance.customThemeStyle.title,
+                            onSelect = { selected ->
+                                ChimahonMaterialPaletteStyle.entries.firstOrNull { it.title == selected }?.let {
+                                    onAppearanceSettingsChange(settings.appearance.copy(customThemeStyle = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
                             title = "App icon",
                             options = ChimahonAppIcon.entries.map { it.title },
                             selected = settings.appearance.appIcon.title,
@@ -11213,7 +18295,83 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item { ListGroupHeader("Manga info") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Cover-based theme",
+                            "Tint manga info surfaces from the cover palette",
+                            UiIcon.Circle,
+                            checked = settings.appearance.mangaInfoCoverBasedTheme,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(
+                                    settings.appearance.copy(mangaInfoCoverBasedTheme = it),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Cover theme style",
+                            options = ChimahonMaterialPaletteStyle.entries.map { it.title },
+                            selected = settings.appearance.mangaInfoCoverBasedStyle.title,
+                            onSelect = { selected ->
+                                ChimahonMaterialPaletteStyle.entries.firstOrNull { it.title == selected }?.let {
+                                    onAppearanceSettingsChange(
+                                        settings.appearance.copy(mangaInfoCoverBasedStyle = it),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Panorama cover",
+                            "Use wide cover art on manga info pages",
+                            UiIcon.Crop,
+                            checked = settings.appearance.usePanoramaCoverMangaInfo,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(
+                                    settings.appearance.copy(usePanoramaCoverMangaInfo = it),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Top-align cover",
+                            "Align manga info covers to the top of their crop",
+                            UiIcon.Crop,
+                            checked = settings.appearance.topAlignCover,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(settings.appearance.copy(topAlignCover = it))
+                            },
+                        )
+                    }
                     item { ListGroupHeader("Display") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Tablet UI mode",
+                            options = ChimahonTabletUiMode.entries.map { it.title },
+                            selected = settings.appearance.tabletUiMode.title,
+                            onSelect = { selected ->
+                                ChimahonTabletUiMode.entries.firstOrNull { it.title == selected }?.let {
+                                    onAppearanceSettingsChange(settings.appearance.copy(tabletUiMode = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Date format",
+                            options = ChimahonDateFormat.entries.map { it.title },
+                            selected = settings.appearance.dateFormat.title,
+                            onSelect = { selected ->
+                                ChimahonDateFormat.entries.firstOrNull { it.title == selected }?.let {
+                                    onAppearanceSettingsChange(settings.appearance.copy(dateFormat = it))
+                                }
+                            },
+                        )
+                    }
                     item {
                         SettingsChoiceRow(
                             title = "Font scale",
@@ -11228,6 +18386,56 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item { ListGroupHeader("Navbar") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Start screen",
+                            options = ChimahonStartScreen.entries.map { it.title },
+                            selected = settings.appearance.startScreen.title,
+                            onSelect = { selected ->
+                                ChimahonStartScreen.entries.firstOrNull { it.title == selected }?.let {
+                                    onAppearanceSettingsChange(settings.appearance.copy(startScreen = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Bottom bar labels",
+                            "Show labels below bottom navigation icons",
+                            UiIcon.Tag,
+                            checked = settings.appearance.bottomBarLabels,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(settings.appearance.copy(bottomBarLabels = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Navigation badges",
+                            "Show library, update, history, and source count badges",
+                            UiIcon.Updates,
+                            checked = settings.appearance.showNavigationBadges,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(
+                                    settings.appearance.copy(showNavigationBadges = it),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Top bar subtitles",
+                            "Show Android-style context counts below page titles",
+                            UiIcon.Info,
+                            checked = settings.appearance.showTopBarSubtitle,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(
+                                    settings.appearance.copy(showTopBarSubtitle = it),
+                                )
+                            },
+                        )
+                    }
                     item {
                         PreferenceSwitchRow(
                             "Compact navigation",
@@ -11237,6 +18445,63 @@ private fun MoreDetailPage(
                             onCheckedChange = {
                                 onAppearanceSettingsChange(
                                     settings.appearance.copy(compactNavigation = it),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Browse and details") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Panorama cover flow",
+                            "Use panorama covers in cover-flow style lists",
+                            UiIcon.Crop,
+                            checked = settings.appearance.usePanoramaCoverFlow,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(settings.appearance.copy(usePanoramaCoverFlow = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Expand search filters",
+                            "Open source search filters expanded by default",
+                            UiIcon.Filter,
+                            checked = settings.appearance.expandSearchFilters,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(settings.appearance.copy(expandSearchFilters = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Recommends in overflow",
+                            "Move recommendations into overflow actions",
+                            UiIcon.More,
+                            checked = settings.appearance.recommendsInOverflow,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(settings.appearance.copy(recommendsInOverflow = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Merge in overflow",
+                            "Move merge actions into overflow actions",
+                            UiIcon.More,
+                            checked = settings.appearance.mergeInOverflow,
+                            onCheckedChange = {
+                                onAppearanceSettingsChange(settings.appearance.copy(mergeInOverflow = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Preview rows",
+                            options = (0..10).map { it.toRowCountTitle() },
+                            selected = settings.appearance.previewsRowCount.toRowCountTitle(),
+                            onSelect = { selected ->
+                                onAppearanceSettingsChange(
+                                    settings.appearance.copy(previewsRowCount = selected.toRowCount()),
                                 )
                             },
                         )
@@ -11267,6 +18532,30 @@ private fun MoreDetailPage(
                     }
                 }
                 MorePage.LibrarySettings -> {
+                    item { ListGroupHeader("Categories") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Default category",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.library.defaultCategory,
+                            onSelect = {
+                                onLibrarySettingsChange(settings.library.copy(defaultCategory = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Categorized display settings",
+                            "Remember display, sort, and filter settings per category",
+                            UiIcon.Tag,
+                            checked = settings.library.categorizedDisplaySettings,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(
+                                    settings.library.copy(categorizedDisplaySettings = it),
+                                )
+                            },
+                        )
+                    }
                     item { ListGroupHeader("Display") }
                     item {
                         SettingsChoiceRow(
@@ -11488,6 +18777,92 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        SettingsMultiChoiceRow(
+                            title = "Update restrictions",
+                            options = libraryUpdateRestrictionOptions(),
+                            selected = settings.library.updateRestrictions,
+                            emptyLabel = "No restrictions",
+                            onToggle = { restriction ->
+                                onLibrarySettingsChange(
+                                    settings.library.copy(
+                                        updateRestrictions = settings.library.updateRestrictions.toggled(restriction),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Update included categories",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.library.updateIncludedCategories,
+                            emptyLabel = "All categories",
+                            onToggle = { category ->
+                                onLibrarySettingsChange(
+                                    settings.library.copy(
+                                        updateIncludedCategories =
+                                            settings.library.updateIncludedCategories.toggled(category),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Update excluded categories",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.library.updateExcludedCategories,
+                            emptyLabel = "No excluded categories",
+                            onToggle = { category ->
+                                onLibrarySettingsChange(
+                                    settings.library.copy(
+                                        updateExcludedCategories =
+                                            settings.library.updateExcludedCategories.toggled(category),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Group library updates",
+                            options = ChimahonLibraryUpdateGroupMode.entries.map { it.title },
+                            selected = settings.library.updateGroupMode.title,
+                            onSelect = { selected ->
+                                ChimahonLibraryUpdateGroupMode.entries
+                                    .firstOrNull { it.title == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(updateGroupMode = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Refresh metadata",
+                            "Refresh library manga metadata during global updates",
+                            UiIcon.Refresh,
+                            checked = settings.library.autoUpdateMetadata,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(autoUpdateMetadata = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Smart update",
+                            options = librarySmartUpdateOptions(),
+                            selected = settings.library.smartUpdateRestrictions,
+                            emptyLabel = "No smart update skips",
+                            onToggle = { restriction ->
+                                onLibrarySettingsChange(
+                                    settings.library.copy(
+                                        smartUpdateRestrictions =
+                                            settings.library.smartUpdateRestrictions.toggled(restriction),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             "Update only on Wi-Fi",
                             "Run automatic library updates only on unmetered networks",
@@ -11510,13 +18885,141 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
-                        PreferenceSwitchRow(
-                            "Update notifications",
-                            "Notify when automatic library updates find new chapters",
-                            UiIcon.Updates,
+                        NotificationPreferenceRow(
+                            title = "Library update notifications",
+                            subtitle = "Notify when automatic library updates find new chapters",
+                            icon = UiIcon.Updates,
                             checked = settings.library.updateNotificationsEnabled,
+                            enabledLabel = "Notify",
+                            disabledLabel = "Silent",
+                            detail = if (settings.security.hideNotificationContent) "Private content" else "Chapter titles",
                             onCheckedChange = {
                                 onLibrarySettingsChange(settings.library.copy(updateNotificationsEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        NotificationPreferenceRow(
+                            title = "Update progress banner",
+                            subtitle = "Show in-app status while library updates are running",
+                            icon = UiIcon.Updates,
+                            checked = settings.library.showUpdatingProgressBanner,
+                            enabledLabel = "Banner",
+                            disabledLabel = "Hidden",
+                            detail = "In-app",
+                            onCheckedChange = {
+                                onLibrarySettingsChange(
+                                    settings.library.copy(showUpdatingProgressBanner = it),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Behavior") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Chapter swipe start",
+                            options = ChimahonChapterSwipeAction.entries.map { it.title },
+                            selected = settings.library.swipeToStartAction.title,
+                            onSelect = { selected ->
+                                ChimahonChapterSwipeAction.entries
+                                    .firstOrNull { it.title == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(swipeToStartAction = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Chapter swipe end",
+                            options = ChimahonChapterSwipeAction.entries.map { it.title },
+                            selected = settings.library.swipeToEndAction.title,
+                            onSelect = { selected ->
+                                ChimahonChapterSwipeAction.entries
+                                    .firstOrNull { it.title == selected }
+                                    ?.let { onLibrarySettingsChange(settings.library.copy(swipeToEndAction = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Mark duplicate read chapters",
+                            options = duplicateReadChapterOptions(),
+                            selected = settings.library.duplicateReadChapterHandling,
+                            emptyLabel = "Do not auto-mark duplicates",
+                            onToggle = { option ->
+                                onLibrarySettingsChange(
+                                    settings.library.copy(
+                                        duplicateReadChapterHandling =
+                                            settings.library.duplicateReadChapterHandling.toggled(option),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Hide missing chapter indicators",
+                            "Hide gap indicators for missing chapter numbers",
+                            UiIcon.VisibilityOff,
+                            checked = settings.library.hideMissingChapters,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(hideMissingChapters = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show empty categories in search",
+                            "Keep empty categories visible while searching",
+                            UiIcon.Search,
+                            checked = settings.library.showEmptyCategoriesSearch,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(showEmptyCategoriesSearch = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Fetch metadata on add",
+                            "Refresh manga metadata when adding a title to the library",
+                            UiIcon.Refresh,
+                            checked = settings.library.fetchMetadataOnAdd,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(fetchMetadataOnAdd = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Fetch chapters on add",
+                            "Fetch chapters when adding a title to the library",
+                            UiIcon.Chapters,
+                            checked = settings.library.fetchChaptersOnAdd,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(fetchChaptersOnAdd = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Update manga titles",
+                            "Update library titles from source metadata",
+                            UiIcon.Library,
+                            checked = settings.library.updateMangaTitles,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(settings.library.copy(updateMangaTitles = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Disallow non-ASCII filenames",
+                            "Use ASCII-only names for generated files",
+                            UiIcon.Storage,
+                            checked = settings.library.disallowNonAsciiFilenames,
+                            onCheckedChange = {
+                                onLibrarySettingsChange(
+                                    settings.library.copy(disallowNonAsciiFilenames = it),
+                                )
                             },
                         )
                     }
@@ -11566,6 +19069,17 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        PreferenceSwitchRow(
+                            "Pure black background",
+                            "Use OLED black for the black reader theme",
+                            UiIcon.Circle,
+                            checked = settings.reader.pureBlackBackground,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(pureBlackBackground = it))
+                            },
+                        )
+                    }
+                    item {
                         SettingsChoiceRow(
                             title = "Orientation",
                             options = ChimahonReaderOrientation.entries.map { it.readerTitle() },
@@ -11609,6 +19123,29 @@ private fun MoreDetailPage(
                             checked = settings.reader.splitWidePages,
                             onCheckedChange = {
                                 onReaderSettingsChange(settings.reader.copy(splitWidePages = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Invert double pages",
+                            "Swap left and right pages in two-page spreads",
+                            UiIcon.Swap,
+                            checked = settings.reader.invertDoublePages,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(invertDoublePages = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Center margin",
+                            options = listOf("0", "4", "8", "12", "16", "24", "32"),
+                            selected = settings.reader.centerMarginDp.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onReaderSettingsChange(settings.reader.copy(centerMarginDp = it))
+                                }
                             },
                         )
                     }
@@ -11671,6 +19208,74 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceSwitchRow(
+                            "Force horizontal seekbar",
+                            "Always use the horizontal reader page scrubber",
+                            UiIcon.Reorder,
+                            checked = settings.reader.forceHorizontalSeekbar,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(forceHorizontalSeekbar = it))
+                            },
+                        )
+                    }
+                    if (!settings.reader.forceHorizontalSeekbar) {
+                        item {
+                            PreferenceSwitchRow(
+                                "Vertical seekbar in landscape",
+                                "Use a side scrubber when the reader is wide",
+                                UiIcon.Reorder,
+                                checked = settings.reader.landscapeVerticalSeekbar,
+                                onCheckedChange = {
+                                    onReaderSettingsChange(settings.reader.copy(landscapeVerticalSeekbar = it))
+                                },
+                            )
+                        }
+                        item {
+                            PreferenceSwitchRow(
+                                "Left-handed vertical seekbar",
+                                "Place the landscape seekbar on the left side",
+                                UiIcon.Reorder,
+                                checked = settings.reader.leftVerticalSeekbar,
+                                onCheckedChange = {
+                                    onReaderSettingsChange(settings.reader.copy(leftVerticalSeekbar = it))
+                                },
+                            )
+                        }
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show reading mode",
+                            "Display the active reader mode overlay",
+                            UiIcon.Swap,
+                            checked = settings.reader.showReadingMode,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(showReadingMode = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Navigation overlay on start",
+                            "Show reader navigation controls when opening chapters",
+                            UiIcon.Help,
+                            checked = settings.reader.showNavigationOverlayOnStart,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(showNavigationOverlayOnStart = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Reader startup delay",
+                            "Delay image loading briefly when opening chapters",
+                            UiIcon.History,
+                            checked = settings.reader.readerStartupDelay,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(readerStartupDelay = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
                             "Show controls on start",
                             "Open each chapter with reader bars visible",
                             UiIcon.Settings,
@@ -11712,6 +19317,55 @@ private fun MoreDetailPage(
                                 onReaderSettingsChange(settings.reader.copy(pageTransitions = it))
                             },
                         )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Flash on page change",
+                            "Briefly flash the page when moving through the reader",
+                            UiIcon.VisibilityOff,
+                            checked = settings.reader.flashOnPageChange,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(flashOnPageChange = it))
+                            },
+                        )
+                    }
+                    if (settings.reader.flashOnPageChange) {
+                        item {
+                            SettingsChoiceRow(
+                                title = "Flash duration",
+                                options = listOf("100", "250", "500", "750", "1000", "1500"),
+                                selected = settings.reader.flashDurationMillis.toString(),
+                                onSelect = { selected ->
+                                    selected.toIntOrNull()?.let {
+                                        onReaderSettingsChange(settings.reader.copy(flashDurationMillis = it))
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            SettingsChoiceRow(
+                                title = "Flash interval",
+                                options = (1..10).map { it.toString() },
+                                selected = settings.reader.flashPageInterval.toString(),
+                                onSelect = { selected ->
+                                    selected.toIntOrNull()?.let {
+                                        onReaderSettingsChange(settings.reader.copy(flashPageInterval = it))
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            SettingsChoiceRow(
+                                title = "Flash color",
+                                options = ChimahonReaderFlashColor.entries.map { it.readerTitle() },
+                                selected = settings.reader.flashColor.readerTitle(),
+                                onSelect = { selected ->
+                                    ChimahonReaderFlashColor.entries
+                                        .firstOrNull { it.readerTitle() == selected }
+                                        ?.let { onReaderSettingsChange(settings.reader.copy(flashColor = it)) }
+                                },
+                            )
+                        }
                     }
                     item { ListGroupHeader("Controls") }
                     item {
@@ -11807,12 +19461,193 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceSwitchRow(
+                            "Read with long tap",
+                            "Use long press as a reader action on supported platforms",
+                            UiIcon.Play,
+                            checked = settings.reader.readWithLongTap,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(readWithLongTap = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Navigate to pan",
+                            "Keyboard and wheel navigation can pan zoomed pages when supported",
+                            UiIcon.Play,
+                            checked = settings.reader.navigateToPan,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(navigateToPan = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
                             "Keep screen on",
                             "Request an uninterrupted reading session while the reader is open",
                             UiIcon.Incognito,
                             checked = settings.reader.keepScreenOn,
                             onCheckedChange = {
                                 onReaderSettingsChange(settings.reader.copy(keepScreenOn = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Fullscreen",
+                            "Use an immersive reader layout where the platform supports it",
+                            UiIcon.Crop,
+                            checked = settings.reader.fullscreen,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(fullscreen = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Draw under cutout",
+                            "Allow reader content below display cutout areas",
+                            UiIcon.Crop,
+                            checked = settings.reader.drawUnderCutout,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(drawUnderCutout = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show OCR outlines",
+                            "Display OCR recognition outlines while reading",
+                            UiIcon.Search,
+                            checked = settings.reader.ocrOutlineVisible,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(ocrOutlineVisible = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Chapter transition") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Skip read chapters",
+                            "Move to the next unread chapter when changing chapters",
+                            UiIcon.DoneAll,
+                            checked = settings.reader.skipReadChapters,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(skipReadChapters = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Skip filtered chapters",
+                            "Reserve the original skip-filtered behavior for source filters",
+                            UiIcon.Filter,
+                            checked = settings.reader.skipFilteredChapters,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(skipFilteredChapters = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Skip duplicate chapters",
+                            "Avoid duplicate chapter numbers when moving between chapters",
+                            UiIcon.Chapters,
+                            checked = settings.reader.skipDuplicateChapters,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(skipDuplicateChapters = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Always show transition",
+                            "Keep chapter-edge prompts visible at boundaries",
+                            UiIcon.Info,
+                            checked = settings.reader.alwaysShowChapterTransition,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(alwaysShowChapterTransition = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Preserve reading position",
+                            "Resume chapters from the saved page",
+                            UiIcon.History,
+                            checked = settings.reader.preserveReadingPosition,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(preserveReadingPosition = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Auto webtoon mode",
+                            "Open long chapters in webtoon mode automatically",
+                            UiIcon.Browse,
+                            checked = settings.reader.useAutoWebtoon,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(useAutoWebtoon = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Page loading") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Preload pages",
+                            options = listOf("1", "4", "6", "8", "10", "12", "16", "20"),
+                            selected = settings.reader.preloadSize.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onReaderSettingsChange(settings.reader.copy(preloadSize = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Reader threads",
+                            options = listOf("1", "2", "3", "4", "5"),
+                            selected = settings.reader.readerThreads.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onReaderSettingsChange(settings.reader.copy(readerThreads = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Reader cache",
+                            options = listOf("50", "100", "250", "500", "1000", "2000", "5000"),
+                            selected = settings.reader.readerCacheSizeMb.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onReaderSettingsChange(settings.reader.copy(readerCacheSizeMb = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Aggressive page loading",
+                            "Preload behind and ahead more aggressively",
+                            UiIcon.Download,
+                            checked = settings.reader.aggressivePageLoading,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(aggressivePageLoading = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Folder per manga",
+                            "Keep downloaded reader assets grouped by manga where supported",
+                            UiIcon.Storage,
+                            checked = settings.reader.folderPerManga,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(folderPerManga = it))
                             },
                         )
                     }
@@ -11862,23 +19697,16 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
-                        SettingsChoiceRow(
-                            title = "Ahead while reading",
-                            options = listOf("Off", "1", "2", "3", "5", "10"),
-                            selected = settings.downloads.autoDownloadWhileReadingCount.toOffCountTitle(),
-                            onSelect = { selected ->
-                                onDownloadPreferencesChange(
-                                    settings.downloads.copy(
-                                        autoDownloadWhileReadingCount = selected.toOffCount(),
-                                    ),
-                                )
-                            },
+                        ExtensionStatusRow(
+                            title = "Active restrictions",
+                            subtitle = settings.downloads.downloadRestrictionSummary(downloadedOnlyMode),
                         )
                     }
+                    item { ListGroupHeader("Concurrent downloads") }
                     item {
-                        SettingsChoiceRow(
+                        SettingsScrollableChoiceRow(
                             title = "Source downloads",
-                            options = listOf("1", "2", "3", "4", "5", "8"),
+                            options = (1..10).map { it.toString() },
                             selected = settings.downloads.parallelSourceDownloads.toString(),
                             onSelect = { selected ->
                                 selected.toIntOrNull()?.let {
@@ -11890,9 +19718,9 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
-                        SettingsChoiceRow(
+                        SettingsScrollableChoiceRow(
                             title = "Page downloads",
-                            options = listOf("1", "2", "3", "4", "5", "8"),
+                            options = (1..15).map { it.toString() },
                             selected = settings.downloads.parallelPageDownloads.toString(),
                             onSelect = { selected ->
                                 selected.toIntOrNull()?.let {
@@ -11903,11 +19731,75 @@ private fun MoreDetailPage(
                             },
                         )
                     }
-                    item { ListGroupHeader("Automatic cleanup") }
+                    item { ListGroupHeader("Download ahead") }
                     item {
                         SettingsChoiceRow(
+                            title = "Ahead while reading",
+                            options = listOf("Off", "2", "3", "5", "10"),
+                            selected = settings.downloads.autoDownloadWhileReadingCount.toOffCountTitle(),
+                            onSelect = { selected ->
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(
+                                        autoDownloadWhileReadingCount = selected.toOffCount(),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Reader prefetch",
+                            subtitle = "Automatically queues the next unread chapters while reading.",
+                        )
+                    }
+                    item { ListGroupHeader("Download cache") }
+                    item {
+                        SettingsScrollableChoiceRow(
+                            title = "Download cache renew",
+                            options = listOf("Manual", "1 hour", "2 hours", "6 hours", "12 hours", "24 hours"),
+                            selected = settings.downloads.downloadCacheRenewIntervalHours.toDownloadCacheTitle(),
+                            onSelect = { selected ->
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(
+                                        downloadCacheRenewIntervalHours = selected.toDownloadCacheHours(),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Cache renewal",
+                            subtitle = settings.downloads.downloadCacheSummary(),
+                        )
+                    }
+                    item { ListGroupHeader("Storage") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Include chapter URL hash",
+                            "Include chapter URL hashes in generated download paths",
+                            UiIcon.Link,
+                            checked = settings.downloads.includeChapterUrlHash,
+                            onCheckedChange = {
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(includeChapterUrlHash = it),
+                                )
+                            },
+                        )
+                    }
+                    item { RuntimeLineRow("Download directory", snapshot.runtime.downloadsDir) }
+                    item { ListGroupHeader("Automatic cleanup") }
+                    item {
+                        SettingsScrollableChoiceRow(
                             title = "Remove after read",
-                            options = listOf("Never", "After next chapter", "After 2 chapters", "After 5 chapters"),
+                            options = listOf(
+                                "Disabled",
+                                "Last read chapter",
+                                "Second to last",
+                                "Third to last",
+                                "Fourth to last",
+                                "Fifth to last",
+                            ),
                             selected = settings.downloads.removeAfterReadSlots.toRemoveAfterReadTitle(),
                             onSelect = { selected ->
                                 onDownloadPreferencesChange(
@@ -11931,15 +19823,40 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceSwitchRow(
-                            "Keep bookmarks",
-                            "Do not remove downloaded bookmarked chapters",
+                            "Remove bookmarked chapters",
+                            "Allow cleanup to delete downloaded chapters that are bookmarked",
                             UiIcon.Bookmark,
-                            checked = settings.downloads.removeBookmarkedChapters.not(),
+                            checked = settings.downloads.removeBookmarkedChapters,
                             onCheckedChange = {
                                 onDownloadPreferencesChange(
-                                    settings.downloads.copy(removeBookmarkedChapters = !it),
+                                    settings.downloads.copy(removeBookmarkedChapters = it),
                                 )
                             },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Cleanup excluded categories",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.downloads.removeExcludedCategories,
+                            emptyLabel = "No excluded categories",
+                            onToggle = { category ->
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(
+                                        removeExcludedCategories =
+                                            settings.downloads.removeExcludedCategories.toggled(category),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Cleanup category rule",
+                            subtitle = settings.downloads.removeExcludedCategories.categoryRestrictionLabel(
+                                empty = "No categories are excluded from automatic cleanup.",
+                                prefix = "Keep downloaded chapters in",
+                            ),
                         )
                     }
                     item { ListGroupHeader("New chapters") }
@@ -11965,7 +19882,44 @@ private fun MoreDetailPage(
                             },
                         )
                     }
-                    item { RuntimeLineRow("Download directory", snapshot.runtime.downloadsDir) }
+                    item {
+                        ExtensionStatusRow(
+                            title = "New chapter category rule",
+                            subtitle = settings.downloads.newChapterCategoryRuleLabel(),
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "New chapter categories",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.downloads.downloadNewIncludedCategories,
+                            emptyLabel = "All categories",
+                            onToggle = { category ->
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(
+                                        downloadNewIncludedCategories =
+                                            settings.downloads.downloadNewIncludedCategories.toggled(category),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Excluded new chapter categories",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.downloads.downloadNewExcludedCategories,
+                            emptyLabel = "No excluded categories",
+                            onToggle = { category ->
+                                onDownloadPreferencesChange(
+                                    settings.downloads.copy(
+                                        downloadNewExcludedCategories =
+                                            settings.downloads.downloadNewExcludedCategories.toggled(category),
+                                    ),
+                                )
+                            },
+                        )
+                    }
                     item {
                         ExtensionStatusRow(
                             title = "Download queue",
@@ -11976,7 +19930,69 @@ private fun MoreDetailPage(
                     }
                 }
                 MorePage.TrackingSettings -> {
-                    item { ListGroupHeader("Reading progress") }
+                    val progressSummary = snapshot.readingProgressSummary()
+                    item {
+                        TrackingStatusOverview(
+                            settings = settings.tracking,
+                            summary = progressSummary,
+                            incognitoMode = incognitoMode,
+                        )
+                    }
+                    item { ListGroupHeader("Tracker accounts") }
+                    items(trackingAccountRows(), key = { it.title }) { account ->
+                        AccountStatusRow(
+                            marker = account.marker,
+                            title = account.title,
+                            subtitle = account.subtitle,
+                            status = "Pending",
+                            statusColor = ChimahonPalette.secondaryText,
+                        )
+                    }
+                    item {
+                        SettingsInfoPanel(
+                            title = "No tracker accounts connected",
+                            detail = "Tracker login adapters are still local placeholders in this KMP port. Reading history and all sync preferences remain stored in the shared database.",
+                            icon = UiIcon.Link,
+                        )
+                    }
+                    item { ListGroupHeader("Sync") }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Sync status",
+                            subtitle = settings.tracking.trackingSyncSummary(incognitoMode),
+                            error = incognitoMode,
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Sync target",
+                            subtitle = if (settings.tracking.autoSyncEnabled && !incognitoMode) {
+                                "Reader progress changes are kept locally and ready for tracker sync workers."
+                            } else if (incognitoMode) {
+                                "Tracking writes are paused while incognito mode is enabled."
+                            } else {
+                                "Automatic tracker sync is off; local history and progress still update normally."
+                            },
+                            error = incognitoMode,
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Last sync",
+                            subtitle = "Never - no tracker account service is connected.",
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Track on add to library",
+                            "Start tracker entries when manga are added to the library",
+                            UiIcon.Add,
+                            checked = settings.tracking.trackOnAddToLibrary,
+                            onCheckedChange = {
+                                onTrackingSettingsChange(settings.tracking.copy(trackOnAddToLibrary = it))
+                            },
+                        )
+                    }
                     item {
                         PreferenceSwitchRow(
                             "Auto-sync tracking",
@@ -11985,6 +20001,19 @@ private fun MoreDetailPage(
                             checked = settings.tracking.autoSyncEnabled,
                             onCheckedChange = {
                                 onTrackingSettingsChange(settings.tracking.copy(autoSyncEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Library entries only",
+                            "Do not sync entries that are outside the local library",
+                            UiIcon.Library,
+                            checked = settings.tracking.syncLibraryEntriesOnly,
+                            onCheckedChange = {
+                                onTrackingSettingsChange(
+                                    settings.tracking.copy(syncLibraryEntriesOnly = it),
+                                )
                             },
                         )
                     }
@@ -12000,23 +20029,133 @@ private fun MoreDetailPage(
                             },
                         )
                     }
-                    item { ListGroupHeader("Services") }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Sync restrictions",
+                            options = libraryUpdateRestrictionOptions(),
+                            selected = settings.tracking.syncRestrictions,
+                            emptyLabel = "No restrictions",
+                            onToggle = { restriction ->
+                                onTrackingSettingsChange(
+                                    settings.tracking.copy(
+                                        syncRestrictions = settings.tracking.syncRestrictions.toggled(restriction),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Sync included categories",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.tracking.syncIncludedCategories,
+                            emptyLabel = "All categories",
+                            onToggle = { category ->
+                                onTrackingSettingsChange(
+                                    settings.tracking.copy(
+                                        syncIncludedCategories =
+                                            settings.tracking.syncIncludedCategories.toggled(category),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Sync excluded categories",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.tracking.syncExcludedCategories,
+                            emptyLabel = "No excluded categories",
+                            onToggle = { category ->
+                                onTrackingSettingsChange(
+                                    settings.tracking.copy(
+                                        syncExcludedCategories =
+                                            settings.tracking.syncExcludedCategories.toggled(category),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Update on mark read",
+                            options = ChimahonAutoTrackOnMarkRead.entries.map { it.title },
+                            selected = settings.tracking.autoUpdateOnMarkRead.title,
+                            onSelect = { selected ->
+                                ChimahonAutoTrackOnMarkRead.entries
+                                    .firstOrNull { it.title == selected }
+                                    ?.let { onTrackingSettingsChange(settings.tracking.copy(autoUpdateOnMarkRead = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Sync progress from trackers",
+                            "Pull tracker progress into local library progress",
+                            UiIcon.Refresh,
+                            checked = settings.tracking.autoSyncProgressFromTrackers,
+                            onCheckedChange = {
+                                onTrackingSettingsChange(
+                                    settings.tracking.copy(autoSyncProgressFromTrackers = it),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Resolve using source metadata",
+                            "Use source metadata to match tracker entries when available",
+                            UiIcon.Search,
+                            checked = settings.tracking.resolveUsingSourceMetadata,
+                            onCheckedChange = {
+                                onTrackingSettingsChange(
+                                    settings.tracking.copy(resolveUsingSourceMetadata = it),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Local progress") }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Active restrictions",
+                            subtitle = settings.tracking.trackingRestrictionSummary(),
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Sync scope",
+                            subtitle = settings.tracking.trackingCategorySummary(),
+                        )
+                    }
                     item {
                         ExtensionStatusRow(
                             title = if (incognitoMode) "Tracking paused" else "Local tracking data",
                             subtitle = if (incognitoMode) {
                                 "Incognito mode is enabled, so reader progress is not written."
                             } else {
-                                "${snapshot.history.size} history item(s) and ${snapshot.chaptersByMangaId.values.sumOf { chapters -> chapters.count { it.read } }} read chapter(s) in the shared database."
+                                "${progressSummary.historyEntries} history item(s), ${progressSummary.readChapters} read chapter(s), and ${progressSummary.inProgressManga} in-progress manga in the shared database."
                             },
+                            error = incognitoMode,
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Read progress",
+                            subtitle = "${progressSummary.readChapters} of ${progressSummary.totalChapters} library chapter(s) read; ${progressSummary.startedChapters} chapter(s) are started.",
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Manga progress",
+                            subtitle = "${progressSummary.completedManga} complete, ${progressSummary.inProgressManga} in progress, ${progressSummary.untouchedManga} not started.",
                         )
                     }
                 }
                 MorePage.ConnectionsSettings -> {
-                    item { ListGroupHeader("External services") }
+                    item { ListGroupHeader("External links") }
                     item {
                         SettingsChoiceRow(
-                            title = "Open links",
+                            title = "Open external links",
                             options = ChimahonConnectionOpeningPreference.entries.map { it.connectionTitle() },
                             selected = settings.connections.openingPreference.connectionTitle(),
                             onSelect = { selected ->
@@ -12032,22 +20171,245 @@ private fun MoreDetailPage(
                     }
                     item {
                         ExtensionStatusRow(
-                            title = "Source connections",
-                            subtitle = "${snapshot.summary.sourceCount} sources are available through the shared extension engine.",
+                            title = "Opening behavior",
+                            subtitle = settings.connections.openingPreference.connectionDescription(),
+                        )
+                    }
+                    item {
+                        AccountStatusRow(
+                            marker = "SRC",
+                            title = "Source websites",
+                            subtitle = "${snapshot.summary.sourceCount} sources can open home, latest, and manga links through the selected handler.",
+                            status = settings.connections.openingPreference.connectionTitle(),
+                        )
+                    }
+                    item {
+                        AccountStatusRow(
+                            marker = "TR",
+                            title = "Tracker login links",
+                            subtitle = "OAuth callback handling is preserved as a settings surface until tracker adapters are connected.",
+                            status = "Pending",
+                        )
+                    }
+                    item {
+                        AccountStatusRow(
+                            marker = snapshot.runtime.platformName.take(2).uppercase(),
+                            title = "Platform handlers",
+                            subtitle = "Open, reveal, share, and copy actions use native ${snapshot.runtime.platformName} fallbacks.",
+                            status = snapshot.runtime.platformName,
+                            icon = UiIcon.Web,
+                        )
+                    }
+                    item { ListGroupHeader("Discord account") }
+                    item {
+                        AccountStatusRow(
+                            marker = "DC",
+                            title = "Discord",
+                            subtitle = if (settings.connections.discordRpcEnabled) {
+                                "Rich presence preferences are enabled; native account service is still adapter-backed."
+                            } else {
+                                "Rich presence is off and no native Discord account service is connected."
+                            },
+                            status = if (settings.connections.discordRpcEnabled) {
+                                settings.connections.discordStatus.title
+                            } else {
+                                "Off"
+                            },
+                            icon = UiIcon.Link,
+                            statusColor = if (settings.connections.discordRpcEnabled) {
+                                ChimahonPalette.primary
+                            } else {
+                                ChimahonPalette.secondaryText
+                            },
+                        )
+                    }
+                    if (!settings.connections.discordRpcEnabled) {
+                        item {
+                            SettingsInfoPanel(
+                                title = "Discord presence disabled",
+                                detail = "The port keeps all Discord activity and privacy choices ready, but it will not publish activity until a platform account service is available and enabled.",
+                                icon = UiIcon.Incognito,
+                            )
+                        }
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Discord rich presence",
+                            "Share reading activity with Discord when an account service is available",
+                            UiIcon.Link,
+                            checked = settings.connections.discordRpcEnabled,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordRpcEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Presence status",
+                            options = ChimahonDiscordStatus.entries.map { it.title },
+                            selected = settings.connections.discordStatus.title,
+                            onSelect = { selected ->
+                                ChimahonDiscordStatus.entries.firstOrNull { it.title == selected }?.let {
+                                    onConnectionSettingsChange(settings.connections.copy(discordStatus = it))
+                                }
+                            },
                         )
                     }
                     item {
                         ExtensionStatusRow(
-                            title = "External opening preference",
-                            subtitle = "Current mode: ${settings.connections.openingPreference.connectionTitle()} on ${snapshot.runtime.platformName}.",
+                            title = "Activity preview",
+                            subtitle = settings.connections.discordPresenceSummary(),
+                        )
+                    }
+                    item { ListGroupHeader("Discord activity") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show manga title",
+                            "Include the current manga title in rich presence",
+                            UiIcon.Chapters,
+                            checked = settings.connections.discordShowMangaTitle,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordShowMangaTitle = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show cover art",
+                            "Use manga cover artwork when the platform service supports it",
+                            UiIcon.Library,
+                            checked = settings.connections.discordShowCoverArt,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordShowCoverArt = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show source name",
+                            "Include the source name in rich presence details",
+                            UiIcon.Browse,
+                            checked = settings.connections.discordShowSourceName,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordShowSourceName = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show progress",
+                            "Include chapter progress in Discord presence",
+                            UiIcon.Statistics,
+                            checked = settings.connections.discordShowProgress,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordShowProgress = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Use chapter titles",
+                            "Use chapter titles in Discord progress text",
+                            UiIcon.Chapters,
+                            checked = settings.connections.discordUseChapterTitles,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordUseChapterTitles = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show timestamp",
+                            "Include elapsed reading time in Discord presence",
+                            UiIcon.History,
+                            checked = settings.connections.discordShowTimestamp,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordShowTimestamp = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show buttons",
+                            "Expose action buttons in Discord presence",
+                            UiIcon.Play,
+                            checked = settings.connections.discordShowButtons,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordShowButtons = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show download button",
+                            "Expose a download action in Discord presence",
+                            UiIcon.Download,
+                            checked = settings.connections.discordShowDownloadButton,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(
+                                    settings.connections.copy(discordShowDownloadButton = it),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show Discord button",
+                            "Expose a Discord action button in rich presence",
+                            UiIcon.Link,
+                            checked = settings.connections.discordShowDiscordButton,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(
+                                    settings.connections.copy(discordShowDiscordButton = it),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Discord privacy") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Incognito for Discord",
+                            "Hide activity from Discord for selected categories",
+                            UiIcon.Incognito,
+                            checked = settings.connections.discordRpcIncognito,
+                            onCheckedChange = {
+                                onConnectionSettingsChange(settings.connections.copy(discordRpcIncognito = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Discord incognito categories",
+                            options = snapshot.libraryCategoryOptions(),
+                            selected = settings.connections.discordRpcIncognitoCategories,
+                            emptyLabel = "No incognito categories",
+                            onToggle = { category ->
+                                onConnectionSettingsChange(
+                                    settings.connections.copy(
+                                        discordRpcIncognitoCategories =
+                                            settings.connections.discordRpcIncognitoCategories.toggled(category),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Privacy summary",
+                            subtitle = settings.connections.discordPrivacySummary(incognitoMode),
                         )
                     }
                 }
                 MorePage.BrowseSettings -> {
                     item { ListGroupHeader("Sources") }
-                    item { RuntimeLineRow("Installed sources", snapshot.summary.sourceCount.toString()) }
-                    item { RuntimeLineRow("Installed extensions", snapshot.summary.extensionCount.toString()) }
-                    item { RuntimeLineRow("Repositories", snapshot.extensionRepos.size.toString()) }
+                    item {
+                        PreferenceValueRow(
+                            title = "Installed sources",
+                            subtitle = "Sources exposed by installed extensions and local adapters",
+                            icon = UiIcon.Browse,
+                            value = snapshot.summary.sourceCount.toString(),
+                        )
+                    }
                     item {
                         PreferenceSwitchRow(
                             "Show NSFW sources",
@@ -12056,6 +20418,55 @@ private fun MoreDetailPage(
                             checked = settings.browse.showNsfwSources,
                             onCheckedChange = {
                                 onBrowseSettingsChange(settings.browse.copy(showNsfwSources = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Source display",
+                            options = ChimahonBrowseSourceDisplayMode.entries.map { it.browseTitle() },
+                            selected = settings.browse.sourceDisplayMode.browseTitle(),
+                            onSelect = { selected ->
+                                ChimahonBrowseSourceDisplayMode.entries
+                                    .firstOrNull { it.browseTitle() == selected }
+                                    ?.let { onBrowseSettingsChange(settings.browse.copy(sourceDisplayMode = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Group by language",
+                            "Group extension sources by language",
+                            UiIcon.Web,
+                            checked = settings.browse.groupSourcesByLanguage,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(groupSourcesByLanguage = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Source languages",
+                            options = snapshot.sourceLanguageOptions(),
+                            selected = settings.browse.enabledLanguages,
+                            emptyLabel = "All languages",
+                            onToggle = { language ->
+                                onBrowseSettingsChange(
+                                    settings.browse.copy(
+                                        enabledLanguages = settings.browse.enabledLanguages.toggled(language),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show source language",
+                            "Display language badges beside sources",
+                            UiIcon.Tag,
+                            checked = settings.browse.showSourceLanguage,
+                            onCheckedChange = {
+                                onBrowseSettingsChange(settings.browse.copy(showSourceLanguage = it))
                             },
                         )
                     }
@@ -12081,61 +20492,24 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item { ListGroupHeader("Extensions") }
                     item {
-                        SettingsChoiceRow(
-                            title = "Source display",
-                            options = ChimahonBrowseSourceDisplayMode.entries.map { it.browseTitle() },
-                            selected = settings.browse.sourceDisplayMode.browseTitle(),
-                            onSelect = { selected ->
-                                ChimahonBrowseSourceDisplayMode.entries
-                                    .firstOrNull { it.browseTitle() == selected }
-                                    ?.let { onBrowseSettingsChange(settings.browse.copy(sourceDisplayMode = it)) }
-                            },
+                        PreferenceValueRow(
+                            title = "Installed extensions",
+                            subtitle = "${snapshot.installedExtensions.size} package(s), ${snapshot.summary.extensionCount} source adapter(s)",
+                            icon = UiIcon.Extensions,
+                            value = snapshot.installedExtensions.size.toString(),
                         )
                     }
                     item {
-                        SettingsMultiChoiceRow(
-                            title = "Source languages",
-                            options = snapshot.sourceLanguageOptions(),
-                            selected = settings.browse.enabledLanguages,
-                            emptyLabel = "All languages",
-                            onToggle = { language ->
-                                onBrowseSettingsChange(
-                                    settings.browse.copy(
-                                        enabledLanguages = settings.browse.enabledLanguages.toggled(language),
-                                    ),
-                                )
-                            },
-                        )
-                    }
-                    item {
-                        PreferenceSwitchRow(
-                            "Group by language",
-                            "Group extension sources by language",
-                            UiIcon.Web,
-                            checked = settings.browse.groupSourcesByLanguage,
-                            onCheckedChange = {
-                                onBrowseSettingsChange(settings.browse.copy(groupSourcesByLanguage = it))
-                            },
-                        )
-                    }
-                    item {
-                        PreferenceSwitchRow(
-                            "Show source language",
-                            "Display language badges beside sources",
-                            UiIcon.Tag,
-                            checked = settings.browse.showSourceLanguage,
-                            onCheckedChange = {
-                                onBrowseSettingsChange(settings.browse.copy(showSourceLanguage = it))
-                            },
-                        )
-                    }
-                    item {
-                        PreferenceSwitchRow(
-                            "Extension update notices",
-                            "Notify when installed extensions have updates",
-                            UiIcon.Updates,
+                        NotificationPreferenceRow(
+                            title = "Extension update notices",
+                            subtitle = "Notify when installed extensions have updates",
+                            icon = UiIcon.Updates,
                             checked = settings.browse.extensionUpdateNotificationsEnabled,
+                            enabledLabel = "Notify",
+                            disabledLabel = "Silent",
+                            detail = "Extensions",
                             onCheckedChange = {
                                 onBrowseSettingsChange(
                                     settings.browse.copy(extensionUpdateNotificationsEnabled = it),
@@ -12143,6 +20517,56 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    if (snapshot.installedExtensions.isEmpty()) {
+                        item {
+                            ExtensionStatusRow(
+                                title = "No installed extensions",
+                                subtitle = "Install extensions from Browse to expose source catalogues here.",
+                            )
+                        }
+                    } else {
+                        items(snapshot.installedExtensions.take(6), key = { "${it.packageType}:${it.id}" }) { extension ->
+                            ExtensionStatusRow(
+                                title = extension.name,
+                                subtitle = "${extension.version} - ${extension.sourceCount} source(s) - ${extension.packageType.extensionPackageTitle()}",
+                            )
+                        }
+                    }
+                    item { ListGroupHeader("Repositories") }
+                    item {
+                        PreferenceValueRow(
+                            title = "Extension repositories",
+                            subtitle = "Catalogues used for extension discovery and updates",
+                            icon = UiIcon.Link,
+                            value = snapshot.extensionRepos.size.toString(),
+                        )
+                    }
+                    if (snapshot.extensionRepos.isEmpty()) {
+                        item {
+                            ExtensionStatusRow(
+                                title = "No repositories configured",
+                                subtitle = "Add a compatible extension repository from Browse > Extensions.",
+                            )
+                        }
+                    } else {
+                        items(snapshot.extensionRepos, key = { it.baseUrl }) { repo ->
+                            val repoTitle = repo.shortName?.takeIf { it.isNotBlank() } ?: repo.name
+                            val repoFingerprint = repo.signingKeyFingerprint.takeIf { it.isNotBlank() }
+                                ?.let { "Signing key ${it.take(16)}" }
+                                ?: "No signing key fingerprint"
+                            ExtensionStatusRow(
+                                title = repoTitle,
+                                subtitle = "${repo.website.ifBlank { repo.baseUrl }} - $repoFingerprint",
+                            )
+                        }
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Repository trust",
+                            subtitle = "Repositories are kept visible here so extension source and signing status stay inspectable.",
+                        )
+                    }
+                    item { ListGroupHeader("Migration") }
                     item {
                         ExtensionStatusRow(
                             title = "Migration",
@@ -12225,11 +20649,14 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
-                        PreferenceSwitchRow(
-                            "Hide notification content",
-                            "Mask titles and chapters in notifications",
-                            UiIcon.VisibilityOff,
+                        NotificationPreferenceRow(
+                            title = "Hide notification content",
+                            subtitle = "Mask titles and chapters in notifications",
+                            icon = UiIcon.VisibilityOff,
                             checked = settings.security.hideNotificationContent,
+                            enabledLabel = "Private",
+                            disabledLabel = "Detailed",
+                            detail = "All notices",
                             onCheckedChange = {
                                 onSecuritySettingsChange(settings.security.copy(hideNotificationContent = it))
                             },
@@ -12260,6 +20687,21 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        SettingsMultiChoiceRow(
+                            title = "Biometric lock days",
+                            options = weekDayOptions(),
+                            selected = settings.security.biometricLockDays,
+                            emptyLabel = "No lock days",
+                            onToggle = { day ->
+                                onSecuritySettingsChange(
+                                    settings.security.copy(
+                                        biometricLockDays = settings.security.biometricLockDays.toggled(day),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             "Lock on app exit",
                             "Require authentication after closing the app",
@@ -12270,6 +20712,7 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item { ListGroupHeader("Protected data") }
                     item {
                         PreferenceSwitchRow(
                             "Protect downloads",
@@ -12281,9 +20724,32 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Download encryption",
+                            options = ChimahonDownloadEncryption.entries.map { it.title },
+                            selected = settings.security.downloadEncryption.title,
+                            onSelect = { selected ->
+                                ChimahonDownloadEncryption.entries.firstOrNull { it.title == selected }?.let {
+                                    onSecuritySettingsChange(settings.security.copy(downloadEncryption = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Encrypt database",
+                            "Require encrypted database storage on supported platforms",
+                            UiIcon.Storage,
+                            checked = settings.security.encryptDatabase,
+                            onCheckedChange = {
+                                onSecuritySettingsChange(settings.security.copy(encryptDatabase = it))
+                            },
+                        )
+                    }
                 }
                 MorePage.AdvancedSettings -> {
-                    item { ListGroupHeader("Privacy") }
+                    item { ListGroupHeader("App mode") }
                     item {
                         PreferenceSwitchRow(
                             "Incognito mode",
@@ -12293,24 +20759,234 @@ private fun MoreDetailPage(
                             onCheckedChange = onIncognitoModeChange,
                         )
                     }
+                    item {
+                        PreferenceSwitchRow(
+                            "Downloaded only",
+                            "Limit library and browse surfaces to offline-ready entries",
+                            UiIcon.Download,
+                            checked = downloadedOnlyMode,
+                            onCheckedChange = onDownloadedOnlyModeChange,
+                        )
+                    }
+                    item { ListGroupHeader("Data management") }
+                    item {
+                        PreferenceRow(
+                            "Data and storage",
+                            "Cache, database, downloads, and maintenance actions",
+                            UiIcon.Storage,
+                            onClick = { onOpenPage(MorePage.Storage) },
+                        )
+                    }
+                    item {
+                        PreferenceRow(
+                            "Backup and restore",
+                            "Export, import, and migration checkpoints",
+                            UiIcon.Download,
+                            onClick = { onOpenPage(MorePage.BackupSettings) },
+                        )
+                    }
                     item { ListGroupHeader("Runtime diagnostics") }
+                    item {
+                        PreferenceValueRow(
+                            title = "Platform",
+                            subtitle = "Current shared runtime target",
+                            icon = UiIcon.Info,
+                            value = snapshot.runtime.platformName,
+                        )
+                    }
                     item { RuntimeLineRow("Database", snapshot.runtime.databaseState) }
                     item { RuntimeLineRow("Extension engine", snapshot.runtime.extensionState) }
                     item { RuntimeLineRow("Background work", snapshot.runtime.backgroundState) }
+                    item { ListGroupHeader("Directories") }
+                    item { RuntimeLineRow("Files", snapshot.runtime.filesDir) }
+                    item { RuntimeLineRow("Cache", snapshot.runtime.cacheDir) }
+                    item { RuntimeLineRow("Downloads", snapshot.runtime.downloadsDir) }
+                    item { ListGroupHeader("Database content") }
+                    item {
+                        PreferenceValueRow(
+                            title = "Manga records",
+                            subtitle = "Library and browsed title records in the shared database",
+                            icon = UiIcon.Library,
+                            value = snapshot.mangaDetails.size.toString(),
+                        )
+                    }
+                    item {
+                        PreferenceValueRow(
+                            title = "Chapter records",
+                            subtitle = "Known local chapter rows across all manga",
+                            icon = UiIcon.Chapters,
+                            value = snapshot.chaptersByMangaId.values.sumOf { it.size }.toString(),
+                        )
+                    }
+                    item {
+                        PreferenceValueRow(
+                            title = "History records",
+                            subtitle = "Saved reader progress and reading sessions",
+                            icon = UiIcon.History,
+                            value = snapshot.history.size.toString(),
+                        )
+                    }
+                    item {
+                        PreferenceValueRow(
+                            title = "Update issues",
+                            subtitle = "Library update warnings retained for review",
+                            icon = UiIcon.Updates,
+                            value = snapshot.updateIssues.size.toString(),
+                        )
+                    }
+                }
+                MorePage.BackupSettings -> {
+                    val backupItems = listOf(
+                        BackupScopeItem("Library", snapshot.library.size, UiIcon.Library, selected = true),
+                        BackupScopeItem("Categories", snapshot.libraryCategories.count { !it.hidden }, UiIcon.Tag, selected = true),
+                        BackupScopeItem("Chapters", snapshot.chaptersByMangaId.values.sumOf { it.size }, UiIcon.Chapters, selected = true),
+                        BackupScopeItem("History", snapshot.history.size, UiIcon.History, selected = true),
+                        BackupScopeItem("Sources", snapshot.extensionRepos.size, UiIcon.Extensions, selected = true),
+                        BackupScopeItem("Settings", 1, UiIcon.Settings, selected = true),
+                    )
+                    val restoreItems = listOf(
+                        BackupScopeItem("Library", snapshot.library.size, UiIcon.Library),
+                        BackupScopeItem("Categories", snapshot.libraryCategories.count { !it.hidden }, UiIcon.Tag),
+                        BackupScopeItem("History", snapshot.history.size, UiIcon.History),
+                        BackupScopeItem("Tracking", trackingAccountRows().size, UiIcon.Statistics),
+                        BackupScopeItem("Repositories", snapshot.extensionRepos.size, UiIcon.Link),
+                        BackupScopeItem("Settings", 1, UiIcon.Settings),
+                    )
+                    item { ListGroupHeader("Backup") }
+                    item {
+                        BackupSummaryHero(
+                            title = "Ready to export",
+                            subtitle = "${snapshot.library.size} library item(s), ${snapshot.history.size} history record(s), ${snapshot.extensionRepos.size} repo(s)",
+                            icon = UiIcon.Download,
+                        )
+                    }
+                    item {
+                        BackupActionRow(
+                            title = "Create backup",
+                            subtitle = "Export library, categories, history, tracking, repositories, and settings.",
+                            icon = UiIcon.Download,
+                            action = "Export",
+                        )
+                    }
+                    item { BackupScopeGrid(items = backupItems) }
+                    item { ListGroupHeader("Automatic backup") }
+                    item {
+                        BackupActionRow(
+                            title = "Schedule",
+                            subtitle = "No automatic backup schedule configured for this platform yet.",
+                            icon = UiIcon.History,
+                            action = "Set up",
+                        )
+                    }
+                    item {
+                        BackupActionRow(
+                            title = "Backup location",
+                            subtitle = snapshot.runtime.downloadsDir,
+                            icon = UiIcon.Storage,
+                            action = "Open",
+                            onAction = { onOpenExternalUrl(snapshot.runtime.downloadsDir) },
+                        )
+                    }
+                    item { ListGroupHeader("Restore") }
+                    item {
+                        BackupActionRow(
+                            title = "Restore backup",
+                            subtitle = "Import a Chimahon, Mihon, or Tachiyomi-compatible backup file.",
+                            icon = UiIcon.Refresh,
+                            action = "Import",
+                        )
+                    }
+                    item {
+                        BackupActionRow(
+                            title = "Partial restore",
+                            subtitle = "Choose library, categories, history, tracking, and source preferences.",
+                            icon = UiIcon.Filter,
+                            action = "Choose",
+                        )
+                    }
+                    item { BackupScopeGrid(items = restoreItems) }
+                    item { ListGroupHeader("Import and export") }
+                    item {
+                        BackupActionRow(
+                            title = "Import local manga",
+                            subtitle = "Scan a folder or archive collection and add detected titles to the library.",
+                            icon = UiIcon.Add,
+                            action = "Scan",
+                        )
+                    }
+                    item {
+                        BackupActionRow(
+                            title = "Export settings",
+                            subtitle = "Save appearance, reader, library, download, browse, and security preferences.",
+                            icon = UiIcon.Settings,
+                            action = "Export",
+                        )
+                    }
+                    item {
+                        BackupActionRow(
+                            title = "Export source repositories",
+                            subtitle = "${snapshot.extensionRepos.size} extension repo(s) can be written into the backup.",
+                            icon = UiIcon.Extensions,
+                            action = "Include",
+                        )
+                    }
+                    item { ListGroupHeader("Migration checkpoints") }
+                    item {
+                        BackupCheckpointRow(
+                            title = "Android migration",
+                            subtitle = "Library, chapters, history, categories, and repositories are mapped into shared KMP data.",
+                            complete = snapshot.library.isNotEmpty() || snapshot.extensionRepos.isNotEmpty(),
+                        )
+                    }
+                    item {
+                        BackupCheckpointRow(
+                            title = "Desktop/iOS migration",
+                            subtitle = "Platform directories and extension engines remain separated from Android app data.",
+                            complete = snapshot.runtime.platformName.isNotBlank(),
+                        )
+                    }
+                    item {
+                        BackupCheckpointRow(
+                            title = "Restore safety",
+                            subtitle = "Partial restore keeps existing settings unless the matching scope is selected.",
+                            complete = true,
+                        )
+                    }
                 }
                 MorePage.About -> {
                     item {
                         MoreLogoHeader(snapshot, settings.appearance.appIcon)
                     }
+                    item { ListGroupHeader("App") }
+                    item { RuntimeLineRow("Platform", snapshot.runtime.platformName) }
+                    item { RuntimeLineRow("Files", snapshot.runtime.filesDir) }
+                    item { RuntimeLineRow("Cache", snapshot.runtime.cacheDir) }
                     item { RuntimeLineRow("Database", snapshot.runtime.databaseState) }
                     item { RuntimeLineRow("Extension engine", snapshot.runtime.extensionState) }
                     item { RuntimeLineRow("Background tasks", snapshot.runtime.backgroundState) }
+                    item { ListGroupHeader("Links") }
                     item {
                         ExtensionStatusRow(
                             title = "Source code",
                             subtitle = CHIMAHON_PROJECT_URL,
                             action = "Open",
                             onAction = { onOpenExternalUrl(CHIMAHON_PROJECT_URL) },
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Releases",
+                            subtitle = CHIMAHON_RELEASES_URL,
+                            action = "Open",
+                            onAction = { onOpenExternalUrl(CHIMAHON_RELEASES_URL) },
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Report an issue",
+                            subtitle = CHIMAHON_ISSUES_URL,
+                            action = "Open",
+                            onAction = { onOpenExternalUrl(CHIMAHON_ISSUES_URL) },
                         )
                     }
                 }
@@ -12350,11 +21026,204 @@ private fun MoreDetailPage(
 }
 
 @Composable
+private fun MoreMainHeader(
+    snapshot: ChimahonSnapshot,
+    appIcon: ChimahonAppIcon,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppMark(size = 44.dp, appIcon = appIcon)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 16.dp),
+            ) {
+                Label(
+                    "Chimahon",
+                    ChimahonPalette.onSurface,
+                    18,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    snapshot.runtime.platformName,
+                    ChimahonPalette.secondaryText,
+                    12,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Label(
+                "${snapshot.summary.mangaCount} manga",
+                ChimahonPalette.primary,
+                11,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(ChimahonPalette.primaryContainer)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
+        LazyRow(
+            modifier = Modifier.padding(top = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item { UpdateHistoryStatusChip("${snapshot.summary.sourceCount} sources", active = snapshot.summary.sourceCount > 0) }
+            item { UpdateHistoryStatusChip("${snapshot.summary.extensionCount} extensions", active = snapshot.summary.extensionCount > 0) }
+            item { UpdateHistoryStatusChip("${snapshot.libraryCategories.size} categories", active = snapshot.libraryCategories.isNotEmpty()) }
+        }
+    }
+}
+
+@Composable
+private fun SettingsTopBar(
+    page: MorePage,
+    subtitle: String,
+    onBack: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(58.dp)
+                .background(ChimahonPalette.surface)
+                .padding(start = 4.dp, end = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TopAction(UiIcon.Back, "Back", tint = ChimahonPalette.onSurface, onClick = onBack)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 4.dp),
+            ) {
+                Label(page.title, ChimahonPalette.onSurface, 18, weight = FontWeight.SemiBold, maxLines = 1)
+                Label(
+                    subtitle,
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(ChimahonPalette.divider.copy(alpha = 0.72f)),
+        )
+    }
+}
+
+@Composable
+private fun SettingsValuePill(
+    text: String,
+    active: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
+    Label(
+        text = text,
+        color = if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+        size = 11,
+        weight = FontWeight.SemiBold,
+        maxLines = 1,
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (active) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant)
+            .padding(horizontal = 9.dp, vertical = 5.dp),
+    )
+}
+
+@Composable
+private fun SettingsSwitchThumb(
+    checked: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .width(42.dp)
+            .height(24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (checked) ChimahonPalette.primary else ChimahonPalette.surfaceVariant)
+            .border(
+                1.dp,
+                if (checked) ChimahonPalette.primary else ChimahonPalette.divider,
+                RoundedCornerShape(12.dp),
+            )
+            .padding(2.dp),
+        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(if (checked) ChimahonPalette.surface else ChimahonPalette.secondaryText.copy(alpha = 0.70f)),
+        )
+    }
+}
+
+@Composable
+private fun SettingsRowTitleBlock(
+    title: String,
+    subtitle: String?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 2)
+        subtitle?.takeIf { it.isNotBlank() }?.let {
+            Label(
+                it,
+                ChimahonPalette.secondaryText,
+                11,
+                lineHeight = 15,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+    }
+}
+
+private fun MorePage.morePageSubtitle(snapshot: ChimahonSnapshot): String = when (this) {
+    MorePage.Main -> "Settings and tools"
+    MorePage.Downloads -> "Queue, pause, retry, and reorder"
+    MorePage.Categories -> "${snapshot.libraryCategories.count { !it.hidden }} visible categories"
+    MorePage.Statistics -> "${snapshot.summary.mangaCount} manga in library"
+    MorePage.Storage -> "Cache, files, and maintenance"
+    MorePage.Settings -> "Reader, library, downloads, and app preferences"
+    MorePage.AppearanceSettings -> "Theme, navigation, and display density"
+    MorePage.LibrarySettings -> "Categories, filters, sorting, and updates"
+    MorePage.ReaderSettings -> "Viewer, controls, page loading, and behavior"
+    MorePage.DownloadSettings -> "Offline reading, queue, and cleanup"
+    MorePage.TrackingSettings -> "Trackers, sync, and category scope"
+    MorePage.ConnectionsSettings -> "External links and Discord activity"
+    MorePage.BrowseSettings -> "Sources, extensions, and catalogue filters"
+    MorePage.DictionarySettings -> "Reader lookup and OCR"
+    MorePage.SecuritySettings -> "Privacy, app lock, and protected data"
+    MorePage.AdvancedSettings -> "Runtime diagnostics"
+    MorePage.BackupSettings -> "Backup, restore, import, and export"
+    MorePage.About -> snapshot.runtime.platformName
+    MorePage.Help -> "Reader and extension guidance"
+}
+
+@Composable
 private fun MoreDownloadSummary(
     downloadsDirectory: String,
     downloadedOnlyMode: Boolean,
+    queue: ChimahonDownloadQueueData?,
     onOpenSettings: () -> Unit,
 ) {
+    val queueSummary = queue?.downloadQueueHomeSummary() ?: "Loading queue state"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -12383,16 +21252,28 @@ private fun MoreDownloadSummary(
                 .padding(horizontal = 14.dp),
         ) {
             Label(
-                if (downloadedOnlyMode) "Downloaded-only mode enabled" else "Downloads ready",
+                when {
+                    downloadedOnlyMode -> "Downloaded-only mode enabled"
+                    queue?.activeCount?.let { it > 0 } == true -> "Downloads running"
+                    queue?.entries?.isNotEmpty() == true -> "Download queue ready"
+                    else -> "Downloads ready"
+                },
                 ChimahonPalette.onSurface,
                 14,
                 weight = FontWeight.SemiBold,
                 maxLines = 1,
             )
             Label(
-                downloadsDirectory,
+                queueSummary,
                 ChimahonPalette.secondaryText,
                 11,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+            Label(
+                downloadsDirectory,
+                ChimahonPalette.secondaryText,
+                10,
                 maxLines = 2,
                 modifier = Modifier.padding(top = 3.dp),
             )
@@ -12502,6 +21383,12 @@ private fun StorageSectionRow(
     }
 }
 
+private data class DownloadQueueSourceGroup(
+    val sourceId: Long,
+    val sourceName: String,
+    val entries: List<ChimahonDownloadQueueEntry>,
+)
+
 @Composable
 private fun DownloadQueueToolbar(
     queue: ChimahonDownloadQueueData?,
@@ -12515,6 +21402,8 @@ private fun DownloadQueueToolbar(
 ) {
     val entries = queue?.entries.orEmpty()
     val completedCount = entries.count { it.status == ChimahonDownloadState.Downloaded }
+    val pausedCount = entries.count { it.status == ChimahonDownloadState.Paused }
+    val downloadedBytes = entries.sumOf { it.downloadedBytes }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -12534,7 +21423,7 @@ private fun DownloadQueueToolbar(
                 contentAlignment = Alignment.Center,
             ) {
                 IconGlyph(
-                    icon = if (queue?.paused == true) UiIcon.Refresh else UiIcon.Download,
+                    icon = if (queue?.paused == true) UiIcon.Pause else UiIcon.Download,
                     contentDescription = "",
                     tint = ChimahonPalette.primary,
                     modifier = Modifier.size(22.dp),
@@ -12566,13 +21455,62 @@ private fun DownloadQueueToolbar(
             )
         }
         if (queue != null && entries.isNotEmpty()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                QueueStatChip("Queued", queue.pendingCount, UiIcon.Chapters, Modifier.weight(1f))
-                QueueStatChip("Active", queue.activeCount, UiIcon.Play, Modifier.weight(1f))
-                QueueStatChip("Failed", queue.failedCount, UiIcon.Info, Modifier.weight(1f))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    QueueStatChip(
+                        "Queued",
+                        queue.pendingCount.toString(),
+                        UiIcon.Chapters,
+                        Modifier.weight(1f),
+                    )
+                    QueueStatChip(
+                        "Active",
+                        queue.activeCount.toString(),
+                        UiIcon.Play,
+                        Modifier.weight(1f),
+                        tint = ChimahonDownloadState.Downloading.statusColor(),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    QueueStatChip(
+                        "Paused",
+                        pausedCount.toString(),
+                        UiIcon.Pause,
+                        Modifier.weight(1f),
+                        tint = ChimahonDownloadState.Paused.statusColor(),
+                    )
+                    QueueStatChip(
+                        "Done",
+                        completedCount.toString(),
+                        UiIcon.CheckCircle,
+                        Modifier.weight(1f),
+                        tint = ChimahonDownloadState.Downloaded.statusColor(),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    QueueStatChip(
+                        "Failed",
+                        queue.failedCount.toString(),
+                        UiIcon.Info,
+                        Modifier.weight(1f),
+                        tint = ChimahonDownloadState.Error.statusColor(),
+                    )
+                    QueueStatChip(
+                        "Size",
+                        downloadedBytes.toReadableBytes(),
+                        UiIcon.Storage,
+                        Modifier.weight(1f),
+                    )
+                }
             }
         }
         Row(
@@ -12609,11 +21547,55 @@ private fun DownloadQueueToolbar(
 }
 
 @Composable
+private fun DownloadQueueSourceHeader(group: DownloadQueueSourceGroup) {
+    val active = group.entries.count { it.status == ChimahonDownloadState.Downloading }
+    val failed = group.entries.count { it.status == ChimahonDownloadState.Error }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.background)
+            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconGlyph(
+            icon = UiIcon.Reorder,
+            contentDescription = "",
+            tint = ChimahonPalette.secondaryText,
+            modifier = Modifier.size(18.dp),
+        )
+        Label(
+            "${group.sourceName} (${group.entries.size})",
+            ChimahonPalette.secondaryText,
+            11,
+            weight = FontWeight.Bold,
+            maxLines = 1,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 10.dp),
+        )
+        val status = listOfNotNull(
+            active.takeIf { it > 0 }?.let { "$it active" },
+            failed.takeIf { it > 0 }?.let { "$it failed" },
+        ).joinToString(" - ")
+        if (status.isNotBlank()) {
+            Label(
+                status,
+                if (failed > 0) ChimahonPalette.error else ChimahonPalette.primary,
+                10,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
 private fun QueueStatChip(
     label: String,
-    value: Int,
+    value: String,
     icon: UiIcon,
     modifier: Modifier = Modifier,
+    tint: Color = ChimahonPalette.primary,
 ) {
     Row(
         modifier = modifier
@@ -12625,21 +21607,24 @@ private fun QueueStatChip(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        IconGlyph(icon, "", ChimahonPalette.primary, Modifier.size(16.dp))
+        IconGlyph(icon, "", tint, Modifier.size(16.dp))
         Label(label, ChimahonPalette.secondaryText, 10, maxLines = 1)
-        Label(value.toString(), ChimahonPalette.onSurface, 11, weight = FontWeight.SemiBold, maxLines = 1)
+        Label(value, ChimahonPalette.onSurface, 11, weight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
 @Composable
 private fun DownloadQueueEntryRow(
     entry: ChimahonDownloadQueueEntry,
+    sourceName: String,
+    position: Int,
     onPrimaryAction: () -> Unit,
     onMoveTop: () -> Unit,
     onMoveBottom: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val progress = entry.downloadProgressFraction()
+    val progressLabel = entry.downloadProgressLabel()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -12651,8 +21636,15 @@ private fun DownloadQueueEntryRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            IconGlyph(
+                icon = UiIcon.Reorder,
+                contentDescription = "Reorder download",
+                tint = ChimahonPalette.secondaryText,
+                modifier = Modifier.size(18.dp),
+            )
             Box(
                 modifier = Modifier
+                    .padding(start = 12.dp)
                     .size(48.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(entry.status.statusBackground()),
@@ -12670,17 +21662,47 @@ private fun DownloadQueueEntryRow(
                     .weight(1f)
                     .padding(horizontal = 12.dp),
             ) {
-                Label(entry.mangaTitle, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
-                Label(entry.chapterName, ChimahonPalette.secondaryText, 12, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Label(
+                        entry.mangaTitle,
+                        ChimahonPalette.onSurface,
+                        14,
+                        weight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (progressLabel.isNotBlank()) {
+                        Label(
+                            progressLabel,
+                            ChimahonPalette.secondaryText,
+                            11,
+                            weight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
                 Label(
-                    entry.downloadSubtitle(),
+                    entry.chapterName,
+                    ChimahonPalette.secondaryText,
+                    12,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                Label(
+                    entry.downloadSubtitle(sourceName = sourceName, position = position),
                     if (entry.status == ChimahonDownloadState.Error) ChimahonPalette.error else ChimahonPalette.secondaryText,
                     11,
                     maxLines = 2,
                     modifier = Modifier.padding(top = 3.dp),
                 )
             }
-            TextButtonLike(entry.primaryDownloadActionTitle(), onClick = onPrimaryAction)
+            QueueIconAction(
+                icon = entry.primaryDownloadActionIcon(),
+                label = entry.primaryDownloadActionTitle(),
+                onClick = onPrimaryAction,
+                destructive = entry.status == ChimahonDownloadState.Downloaded,
+            )
         }
         Box(
             modifier = Modifier
@@ -12709,10 +21731,37 @@ private fun DownloadQueueEntryRow(
                 maxLines = 1,
                 modifier = Modifier.weight(1f),
             )
-            QueueTextAction("Top", onMoveTop)
-            QueueTextAction("Bottom", onMoveBottom)
-            QueueTextAction("Remove", onRemove, destructive = true)
+            QueueIconAction(UiIcon.SkipPrevious, "Top", onMoveTop)
+            QueueIconAction(UiIcon.SkipNext, "Bottom", onMoveBottom)
+            QueueIconAction(UiIcon.Delete, "Remove", onRemove, destructive = true)
         }
+    }
+}
+
+@Composable
+private fun QueueIconAction(
+    icon: UiIcon,
+    label: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    val tint = if (destructive) ChimahonPalette.error else ChimahonPalette.primary
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(7.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 7.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        IconGlyph(icon, label, tint, Modifier.size(14.dp))
+        Label(
+            label,
+            tint,
+            11,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -12737,10 +21786,13 @@ private fun QueueTextAction(
 
 @Composable
 private fun MoreStatisticsHero(
-    readDuration: Long,
-    readChapters: Int,
-    totalChapters: Int,
+    summary: ReadingProgressSummary,
 ) {
+    val readPercent = if (summary.totalChapters <= 0) {
+        "0%"
+    } else {
+        "${(summary.readProgressFraction * 100f).toInt()}%"
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -12749,7 +21801,7 @@ private fun MoreStatisticsHero(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Label(
-            text = readDuration.toReadingDuration(),
+            text = summary.readDuration.toReadingDuration(),
             color = ChimahonPalette.onSurface,
             size = 34,
             weight = FontWeight.SemiBold,
@@ -12762,28 +21814,102 @@ private fun MoreStatisticsHero(
             maxLines = 1,
             modifier = Modifier.padding(top = 3.dp),
         )
-        val progress = if (totalChapters == 0) 0f else readChapters.toFloat() / totalChapters.toFloat()
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 18.dp)
-                .height(7.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(ChimahonPalette.surfaceVariant),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress.coerceIn(0f, 1f))
-                    .fillMaxHeight()
-                    .background(ChimahonPalette.primary),
-            )
-        }
+        ProgressSummaryBar(
+            progress = summary.readProgressFraction,
+            modifier = Modifier.padding(top = 18.dp),
+        )
         Label(
-            text = "$readChapters of $totalChapters chapters read",
+            text = "${summary.readChapters} of ${summary.totalChapters} chapters read - $readPercent",
             color = ChimahonPalette.secondaryText,
             size = 11,
             maxLines = 1,
             modifier = Modifier.padding(top = 7.dp),
+        )
+    }
+}
+
+@Composable
+private fun ReadingProgressOverview(
+    summary: ReadingProgressSummary,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconGlyph(
+                icon = UiIcon.Statistics,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(22.dp),
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 16.dp, end = 8.dp),
+            ) {
+                Label(
+                    "Read progress",
+                    ChimahonPalette.onSurface,
+                    14,
+                    weight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Label(
+                    if (summary.totalChapters == 0) {
+                        "No library chapters have been loaded yet."
+                    } else {
+                        "${summary.readChapters} read, ${summary.unreadChapters} unread, ${summary.startedChapters} started"
+                    },
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            UpdateHistoryStatusChip(
+                text = "${summary.completedManga}/${summary.libraryManga} complete",
+                active = summary.completedManga > 0,
+            )
+        }
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val chips = listOf(
+                "${summary.inProgressManga} in progress" to (summary.inProgressManga > 0),
+                "${summary.untouchedManga} not started" to (summary.untouchedManga > 0),
+                "${summary.bookmarkedChapters} bookmarked" to (summary.bookmarkedChapters > 0),
+                "${summary.historyManga} history manga" to (summary.historyManga > 0),
+            )
+            items(chips, key = { it.first }) { chip ->
+                UpdateHistoryStatusChip(text = chip.first, active = chip.second)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgressSummaryBar(
+    progress: Float,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(7.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(ChimahonPalette.surfaceVariant),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                .fillMaxHeight()
+                .background(ChimahonPalette.primary),
         )
     }
 }
@@ -12799,21 +21925,81 @@ private fun SettingsChoiceRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 12.dp),
     ) {
-        Label(
-            title,
-            ChimahonPalette.onSurface,
-            14,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Label(
+                title,
+                ChimahonPalette.onSurface,
+                14,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            SettingsValuePill(
+                selected,
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .widthIn(max = 150.dp),
+            )
+        }
         FilterChips(
             chips = options,
             selected = selected,
             onSelect = onSelect,
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier.padding(top = 9.dp),
         )
+    }
+}
+
+@Composable
+private fun SettingsScrollableChoiceRow(
+    title: String,
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(vertical = 12.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Label(
+                title,
+                ChimahonPalette.onSurface,
+                14,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            SettingsValuePill(
+                selected,
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .widthIn(max = 150.dp),
+            )
+        }
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 9.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(options, key = { it }) { option ->
+                val selectedOption = option == selected
+                AndroidFilterChip(
+                    text = option,
+                    selected = selectedOption,
+                    onClick = { onSelect(option) },
+                )
+            }
+        }
     }
 }
 
@@ -12825,44 +22011,58 @@ private fun SettingsMultiChoiceRow(
     emptyLabel: String,
     onToggle: (String) -> Unit,
 ) {
+    val selectedLabel = if (selected.isEmpty()) emptyLabel else selected.joinToString()
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 12.dp),
     ) {
-        Label(
-            title,
-            ChimahonPalette.onSurface,
-            14,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
-        Label(
-            if (selected.isEmpty()) emptyLabel else selected.joinToString(),
-            ChimahonPalette.secondaryText,
-            11,
-            maxLines = 2,
-            modifier = Modifier.padding(top = 3.dp),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Label(
+                title,
+                ChimahonPalette.onSurface,
+                14,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            SettingsValuePill(
+                selectedLabel,
+                active = selected.isNotEmpty(),
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .widthIn(max = 160.dp),
+            )
+        }
         LazyRow(
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier.padding(top = 9.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             items(options, key = { it }) { option ->
                 val active = option in selected
-                Label(
-                    text = option,
-                    color = if (active) Color.White else ChimahonPalette.secondaryText,
-                    size = 11,
-                    weight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    maxLines = 1,
+                Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(if (active) ChimahonPalette.primary else ChimahonPalette.surfaceVariant)
+                        .heightIn(min = 30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (active) ChimahonPalette.primaryContainer.copy(alpha = 0.88f) else ChimahonPalette.surfaceVariant.copy(alpha = 0.72f))
+                        .border(
+                            1.dp,
+                            if (active) ChimahonPalette.primary.copy(alpha = 0.26f) else ChimahonPalette.divider.copy(alpha = 0.64f),
+                            RoundedCornerShape(8.dp),
+                        )
                         .clickable { onToggle(option) }
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
-                )
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Label(
+                        text = option,
+                        color = if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                        size = 11,
+                        weight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -12878,18 +22078,26 @@ private fun ThemePickerRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(ChimahonPalette.surface)
-            .padding(vertical = 12.dp),
+            .padding(vertical = 14.dp),
     ) {
-        Label(
-            "App theme",
-            ChimahonPalette.onSurface,
-            14,
-            weight = FontWeight.SemiBold,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Label("App theme", ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+                Label(
+                    "Match Chimahon color presets",
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            SettingsValuePill(selected.title, modifier = Modifier.padding(start = 12.dp))
+        }
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             items(ChimahonAppTheme.entries, key = { it.name }) { theme ->
@@ -12897,29 +22105,48 @@ private fun ThemePickerRow(
                 val active = theme == selected
                 Column(
                     modifier = Modifier
-                        .width(132.dp)
-                        .clip(RoundedCornerShape(7.dp))
+                        .width(126.dp)
+                        .clip(RoundedCornerShape(10.dp))
                         .background(colors.surface)
                         .border(
                             width = if (active) 2.dp else 1.dp,
                             color = if (active) colors.primary else colors.divider,
-                            shape = RoundedCornerShape(7.dp),
+                            shape = RoundedCornerShape(10.dp),
                         )
                         .clickable { onSelect(theme) }
                         .padding(10.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        listOf(colors.primary, colors.primaryContainer, colors.surfaceVariant).forEach {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            listOf(colors.primary, colors.primaryContainer, colors.surfaceVariant).forEach {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(18.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(it),
+                                )
+                            }
+                        }
+                        if (active) {
                             Box(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .height(18.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(it),
-                            )
+                                    .align(Alignment.CenterEnd)
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.primary),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                IconGlyph(
+                                    icon = UiIcon.CheckCircle,
+                                    contentDescription = "",
+                                    tint = colors.surface,
+                                    modifier = Modifier.size(13.dp),
+                                )
+                            }
                         }
                     }
                     Label(
@@ -12962,6 +22189,440 @@ private fun MoreStatisticRow(
         IconGlyph(icon, "", ChimahonPalette.primary, Modifier.size(22.dp))
         Label(label, ChimahonPalette.onSurface, 13, modifier = Modifier.weight(1f).padding(start = 18.dp))
         Label(value, ChimahonPalette.secondaryText, 13, weight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+private data class BackupScopeItem(
+    val title: String,
+    val count: Int,
+    val icon: UiIcon,
+    val selected: Boolean = false,
+)
+
+@Composable
+private fun BackupSummaryHero(
+    title: String,
+    subtitle: String,
+    icon: UiIcon,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(ChimahonPalette.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = title,
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(28.dp),
+            )
+        }
+        Label(
+            title,
+            ChimahonPalette.onSurface,
+            18,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        Label(
+            subtitle,
+            ChimahonPalette.secondaryText,
+            12,
+            maxLines = 2,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun BackupActionRow(
+    title: String,
+    subtitle: String,
+    icon: UiIcon,
+    action: String,
+    onAction: () -> Unit = {},
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .clickable(onClick = onAction)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(ChimahonPalette.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = icon,
+                contentDescription = title,
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(21.dp),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 16.dp),
+        ) {
+            Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(
+                subtitle,
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        SettingsValuePill(action)
+    }
+}
+
+@Composable
+private fun BackupScopeGrid(
+    items: List<BackupScopeItem>,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items.chunked(2).forEach { rowItems ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                rowItems.forEach { item ->
+                    BackupScopeTile(
+                        item = item,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (rowItems.size == 1) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackupScopeTile(
+    item: BackupScopeItem,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .heightIn(min = 58.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(if (item.selected) ChimahonPalette.primaryContainer else ChimahonPalette.background)
+            .border(
+                1.dp,
+                if (item.selected) ChimahonPalette.primaryContainer else ChimahonPalette.divider,
+                RoundedCornerShape(7.dp),
+            )
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconGlyph(
+            icon = item.icon,
+            contentDescription = item.title,
+            tint = if (item.selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(modifier = Modifier.weight(1f).padding(start = 9.dp)) {
+            Label(
+                item.title,
+                ChimahonPalette.onSurface,
+                12,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Label(
+                item.count.toString(),
+                if (item.selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                11,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun BackupCheckpointRow(
+    title: String,
+    subtitle: String,
+    complete: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(if (complete) ChimahonPalette.primaryContainer else ChimahonPalette.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconGlyph(
+                icon = if (complete) UiIcon.CheckCircle else UiIcon.Info,
+                contentDescription = title,
+                tint = if (complete) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+            Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(
+                subtitle,
+                ChimahonPalette.secondaryText,
+                11,
+                maxLines = 2,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        Label(
+            if (complete) "Ready" else "Pending",
+            if (complete) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            11,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun CategoryManagementSummary(
+    categoryCount: Int,
+    visibleCount: Int,
+    hiddenCount: Int,
+    mangaCount: Int,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconGlyph(
+                icon = UiIcon.Tag,
+                contentDescription = "",
+                tint = ChimahonPalette.primary,
+                modifier = Modifier.size(24.dp),
+            )
+            Column(modifier = Modifier.weight(1f).padding(start = 18.dp)) {
+                Label("Library categories", ChimahonPalette.onSurface, 15, weight = FontWeight.SemiBold)
+                Label(
+                    "$mangaCount manga organized across ${categoryCount + 1} category tab(s)",
+                    ChimahonPalette.secondaryText,
+                    11,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+        }
+        LazyRow(
+            modifier = Modifier.padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            item { LibraryInlineBadge("$visibleCount visible", UiIcon.CheckCircle) }
+            item { LibraryInlineBadge("$hiddenCount hidden", UiIcon.VisibilityOff) }
+            item { LibraryInlineBadge("Default protected", UiIcon.Info) }
+        }
+    }
+}
+
+@Composable
+private fun LibraryCategoryManagementRow(
+    category: ChimahonLibraryCategory,
+    mangaCount: Int,
+    unreadCount: Int,
+    editing: Boolean,
+    editName: String,
+    busy: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onStartEdit: () -> Unit,
+    onEditNameChange: (String) -> Unit,
+    onCancelEdit: () -> Unit,
+    onSaveEdit: () -> Unit,
+    onToggleHidden: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val userCategory = category.id > DEFAULT_LIBRARY_CATEGORY_ID
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (category.hidden) ChimahonPalette.surfaceVariant else ChimahonPalette.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                IconGlyph(
+                    icon = if (category.hidden) UiIcon.VisibilityOff else UiIcon.Tag,
+                    contentDescription = category.displayName(),
+                    tint = if (category.hidden) ChimahonPalette.secondaryText else ChimahonPalette.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+                if (editing) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ChimahonPalette.background)
+                            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        BasicTextField(
+                            value = editName,
+                            onValueChange = onEditNameChange,
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = ChimahonPalette.onSurface,
+                                fontSize = 13.sp,
+                                lineHeight = 17.sp,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Label(
+                            category.displayName(),
+                            if (category.hidden) ChimahonPalette.secondaryText else ChimahonPalette.onSurface,
+                            14,
+                            weight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (category.hidden) {
+                            LibraryInlineBadge("Hidden", UiIcon.VisibilityOff)
+                        } else if (!userCategory) {
+                            LibraryInlineBadge("Default", UiIcon.Info)
+                        }
+                    }
+                    Label(
+                        buildString {
+                            append(mangaCount).append(" manga")
+                            if (unreadCount > 0) append(" - ").append(unreadCount).append(" unread")
+                            if (!userCategory) append(" - cannot be renamed or deleted")
+                        },
+                        ChimahonPalette.secondaryText,
+                        11,
+                        maxLines = 2,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
+            }
+        }
+        if (editing) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButtonLike("Cancel", onClick = onCancelEdit)
+                TextButtonLike(
+                    if (busy) "Saving" else "Save",
+                    onClick = onSaveEdit,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (userCategory) {
+                    CategoryMiniAction("Edit", UiIcon.Tag, enabled = !busy, onClick = onStartEdit)
+                    CategoryMiniAction(
+                        if (category.hidden) "Show" else "Hide",
+                        if (category.hidden) UiIcon.CheckCircle else UiIcon.VisibilityOff,
+                        enabled = !busy,
+                        onClick = onToggleHidden,
+                    )
+                    CategoryMiniAction("Up", UiIcon.SkipPrevious, enabled = canMoveUp && !busy, onClick = onMoveUp)
+                    CategoryMiniAction("Down", UiIcon.SkipNext, enabled = canMoveDown && !busy, onClick = onMoveDown)
+                    CategoryMiniAction("Delete", UiIcon.Delete, enabled = !busy, destructive = true, onClick = onDelete)
+                } else {
+                    Label(
+                        "System category",
+                        ChimahonPalette.secondaryText,
+                        11,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = 56.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryMiniAction(
+    label: String,
+    icon: UiIcon,
+    enabled: Boolean,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val contentColor = when {
+        !enabled -> ChimahonPalette.secondaryText.copy(alpha = 0.50f)
+        destructive -> ChimahonPalette.error
+        else -> ChimahonPalette.primary
+    }
+    Column(
+        modifier = Modifier
+            .widthIn(min = 54.dp)
+            .height(46.dp)
+            .alpha(if (enabled) 1f else 0.55f)
+            .clip(RoundedCornerShape(10.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 4.dp, vertical = 5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        IconGlyph(icon, label, contentColor, Modifier.size(18.dp))
+        Label(label, contentColor, 9, weight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
@@ -13086,6 +22747,7 @@ private fun PreferenceSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 58.dp)
             .background(ChimahonPalette.surface)
             .clickable {
                 val next = !enabled
@@ -13094,48 +22756,75 @@ private fun PreferenceSwitchRow(
                 }
                 onCheckedChange(next)
             }
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(start = 20.dp, end = 18.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconGlyph(
+        PreferenceIconBox(
             icon = icon,
-            contentDescription = "",
-            tint = ChimahonPalette.primary,
-            modifier = Modifier.size(24.dp),
+            active = enabled,
         )
-        Column(modifier = Modifier.weight(1f)) {
-            Label(
-                title,
-                ChimahonPalette.onSurface,
-                14,
-                maxLines = 2,
-                modifier = Modifier.padding(start = 24.dp),
-            )
-            Label(
-                subtitle,
-                ChimahonPalette.secondaryText,
-                12,
-                maxLines = 1,
-                modifier = Modifier.padding(start = 24.dp, top = 3.dp),
-            )
-        }
-        Box(
+        Column(
             modifier = Modifier
-                .width(42.dp)
-                .height(24.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(if (enabled) ChimahonPalette.primary else ChimahonPalette.surfaceVariant)
-                .padding(3.dp),
-            contentAlignment = if (enabled) Alignment.CenterEnd else Alignment.CenterStart,
+                .weight(1f)
+                .padding(start = 16.dp, end = 12.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(18.dp)
-                    .clip(CircleShape)
-                    .background(ChimahonPalette.surface),
-            )
+            SettingsRowTitleBlock(title = title, subtitle = subtitle)
         }
+        AndroidSwitchVisual(checked = enabled)
     }
+}
+
+@Composable
+private fun NotificationPreferenceRow(
+    title: String,
+    subtitle: String,
+    icon: UiIcon,
+    checked: Boolean,
+    enabledLabel: String,
+    disabledLabel: String,
+    detail: String? = null,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .background(ChimahonPalette.surface)
+            .clickable { onCheckedChange(!checked) }
+            .padding(start = 20.dp, end = 18.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PreferenceIconBox(
+            icon = icon,
+            active = checked,
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 16.dp, end = 12.dp),
+        ) {
+            SettingsRowTitleBlock(title = title, subtitle = subtitle)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 7.dp),
+            ) {
+                UpdateHistoryStatusChip(
+                    text = if (checked) enabledLabel else disabledLabel,
+                    active = checked,
+                )
+                detail?.takeIf { it.isNotBlank() }?.let {
+                    UpdateHistoryStatusChip(text = it, active = false)
+                }
+            }
+        }
+        AndroidSwitchVisual(checked = checked)
+    }
+}
+
+@Composable
+private fun AndroidSwitchVisual(checked: Boolean) {
+    SettingsSwitchThumb(checked = checked)
 }
 
 @Composable
@@ -13148,39 +22837,70 @@ private fun PreferenceRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 58.dp)
             .background(ChimahonPalette.surface)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 15.dp),
+            .padding(start = 20.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconGlyph(
-            icon = icon,
-            contentDescription = "",
-            tint = ChimahonPalette.primary,
-            modifier = Modifier.size(24.dp),
-        )
+        PreferenceIconBox(icon = icon)
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(start = 24.dp),
+                .padding(start = 16.dp, end = 10.dp),
         ) {
-            Label(title, ChimahonPalette.onSurface, 14, maxLines = 2)
-            subtitle?.takeIf { it.isNotBlank() }?.let {
-                Label(
-                    it,
-                    ChimahonPalette.secondaryText,
-                    11,
-                    maxLines = 2,
-                    modifier = Modifier.padding(top = 3.dp),
-                )
-            }
+            SettingsRowTitleBlock(title = title, subtitle = subtitle)
         }
         IconGlyph(
             icon = UiIcon.Forward,
             contentDescription = "",
-            tint = ChimahonPalette.secondaryText,
+            tint = ChimahonPalette.secondaryText.copy(alpha = 0.78f),
             modifier = Modifier.size(18.dp),
         )
+    }
+}
+
+@Composable
+private fun PreferenceValueRow(
+    title: String,
+    subtitle: String?,
+    icon: UiIcon,
+    value: String,
+    onClick: (() -> Unit)? = null,
+) {
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .heightIn(min = 58.dp)
+        .background(ChimahonPalette.surface)
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+        .padding(start = 20.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
+    Row(
+        modifier = rowModifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PreferenceIconBox(icon = icon, active = value.isNotBlank())
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 16.dp, end = 12.dp),
+        ) {
+            SettingsRowTitleBlock(title = title, subtitle = subtitle)
+        }
+        SettingsValuePill(
+            value,
+            active = onClick != null && value.isNotBlank(),
+            modifier = Modifier.widthIn(max = 136.dp),
+        )
+        if (onClick != null) {
+            IconGlyph(
+                icon = UiIcon.Forward,
+                contentDescription = "",
+                tint = ChimahonPalette.secondaryText.copy(alpha = 0.78f),
+                modifier = Modifier
+                    .padding(start = 6.dp)
+                    .size(18.dp),
+            )
+        }
     }
 }
 
@@ -13189,9 +22909,41 @@ private fun PreferenceDivider() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(1.dp)
-            .background(ChimahonPalette.divider),
-    )
+            .background(ChimahonPalette.surface)
+            .padding(start = 72.dp, end = 16.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(ChimahonPalette.divider),
+        )
+    }
+}
+
+@Composable
+private fun PreferenceIconBox(
+    icon: UiIcon,
+    active: Boolean = true,
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(RoundedCornerShape(19.dp))
+            .background(
+                if (active) ChimahonPalette.primaryContainer.copy(alpha = 0.74f) else {
+                    ChimahonPalette.surfaceVariant.copy(alpha = 0.78f)
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = "",
+            tint = if (active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            modifier = Modifier.size(20.dp),
+        )
+    }
 }
 
 @Composable
@@ -13235,16 +22987,16 @@ private fun MobileListItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(6.dp))
             .background(ChimahonPalette.surface)
             .clickable(onClick = onClick)
-            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(10.dp))
-            .padding(12.dp),
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.72f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .size(42.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(markerColor),
             contentAlignment = Alignment.Center,
@@ -13333,37 +23085,81 @@ private fun EmptyListPanel(marker: String, title: String, detail: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 220.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .heightIn(min = 210.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(12.dp))
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.70f), RoundedCornerShape(8.dp))
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(ChimahonPalette.surfaceVariant),
+                .size(52.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(ChimahonPalette.primaryContainer.copy(alpha = 0.66f)),
             contentAlignment = Alignment.Center,
         ) {
-            Label(marker, ChimahonPalette.secondaryText, 18, weight = FontWeight.Bold)
+            Label(marker, ChimahonPalette.primary, 18, weight = FontWeight.Bold)
         }
         Label(title, ChimahonPalette.onSurface, 15, weight = FontWeight.SemiBold, modifier = Modifier.padding(top = 14.dp))
-        Label(detail, ChimahonPalette.secondaryText, 12, lineHeight = 18, modifier = Modifier.padding(top = 6.dp))
+        Label(
+            detail,
+            ChimahonPalette.secondaryText,
+            12,
+            lineHeight = 18,
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .widthIn(max = 460.dp),
+        )
     }
 }
 
 @Composable
 private fun SectionHeader(text: String) {
     Label(
-        text = text,
+        text = text.uppercase(),
         color = ChimahonPalette.secondaryText,
-        size = 11,
+        size = 10,
         weight = FontWeight.Bold,
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 2.dp),
+        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 5.dp),
     )
+}
+
+@Composable
+private fun FilterPanelLabel(
+    text: String,
+    modifier: Modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+) {
+    Label(
+        text,
+        ChimahonPalette.secondaryText,
+        11,
+        weight = FontWeight.SemiBold,
+        maxLines = 1,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ScrollableFilterChips(
+    chips: List<String>,
+    selected: String,
+    modifier: Modifier = Modifier,
+    onSelect: (String) -> Unit = {},
+) {
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(chips, key = { it }) { chip ->
+            AndroidFilterChip(
+                text = chip,
+                selected = chip == selected,
+                onClick = { onSelect(chip) },
+            )
+        }
+    }
 }
 
 @Composable
@@ -13378,26 +23174,43 @@ private fun FilterChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         chips.forEach { chip ->
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(if (chip == selected) ChimahonPalette.primaryContainer else ChimahonPalette.surface)
-                    .clickable { onSelect(chip) }
-                    .border(
-                        1.dp,
-                        if (chip == selected) ChimahonPalette.primaryContainer else ChimahonPalette.divider,
-                        RoundedCornerShape(18.dp),
-                    )
-                    .padding(horizontal = 13.dp, vertical = 8.dp),
-            ) {
-                Label(
-                    text = chip,
-                    color = if (chip == selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
-                    size = 12,
-                    weight = FontWeight.SemiBold,
-                )
-            }
+            AndroidFilterChip(
+                text = chip,
+                selected = chip == selected,
+                onClick = { onSelect(chip) },
+            )
         }
+    }
+}
+
+@Composable
+private fun AndroidFilterChip(
+    text: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
+) {
+    Box(
+        modifier = modifier
+            .heightIn(min = 32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) ChimahonPalette.primaryContainer.copy(alpha = 0.84f) else ChimahonPalette.surface)
+            .border(
+                1.dp,
+                if (selected) ChimahonPalette.primary.copy(alpha = 0.28f) else ChimahonPalette.divider.copy(alpha = 0.78f),
+                RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(
+            text = text,
+            color = if (selected) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+            size = 12,
+            weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+        )
     }
 }
 
@@ -13467,10 +23280,10 @@ private fun TopAction(
 ) {
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(44.dp)
             .clip(CircleShape)
-            .clickable(onClick = onClick)
-            .padding(8.dp),
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(10.dp),
         contentAlignment = Alignment.Center,
     ) {
         IconGlyph(
@@ -13489,22 +23302,23 @@ private fun ReaderAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     active: Boolean = false,
+    enabled: Boolean = true,
     tint: Color = Color.White,
 ) {
     Box(
         modifier = modifier
-            .size(40.dp)
+            .size(44.dp)
             .clip(CircleShape)
-            .background(if (active) tint.copy(alpha = 0.16f) else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(8.dp),
+            .background(if (active) ReaderPalette.selectedControl.copy(alpha = 0.72f) else Color.Transparent)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(10.dp),
         contentAlignment = Alignment.Center,
     ) {
         IconGlyph(
             icon = icon,
             contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(21.dp),
+            tint = if (enabled) tint else tint.copy(alpha = 0.42f),
+            modifier = Modifier.size(20.dp),
         )
     }
 }
@@ -13517,10 +23331,10 @@ private fun ReaderTextAction(
 ) {
     Box(
         modifier = modifier
-            .height(38.dp)
+            .height(44.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(ReaderPalette.control)
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -13674,7 +23488,37 @@ private fun ChimahonDownloadQueueData.downloadQueueSummary(): String {
     if (entries.isEmpty()) return "No queued chapter downloads"
     val total = entries.size
     val downloaded = entries.count { it.status == ChimahonDownloadState.Downloaded }
-    return "$total chapter(s) - $activeCount active, $pendingCount queued, $downloaded completed"
+    val paused = entries.count { it.status == ChimahonDownloadState.Paused }
+    val sourceCount = entries.map { it.sourceId }.distinct().size
+    return "$total chapter(s) across $sourceCount source(s) - $activeCount active, $pendingCount queued, $paused paused, $downloaded completed"
+}
+
+private fun ChimahonDownloadQueueData.downloadQueueHomeSummary(): String {
+    if (entries.isEmpty()) return "No queued downloads"
+    val downloaded = entries.count { it.status == ChimahonDownloadState.Downloaded }
+    val paused = entries.count { it.status == ChimahonDownloadState.Paused }
+    return listOfNotNull(
+        "${entries.size} total",
+        activeCount.takeIf { it > 0 }?.let { "$it active" },
+        pendingCount.takeIf { it > 0 }?.let { "$it queued" },
+        paused.takeIf { it > 0 }?.let { "$it paused" },
+        downloaded.takeIf { it > 0 }?.let { "$it done" },
+        failedCount.takeIf { it > 0 }?.let { "$it failed" },
+    ).joinToString(" - ")
+}
+
+private fun ChimahonDownloadQueueData.toDownloadSourceGroups(
+    snapshot: ChimahonSnapshot,
+): List<DownloadQueueSourceGroup> {
+    return entries
+        .groupBy { it.sourceId }
+        .map { (sourceId, sourceEntries) ->
+            DownloadQueueSourceGroup(
+                sourceId = sourceId,
+                sourceName = snapshot.sourceName(sourceId),
+                entries = sourceEntries,
+            )
+        }
 }
 
 private fun ChimahonDownloadQueueEntry.downloadProgressFraction(): Float {
@@ -13688,25 +23532,53 @@ private fun ChimahonDownloadQueueEntry.downloadProgressFraction(): Float {
     }
 }
 
-private fun ChimahonDownloadQueueEntry.downloadSubtitle(): String {
+private fun ChimahonDownloadQueueEntry.downloadProgressLabel(): String {
+    val total = totalBytes
+    return when {
+        total != null && total > 0L -> "${downloadedBytes.toReadableBytes()} / ${total.toReadableBytes()}"
+        progress > 0 -> "$progress%"
+        downloadedBytes > 0L -> downloadedBytes.toReadableBytes()
+        status == ChimahonDownloadState.Downloaded -> "100%"
+        else -> ""
+    }
+}
+
+private fun ChimahonDownloadQueueEntry.downloadSubtitle(
+    sourceName: String,
+    position: Int,
+): String {
     if (status == ChimahonDownloadState.Error && !errorMessage.isNullOrBlank()) {
         return errorMessage
     }
-    val byteLabel = totalBytes?.takeIf { it > 0L }?.let { total ->
-        "${downloadedBytes.toReadableBytes()} / ${total.toReadableBytes()}"
-    } ?: downloadedBytes.takeIf { it > 0L }?.toReadableBytes()
+    val statusLabel = if (status == ChimahonDownloadState.Downloaded) {
+        "Downloaded - offline copy kept"
+    } else {
+        status.queueTitle()
+    }
     return listOfNotNull(
-        "Source $sourceId",
-        byteLabel,
-        progress.takeIf { it > 0 && it < 100 }?.let { "$it%" },
+        "#$position",
+        sourceName,
+        statusLabel,
+        downloadProgressLabel().takeIf { it.isNotBlank() },
     ).joinToString(" - ")
+}
+
+private fun ChimahonDownloadQueueEntry.primaryDownloadActionIcon(): UiIcon {
+    return when (status) {
+        ChimahonDownloadState.Paused -> UiIcon.Play
+        ChimahonDownloadState.Error -> UiIcon.Refresh
+        ChimahonDownloadState.Downloaded -> UiIcon.Delete
+        ChimahonDownloadState.Queued,
+        ChimahonDownloadState.Downloading,
+        -> UiIcon.Pause
+    }
 }
 
 private fun ChimahonDownloadQueueEntry.primaryDownloadActionTitle(): String {
     return when (status) {
         ChimahonDownloadState.Paused -> "Resume"
         ChimahonDownloadState.Error -> "Retry"
-        ChimahonDownloadState.Downloaded -> "Remove"
+        ChimahonDownloadState.Downloaded -> "Clear"
         ChimahonDownloadState.Queued,
         ChimahonDownloadState.Downloading,
         -> "Pause"
@@ -13727,7 +23599,7 @@ private fun ChimahonDownloadState.statusIcon(): UiIcon {
     return when (this) {
         ChimahonDownloadState.Queued -> UiIcon.Chapters
         ChimahonDownloadState.Downloading -> UiIcon.Download
-        ChimahonDownloadState.Paused -> UiIcon.Refresh
+        ChimahonDownloadState.Paused -> UiIcon.Pause
         ChimahonDownloadState.Downloaded -> UiIcon.CheckCircle
         ChimahonDownloadState.Error -> UiIcon.Info
     }
@@ -13760,6 +23632,16 @@ private fun ChimahonChapterDownloadStatus.chapterDownloadStatusLabel(): String {
             ?.let { "Downloading $it%" }
             ?: "Downloading"
         ChimahonDownloadState.Downloaded -> if (downloadedOnDisk) "Downloaded" else "Download complete"
+        else -> status.queueTitle()
+    }
+}
+
+private fun ChimahonChapterDownloadStatus.chapterListBadgeLabel(): String {
+    return when (status) {
+        ChimahonDownloadState.Downloading -> progress
+            .takeIf { it in 1..99 }
+            ?.let { "Downloading $it%" }
+            ?: "Downloading"
         else -> status.queueTitle()
     }
 }
@@ -13868,12 +23750,82 @@ private fun ChimahonHistoryEntry.historyStateLabel(): String {
     }
 }
 
+private fun ChimahonRecentUpdateEntry.updateChapterSubtitle(): String {
+    return buildString {
+        append(chapterName)
+        scanlator?.takeIf { it.isNotBlank() }?.let {
+            append("  -  ").append(it)
+        }
+        if (lastPageRead > 0L) {
+            append("  -  Page ").append(lastPageRead + 1)
+        }
+    }
+}
+
+private fun ChimahonHistoryEntry.historySubtitle(): String {
+    return buildString {
+        append("Ch. ").append(chapterNumber.toDisplayChapter())
+        readAt?.let { append("  -  ").append(it.toDateBucket("Read")) }
+        if (lastPageRead > 0L) {
+            append("  -  Page ").append(lastPageRead + 1)
+        }
+        if (totalCount > 0.0) {
+            append("  -  ")
+            append(readCount.toLong()).append("/").append(totalCount.toLong())
+        }
+    }
+}
+
 private fun ChimahonSnapshot.detailTitle(mangaId: Long?): String {
     return mangaId?.let { mangaDetails[it]?.title } ?: "Manga details"
 }
 
 private fun ChimahonSnapshot.sourceName(sourceId: Long): String {
     return sources.firstOrNull { it.id == sourceId }?.name ?: "Source $sourceId"
+}
+
+private fun ChimahonSnapshot.groupedUpdateIssues(): List<UpdateIssueGroup> {
+    val categoriesById = libraryCategories.associateBy { it.id }
+    val categoryOrder = libraryCategories
+        .sortedWith(compareBy<ChimahonLibraryCategory> { it.order }.thenBy { it.displayName().lowercase() })
+        .mapIndexed { index, category -> category.id to index }
+        .toMap()
+    val rows = updateIssues.map { issue ->
+        val manga = mangaDetails[issue.mangaId]
+        val sourceName = manga?.sourceId?.let(::sourceName) ?: "Unknown source"
+        val categoryName = libraryCategoryMemberships[issue.mangaId]
+            .orEmpty()
+            .sortedBy { categoryOrder[it] ?: Int.MAX_VALUE }
+            .mapNotNull { categoriesById[it]?.displayName() }
+            .firstOrNull()
+            ?: if (manga != null) {
+                "Default"
+            } else {
+                "No category"
+            }
+        UpdateIssueRow(
+            issue = issue,
+            sourceName = sourceName,
+            categoryName = categoryName,
+        )
+    }
+    return rows
+        .groupBy { UpdateIssueGroupKey(it.sourceName, it.categoryName) }
+        .map { (key, groupRows) ->
+            UpdateIssueGroup(
+                sourceName = key.sourceName,
+                categoryName = key.categoryName,
+                rows = groupRows.sortedWith(
+                    compareBy<UpdateIssueRow> { it.issue.mangaTitle.lowercase() }
+                        .thenBy { it.issue.lastUpdate },
+                ),
+            )
+        }
+        .sortedWith(
+            compareByDescending<UpdateIssueGroup> { it.rows.size }
+                .thenBy { it.sourceName.lowercase() }
+                .thenBy { it.categoryName.lowercase() },
+        )
 }
 
 private fun ChimahonSnapshot.sourceLanguage(sourceId: Long): String {
@@ -13927,6 +23879,79 @@ private fun List<ChimahonChapterEntry>.nextReadableChapter(): ChimahonChapterEnt
         ?: lastOrNull()
 }
 
+private fun List<ChimahonChapterEntry>.toChapterListSummary(
+    downloadStatuses: Map<Long, ChimahonChapterDownloadStatus>,
+): ChapterListSummary {
+    return ChapterListSummary(
+        readCount = count { it.read },
+        unreadCount = count { !it.read },
+        startedCount = count { it.lastPageRead > 0L && !it.read },
+        bookmarkedCount = count { it.bookmarked },
+        downloadedCount = count { downloadStatuses[it.id]?.status == ChimahonDownloadState.Downloaded },
+        scanlatorCount = mapNotNull { it.scanlator?.takeIf { scanlator -> scanlator.isNotBlank() } }.distinct().size,
+    )
+}
+
+private fun ChimahonSnapshot.readingProgressSummary(): ReadingProgressSummary {
+    val chapterLists = library.map { manga -> chaptersByMangaId[manga.id].orEmpty() }
+    val allChapters = chapterLists.flatten()
+    val completedManga = chapterLists.count { chapters ->
+        chapters.isNotEmpty() && chapters.all { it.read }
+    }
+    val inProgressManga = chapterLists.count { chapters ->
+        val hasProgress = chapters.any { it.read || it.lastPageRead > 0L }
+        val complete = chapters.isNotEmpty() && chapters.all { it.read }
+        hasProgress && !complete
+    }
+    return ReadingProgressSummary(
+        libraryManga = library.size,
+        totalChapters = allChapters.size,
+        readChapters = allChapters.count { it.read },
+        unreadChapters = allChapters.count { !it.read },
+        startedChapters = allChapters.count { it.lastPageRead > 0L && !it.read },
+        bookmarkedChapters = allChapters.count { it.bookmarked },
+        completedManga = completedManga,
+        inProgressManga = inProgressManga,
+        untouchedManga = (library.size - completedManga - inProgressManga).coerceAtLeast(0),
+        historyEntries = history.size,
+        historyManga = history.map { it.mangaId }.distinct().size,
+        readDuration = history.sumOf { it.readDuration },
+        lastReadAt = history.mapNotNull { it.readAt }.maxOrNull(),
+    )
+}
+
+private fun ChimahonChapterEntry.matchesChapterQuery(query: String): Boolean {
+    if (query.isBlank()) return true
+    return name.contains(query, ignoreCase = true) ||
+        scanlator.orEmpty().contains(query, ignoreCase = true) ||
+        chapterNumber.toDisplayChapter().contains(query, ignoreCase = true) ||
+        chapterStateLabel().contains(query, ignoreCase = true)
+}
+
+private fun List<ChimahonChapterEntry>.sortedForDetail(
+    sort: ChapterSort,
+    descending: Boolean,
+    sourceOrder: Map<Long, Int>,
+): List<ChimahonChapterEntry> {
+    val comparator = when (sort) {
+        ChapterSort.SourceOrder -> compareBy<ChimahonChapterEntry> { sourceOrder[it.id] ?: Int.MAX_VALUE }
+            .thenBy { it.chapterNumber }
+            .thenBy { it.name.lowercase() }
+        ChapterSort.ChapterNumber -> compareBy<ChimahonChapterEntry> { it.chapterNumber }
+            .thenBy { it.name.lowercase() }
+        ChapterSort.UploadDate -> compareBy<ChimahonChapterEntry> { it.dateUpload }
+            .thenBy { it.chapterNumber }
+            .thenBy { it.name.lowercase() }
+        ChapterSort.Name -> compareBy<ChimahonChapterEntry> { it.name.lowercase() }
+            .thenBy { it.chapterNumber }
+        ChapterSort.Scanlator -> compareBy<ChimahonChapterEntry> { it.scanlator.orEmpty().lowercase() }
+            .thenBy { it.chapterNumber }
+            .thenBy { it.name.lowercase() }
+    }
+    val sorted = sortedWith(comparator)
+    return if (descending) sorted.asReversed() else sorted
+}
+
 private fun ChimahonChapterEntry.chapterMarker(): String {
     return when {
         bookmarked -> "B"
@@ -13943,6 +23968,18 @@ private fun ChimahonChapterEntry.chapterStateLabel(): String {
         bookmarked -> "Bookmarked"
         else -> "Unread"
     }
+}
+
+private fun ChimahonChapterEntry.chapterDetailMetadata(
+    downloadStatus: ChimahonChapterDownloadStatus?,
+): String {
+    return listOfNotNull(
+        chapterNumber.takeIf { it > 0.0 }?.let { "Ch. ${it.toDisplayChapter()}" },
+        chapterStateLabel().takeIf { it != "Unread" },
+        scanlator?.takeIf { it.isNotBlank() },
+        dateUpload.takeIf { it > 0L }?.toDateBucket("Uploaded"),
+        downloadStatus?.chapterDownloadStatusLabel(),
+    ).joinToString("  -  ").ifBlank { "No chapter metadata" }
 }
 
 private fun ChimahonRemoteChapterEntry.remoteChapterMarker(): String {
@@ -14095,6 +24132,14 @@ private enum class HomeTab(
     More("More", UiIcon.More),
 }
 
+private fun ChimahonStartScreen.toHomeTab(): HomeTab = when (this) {
+    ChimahonStartScreen.Library -> HomeTab.Library
+    ChimahonStartScreen.Updates -> HomeTab.Updates
+    ChimahonStartScreen.History -> HomeTab.History
+    ChimahonStartScreen.Browse -> HomeTab.Browse
+    ChimahonStartScreen.More -> HomeTab.More
+}
+
 private enum class BrowseSection(val title: String) {
     Sources("Sources"),
     Feed("Feed"),
@@ -14117,7 +24162,10 @@ private data class SelectionAction(
 
 private const val ALL_LIBRARY_CATEGORY_ID = -1L
 private const val DEFAULT_LIBRARY_CATEGORY_ID = 0L
+private const val SOURCE_CATALOG_PREFETCH_ITEM_COUNT = 36
 private const val CHIMAHON_PROJECT_URL = "https://github.com/sohilsayed/chimahon"
+private const val CHIMAHON_RELEASES_URL = "https://github.com/sohilsayed/chimahon/releases"
+private const val CHIMAHON_ISSUES_URL = "https://github.com/sohilsayed/chimahon/issues"
 
 private enum class UiIcon {
     Library,
@@ -14131,6 +24179,7 @@ private enum class UiIcon {
     Back,
     Forward,
     Play,
+    Pause,
     DoneAll,
     Swap,
     Favorite,
@@ -14159,6 +24208,7 @@ private enum class UiIcon {
     Delete,
     Crop,
     Link,
+    Close,
 }
 
 @Composable
@@ -14178,10 +24228,10 @@ private fun IconGlyph(
 
 private val UiIcon.imageVector: ImageVector
     get() = when (this) {
-        UiIcon.Library -> Icons.Outlined.CollectionsBookmark
-        UiIcon.Updates -> Icons.Outlined.NewReleases
+        UiIcon.Library -> Icons.Outlined.AutoStories
+        UiIcon.Updates -> Icons.Outlined.Update
         UiIcon.History -> Icons.Outlined.History
-        UiIcon.Browse -> Icons.Outlined.Explore
+        UiIcon.Browse -> Icons.Outlined.TravelExplore
         UiIcon.More -> Icons.Outlined.MoreHoriz
         UiIcon.Search -> Icons.Outlined.Search
         UiIcon.Filter -> Icons.Outlined.FilterList
@@ -14189,6 +24239,7 @@ private val UiIcon.imageVector: ImageVector
         UiIcon.Back -> Icons.Outlined.ArrowBack
         UiIcon.Forward -> Icons.Outlined.ArrowForward
         UiIcon.Play -> Icons.Outlined.PlayArrow
+        UiIcon.Pause -> Icons.Outlined.Pause
         UiIcon.DoneAll -> Icons.Outlined.DoneAll
         UiIcon.Swap -> Icons.Outlined.SwapHoriz
         UiIcon.Favorite -> Icons.Outlined.Favorite
@@ -14217,292 +24268,8 @@ private val UiIcon.imageVector: ImageVector
         UiIcon.Delete -> Icons.Outlined.DeleteOutline
         UiIcon.Crop -> Icons.Outlined.CropFree
         UiIcon.Link -> Icons.Outlined.Link
+        UiIcon.Close -> Icons.Outlined.Close
     }
-
-@Suppress("unused")
-@Composable
-private fun LegacyIconGlyph(
-    icon: UiIcon,
-    contentDescription: String,
-    tint: Color,
-    modifier: Modifier = Modifier,
-) {
-    val iconModifier = if (contentDescription.isBlank()) {
-        modifier
-    } else {
-        modifier.semantics {
-            this.contentDescription = contentDescription
-        }
-    }
-    Canvas(modifier = iconModifier) {
-        val w = size.width
-        val h = size.height
-        val side = min(w, h)
-        val stroke = Stroke(
-            width = side * 0.09f,
-            cap = StrokeCap.Round,
-            join = StrokeJoin.Round,
-        )
-
-        fun point(x: Float, y: Float) = Offset(w * x, h * y)
-        fun line(x1: Float, y1: Float, x2: Float, y2: Float) {
-            drawLine(tint, point(x1, y1), point(x2, y2), strokeWidth = stroke.width, cap = StrokeCap.Round)
-        }
-
-        fun heartPath(): Path {
-            return Path().apply {
-                moveTo(w * 0.5f, h * 0.82f)
-                cubicTo(w * 0.18f, h * 0.58f, w * 0.14f, h * 0.32f, w * 0.31f, h * 0.24f)
-                cubicTo(w * 0.42f, h * 0.19f, w * 0.49f, h * 0.27f, w * 0.5f, h * 0.34f)
-                cubicTo(w * 0.51f, h * 0.27f, w * 0.58f, h * 0.19f, w * 0.69f, h * 0.24f)
-                cubicTo(w * 0.86f, h * 0.32f, w * 0.82f, h * 0.58f, w * 0.5f, h * 0.82f)
-                close()
-            }
-        }
-
-        fun bookmarkPath(): Path {
-            return Path().apply {
-                moveTo(w * 0.30f, h * 0.18f)
-                lineTo(w * 0.70f, h * 0.18f)
-                lineTo(w * 0.70f, h * 0.82f)
-                lineTo(w * 0.50f, h * 0.66f)
-                lineTo(w * 0.30f, h * 0.82f)
-                close()
-            }
-        }
-
-        when (icon) {
-            UiIcon.Library -> {
-                drawRect(tint, topLeft = point(0.20f, 0.22f), size = Size(w * 0.46f, h * 0.58f), style = stroke)
-                drawRect(tint, topLeft = point(0.34f, 0.18f), size = Size(w * 0.46f, h * 0.58f), style = stroke)
-                line(0.42f, 0.34f, 0.70f, 0.34f)
-                line(0.42f, 0.48f, 0.70f, 0.48f)
-            }
-            UiIcon.Updates,
-            UiIcon.Refresh,
-            -> {
-                drawArc(
-                    color = tint,
-                    startAngle = 35f,
-                    sweepAngle = 285f,
-                    useCenter = false,
-                    topLeft = point(0.18f, 0.18f),
-                    size = Size(w * 0.64f, h * 0.64f),
-                    style = stroke,
-                )
-                line(0.76f, 0.20f, 0.82f, 0.42f)
-                line(0.76f, 0.20f, 0.56f, 0.24f)
-            }
-            UiIcon.History -> {
-                drawCircle(tint, radius = side * 0.34f, center = point(0.50f, 0.50f), style = stroke)
-                line(0.50f, 0.30f, 0.50f, 0.52f)
-                line(0.50f, 0.52f, 0.66f, 0.62f)
-            }
-            UiIcon.Browse,
-            UiIcon.Web,
-            -> {
-                drawCircle(tint, radius = side * 0.34f, center = point(0.50f, 0.50f), style = stroke)
-                line(0.18f, 0.50f, 0.82f, 0.50f)
-                line(0.50f, 0.18f, 0.50f, 0.82f)
-                drawArc(
-                    color = tint,
-                    startAngle = 90f,
-                    sweepAngle = 180f,
-                    useCenter = false,
-                    topLeft = point(0.30f, 0.18f),
-                    size = Size(w * 0.40f, h * 0.64f),
-                    style = stroke,
-                )
-            }
-            UiIcon.More -> {
-                drawCircle(tint, radius = side * 0.07f, center = point(0.25f, 0.50f))
-                drawCircle(tint, radius = side * 0.07f, center = point(0.50f, 0.50f))
-                drawCircle(tint, radius = side * 0.07f, center = point(0.75f, 0.50f))
-            }
-            UiIcon.Search -> {
-                drawCircle(tint, radius = side * 0.25f, center = point(0.43f, 0.43f), style = stroke)
-                line(0.61f, 0.61f, 0.82f, 0.82f)
-            }
-            UiIcon.Filter -> {
-                line(0.16f, 0.24f, 0.84f, 0.24f)
-                line(0.28f, 0.50f, 0.72f, 0.50f)
-                line(0.40f, 0.76f, 0.60f, 0.76f)
-            }
-            UiIcon.Back -> {
-                line(0.64f, 0.18f, 0.34f, 0.50f)
-                line(0.34f, 0.50f, 0.64f, 0.82f)
-                line(0.36f, 0.50f, 0.82f, 0.50f)
-            }
-            UiIcon.Forward -> {
-                line(0.36f, 0.18f, 0.66f, 0.50f)
-                line(0.66f, 0.50f, 0.36f, 0.82f)
-                line(0.18f, 0.50f, 0.64f, 0.50f)
-            }
-            UiIcon.Play -> {
-                val path = Path().apply {
-                    moveTo(w * 0.34f, h * 0.22f)
-                    lineTo(w * 0.78f, h * 0.50f)
-                    lineTo(w * 0.34f, h * 0.78f)
-                    close()
-                }
-                drawPath(path, tint)
-            }
-            UiIcon.DoneAll -> {
-                line(0.14f, 0.56f, 0.28f, 0.70f)
-                line(0.28f, 0.70f, 0.56f, 0.34f)
-                line(0.42f, 0.64f, 0.52f, 0.74f)
-                line(0.52f, 0.74f, 0.86f, 0.30f)
-            }
-            UiIcon.Swap -> {
-                line(0.18f, 0.34f, 0.78f, 0.34f)
-                line(0.66f, 0.22f, 0.78f, 0.34f)
-                line(0.66f, 0.46f, 0.78f, 0.34f)
-                line(0.82f, 0.66f, 0.22f, 0.66f)
-                line(0.34f, 0.54f, 0.22f, 0.66f)
-                line(0.34f, 0.78f, 0.22f, 0.66f)
-            }
-            UiIcon.Favorite -> drawPath(heartPath(), tint)
-            UiIcon.FavoriteBorder -> drawPath(heartPath(), tint, style = stroke)
-            UiIcon.CheckCircle -> {
-                drawCircle(tint, radius = side * 0.34f, center = point(0.50f, 0.50f), style = stroke)
-                line(0.32f, 0.52f, 0.46f, 0.66f)
-                line(0.46f, 0.66f, 0.70f, 0.36f)
-            }
-            UiIcon.Circle -> drawCircle(tint, radius = side * 0.34f, center = point(0.50f, 0.50f), style = stroke)
-            UiIcon.Bookmark -> drawPath(bookmarkPath(), tint)
-            UiIcon.BookmarkBorder -> drawPath(bookmarkPath(), tint, style = stroke)
-            UiIcon.Download -> {
-                line(0.50f, 0.18f, 0.50f, 0.62f)
-                line(0.34f, 0.48f, 0.50f, 0.64f)
-                line(0.66f, 0.48f, 0.50f, 0.64f)
-                line(0.24f, 0.78f, 0.76f, 0.78f)
-            }
-            UiIcon.Crop -> {
-                line(0.24f, 0.12f, 0.24f, 0.76f)
-                line(0.24f, 0.76f, 0.88f, 0.76f)
-                line(0.12f, 0.24f, 0.76f, 0.24f)
-                line(0.76f, 0.24f, 0.76f, 0.88f)
-            }
-            UiIcon.Link -> {
-                drawArc(tint, 130f, 250f, false, point(0.16f, 0.28f), Size(w * 0.38f, h * 0.38f), style = stroke)
-                drawArc(tint, -50f, 250f, false, point(0.46f, 0.34f), Size(w * 0.38f, h * 0.38f), style = stroke)
-                line(0.40f, 0.57f, 0.60f, 0.43f)
-            }
-            UiIcon.Incognito,
-            UiIcon.VisibilityOff,
-            -> {
-                line(0.18f, 0.42f, 0.82f, 0.42f)
-                line(0.32f, 0.42f, 0.38f, 0.28f)
-                line(0.68f, 0.42f, 0.62f, 0.28f)
-                drawCircle(tint, radius = side * 0.16f, center = point(0.34f, 0.62f), style = stroke)
-                drawCircle(tint, radius = side * 0.16f, center = point(0.66f, 0.62f), style = stroke)
-                line(0.50f, 0.62f, 0.50f, 0.62f)
-            }
-            UiIcon.Tag -> {
-                val path = Path().apply {
-                    moveTo(w * 0.18f, h * 0.28f)
-                    lineTo(w * 0.58f, h * 0.28f)
-                    lineTo(w * 0.82f, h * 0.50f)
-                    lineTo(w * 0.58f, h * 0.72f)
-                    lineTo(w * 0.18f, h * 0.72f)
-                    close()
-                }
-                drawPath(path, tint, style = stroke)
-                drawCircle(tint, radius = side * 0.05f, center = point(0.32f, 0.50f))
-            }
-            UiIcon.Statistics -> {
-                drawRect(tint, topLeft = point(0.18f, 0.58f), size = Size(w * 0.14f, h * 0.24f))
-                drawRect(tint, topLeft = point(0.43f, 0.38f), size = Size(w * 0.14f, h * 0.44f))
-                drawRect(tint, topLeft = point(0.68f, 0.20f), size = Size(w * 0.14f, h * 0.62f))
-            }
-            UiIcon.Storage -> {
-                drawOval(tint, topLeft = point(0.20f, 0.18f), size = Size(w * 0.60f, h * 0.22f), style = stroke)
-                drawArc(tint, 0f, 180f, false, point(0.20f, 0.38f), Size(w * 0.60f, h * 0.22f), style = stroke)
-                drawArc(tint, 0f, 180f, false, point(0.20f, 0.60f), Size(w * 0.60f, h * 0.22f), style = stroke)
-                line(0.20f, 0.29f, 0.20f, 0.71f)
-                line(0.80f, 0.29f, 0.80f, 0.71f)
-            }
-            UiIcon.Extensions -> {
-                drawRect(tint, topLeft = point(0.20f, 0.20f), size = Size(w * 0.25f, h * 0.25f), style = stroke)
-                drawRect(tint, topLeft = point(0.55f, 0.20f), size = Size(w * 0.25f, h * 0.25f), style = stroke)
-                drawRect(tint, topLeft = point(0.20f, 0.55f), size = Size(w * 0.25f, h * 0.25f), style = stroke)
-                drawRect(tint, topLeft = point(0.55f, 0.55f), size = Size(w * 0.25f, h * 0.25f), style = stroke)
-            }
-            UiIcon.Settings -> {
-                drawCircle(tint, radius = side * 0.16f, center = point(0.50f, 0.50f), style = stroke)
-                drawCircle(tint, radius = side * 0.34f, center = point(0.50f, 0.50f), style = stroke)
-                line(0.50f, 0.08f, 0.50f, 0.20f)
-                line(0.50f, 0.80f, 0.50f, 0.92f)
-                line(0.08f, 0.50f, 0.20f, 0.50f)
-                line(0.80f, 0.50f, 0.92f, 0.50f)
-            }
-            UiIcon.Info -> {
-                drawCircle(tint, radius = side * 0.34f, center = point(0.50f, 0.50f), style = stroke)
-                drawCircle(tint, radius = side * 0.045f, center = point(0.50f, 0.32f))
-                line(0.50f, 0.46f, 0.50f, 0.70f)
-            }
-            UiIcon.Help -> {
-                drawCircle(tint, radius = side * 0.34f, center = point(0.50f, 0.50f), style = stroke)
-                drawArc(tint, 190f, 215f, false, point(0.34f, 0.25f), Size(w * 0.32f, h * 0.32f), style = stroke)
-                line(0.50f, 0.54f, 0.50f, 0.62f)
-                drawCircle(tint, radius = side * 0.04f, center = point(0.50f, 0.73f))
-            }
-            UiIcon.Star -> {
-                val path = Path().apply {
-                    moveTo(w * 0.50f, h * 0.12f)
-                    lineTo(w * 0.61f, h * 0.38f)
-                    lineTo(w * 0.88f, h * 0.40f)
-                    lineTo(w * 0.67f, h * 0.58f)
-                    lineTo(w * 0.74f, h * 0.86f)
-                    lineTo(w * 0.50f, h * 0.70f)
-                    lineTo(w * 0.26f, h * 0.86f)
-                    lineTo(w * 0.33f, h * 0.58f)
-                    lineTo(w * 0.12f, h * 0.40f)
-                    lineTo(w * 0.39f, h * 0.38f)
-                    close()
-                }
-                drawPath(path, tint, style = stroke)
-            }
-            UiIcon.Add -> {
-                line(0.50f, 0.18f, 0.50f, 0.82f)
-                line(0.18f, 0.50f, 0.82f, 0.50f)
-            }
-            UiIcon.Reorder -> {
-                line(0.28f, 0.28f, 0.82f, 0.28f)
-                line(0.28f, 0.50f, 0.82f, 0.50f)
-                line(0.28f, 0.72f, 0.82f, 0.72f)
-                drawCircle(tint, radius = side * 0.045f, center = point(0.14f, 0.28f))
-                drawCircle(tint, radius = side * 0.045f, center = point(0.14f, 0.50f))
-                drawCircle(tint, radius = side * 0.045f, center = point(0.14f, 0.72f))
-            }
-            UiIcon.Chapters -> {
-                drawRect(tint, topLeft = point(0.18f, 0.18f), size = Size(w * 0.26f, h * 0.64f), style = stroke)
-                drawRect(tint, topLeft = point(0.56f, 0.18f), size = Size(w * 0.26f, h * 0.64f), style = stroke)
-                line(0.27f, 0.34f, 0.35f, 0.34f)
-                line(0.65f, 0.34f, 0.73f, 0.34f)
-            }
-            UiIcon.SkipPrevious -> {
-                line(0.24f, 0.22f, 0.24f, 0.78f)
-                line(0.72f, 0.22f, 0.38f, 0.50f)
-                line(0.38f, 0.50f, 0.72f, 0.78f)
-            }
-            UiIcon.SkipNext -> {
-                line(0.76f, 0.22f, 0.76f, 0.78f)
-                line(0.28f, 0.22f, 0.62f, 0.50f)
-                line(0.62f, 0.50f, 0.28f, 0.78f)
-            }
-            UiIcon.Delete -> {
-                line(0.26f, 0.30f, 0.74f, 0.30f)
-                line(0.40f, 0.18f, 0.60f, 0.18f)
-                line(0.34f, 0.30f, 0.38f, 0.82f)
-                line(0.66f, 0.30f, 0.62f, 0.82f)
-                line(0.38f, 0.82f, 0.62f, 0.82f)
-                line(0.46f, 0.42f, 0.46f, 0.70f)
-                line(0.54f, 0.42f, 0.54f, 0.70f)
-            }
-        }
-    }
-}
 
 private data class ChimahonThemeColors(
     val background: Color,
