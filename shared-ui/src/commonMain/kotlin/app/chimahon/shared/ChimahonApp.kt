@@ -5691,7 +5691,7 @@ private fun BrowseTabs(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(1.dp)
-                .background(ChimahonPalette.divider),
+                .background(ChimahonPalette.divider.copy(alpha = 0.62f)),
         )
     }
 }
@@ -13858,16 +13858,16 @@ private fun SettingsInfoPanel(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(8.dp))
-            .padding(horizontal = 14.dp, vertical = 14.dp),
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .size(38.dp)
+                .clip(RoundedCornerShape(10.dp))
                 .background(ChimahonPalette.primaryContainer),
             contentAlignment = Alignment.Center,
         ) {
@@ -13875,20 +13875,20 @@ private fun SettingsInfoPanel(
                 icon = icon,
                 contentDescription = "",
                 tint = ChimahonPalette.primary,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(21.dp),
             )
         }
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(start = 14.dp),
+                .padding(start = 16.dp),
         ) {
             Label(title, ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
             Label(
                 detail,
                 ChimahonPalette.secondaryText,
-                12,
-                lineHeight = 17,
+                11,
+                lineHeight = 16,
                 maxLines = 3,
                 modifier = Modifier.padding(top = 4.dp),
             )
@@ -22951,9 +22951,9 @@ private fun RuntimePanel(runtime: ChimahonRuntimeInfo) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(10.dp))
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -23121,7 +23121,7 @@ private fun SectionHeader(text: String) {
         text = text.uppercase(),
         color = ChimahonPalette.secondaryText,
         size = 10,
-        weight = FontWeight.Bold,
+        weight = FontWeight.ExtraBold,
         modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 5.dp),
     )
 }
