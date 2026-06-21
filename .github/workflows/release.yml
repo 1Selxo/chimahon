@@ -366,10 +366,46 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          .\gradlew.bat :desktop-app:packageExe :desktop-app:packageMsi `
+          .\gradlew.bat :desktop-app:createDistributable :desktop-app:packageExe :desktop-app:packageMsi `
             '-PreleaseVersionName=${{ needs.metadata.outputs.version_name }}' `
             '-PreleaseBuildNumber=${{ needs.metadata.outputs.version_code }}' `
             --no-daemon --console=plain --max-workers=2
+
+      - name: Verify Windows bundled runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $appImageRoot = "desktop-app\build\compose\binaries\main\app"
+          if (-not (Test-Path -LiteralPath $appImageRoot)) {
+            throw "Expected Compose Desktop app image at $appImageRoot."
+          }
+
+          $launcher = Get-ChildItem `
+            -Path $appImageRoot `
+            -Filter "Chimahon.exe" `
+            -File `
+            -Recurse |
+            Where-Object { $_.FullName -notmatch '\\runtime\\' } |
+            Select-Object -First 1
+
+          if (-not $launcher) {
+            throw "Windows app image did not contain a Chimahon.exe launcher."
+          }
+
+          $runtimeJava = Get-ChildItem `
+            -Path $appImageRoot `
+            -Filter "java.exe" `
+            -File `
+            -Recurse |
+            Where-Object { $_.FullName -match '\\runtime\\bin\\java\.exe$' } |
+            Select-Object -First 1
+
+          if (-not $runtimeJava) {
+            throw "Windows app image did not contain a bundled Java runtime."
+          }
+
+          Write-Host "Found Windows launcher: $($launcher.FullName)"
+          Write-Host "Found bundled runtime: $($runtimeJava.FullName)"
 
       - name: Install Linux packaging tools
         if: runner.os == 'Linux'

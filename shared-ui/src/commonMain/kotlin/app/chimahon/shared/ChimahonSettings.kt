@@ -55,6 +55,8 @@ enum class ChimahonThemeMode(val title: String) {
 
 enum class ChimahonAppTheme(val title: String) {
     Default("Default"),
+    Monet("Monet"),
+    Custom("Custom"),
     Catppuccin("Catppuccin"),
     Cloudflare("Cloudflare"),
     CottonCandy("Cotton Candy"),
@@ -144,6 +146,7 @@ data class ChimahonReaderSettings(
     val grayscale: Boolean = false,
     val invertColors: Boolean = false,
     val brightness: Int = 0,
+    val doubleTapAnimationSpeedMillis: Int = 500,
     val navigationMode: ChimahonReaderNavigationMode = ChimahonReaderNavigationMode.Automatic,
     val showPageStrip: Boolean = true,
     val forceHorizontalSeekbar: Boolean = false,
@@ -165,6 +168,7 @@ data class ChimahonReaderSettings(
     val ocrOutlineVisible: Boolean = false,
     val cropBorders: Boolean = false,
     val pageTransitions: Boolean = true,
+    val eInkSwipeSensitivity: Boolean = false,
     val flashOnPageChange: Boolean = false,
     val flashDurationMillis: Int = 500,
     val flashPageInterval: Int = 1,
@@ -206,6 +210,18 @@ data class ChimahonReaderSettings(
     val useAutoWebtoon: Boolean = false,
     val invertDoublePages: Boolean = false,
     val centerMarginDp: Int = 0,
+    val pagedZoomStart: ChimahonReaderZoomStart = ChimahonReaderZoomStart.Automatic,
+    val landscapeZoom: Boolean = true,
+    val landscapeZoomType: ChimahonReaderLandscapeZoomType = ChimahonReaderLandscapeZoomType.Fit,
+    val pagedDisableZoomIn: Boolean = false,
+    val webtoonScaleType: ChimahonWebtoonScaleType = ChimahonWebtoonScaleType.Fit,
+    val smartLongStripGapScale: Boolean = false,
+    val webtoonSidePaddingPercent: Int = 0,
+    val webtoonReaderHideThreshold: ChimahonReaderHideThreshold = ChimahonReaderHideThreshold.Low,
+    val webtoonPinchToZoom: Boolean = true,
+    val webtoonDisableZoomOut: Boolean = false,
+    val continuousVerticalTappingByPage: Boolean = false,
+    val ocrAutoOnDownload: Boolean = false,
     val bottomButtons: List<String> = listOf(
         "chapters",
         "source",
@@ -238,6 +254,33 @@ enum class ChimahonReaderFlashColor {
     Black,
     White,
     WhiteBlack,
+}
+
+enum class ChimahonReaderZoomStart(val title: String) {
+    Automatic("Automatic"),
+    Left("Left"),
+    Right("Right"),
+    Center("Center"),
+}
+
+enum class ChimahonReaderLandscapeZoomType(val title: String) {
+    Fit("Fit screen"),
+    Double("Double zoom"),
+}
+
+enum class ChimahonWebtoonScaleType(val title: String) {
+    Fit("Fit screen"),
+    FourThree("4:3"),
+    ThreeTwo("3:2"),
+    SixteenNine("16:9"),
+    TwentyNine("20:9"),
+}
+
+enum class ChimahonReaderHideThreshold(val title: String) {
+    Highest("Highest"),
+    High("High"),
+    Low("Low"),
+    Lowest("Lowest"),
 }
 
 enum class ChimahonReaderOrientation {
@@ -388,6 +431,16 @@ data class ChimahonBrowseSettings(
     val groupSourcesByLanguage: Boolean = true,
     val showSourceLanguage: Boolean = true,
     val extensionUpdateNotificationsEnabled: Boolean = true,
+    val relatedMangaRecommendations: Boolean = true,
+    val expandRelatedMangaSections: Boolean = true,
+    val relatedMangaInOverflow: Boolean = false,
+    val showHomeInRelatedManga: Boolean = true,
+    val sourceCategoriesFilter: Boolean = false,
+    val useNewSourceNavigation: Boolean = true,
+    val allowLocalSourceHiddenFolders: Boolean = false,
+    val hideFeedTab: Boolean = false,
+    val feedTabInFront: Boolean = false,
+    val hideLibraryFeedEntries: Boolean = false,
 )
 
 enum class ChimahonBrowseSourceDisplayMode {
@@ -501,6 +554,7 @@ enum class ChimahonDictionaryRecursiveLookupMode(val title: String) {
 data class ChimahonSecuritySettings(
     val secureScreenMode: ChimahonSecureScreenMode = ChimahonSecureScreenMode.Incognito,
     val hideNotificationContent: Boolean = false,
+    val crashReportsEnabled: Boolean = false,
     val requireAuthentication: Boolean = false,
     val lockAfterMinutes: Int = 0,
     val lockOnAppExit: Boolean = false,
@@ -655,7 +709,15 @@ internal class ChimahonSettingsRepository(
     }
 
     suspend fun loadReaderSettings(): ChimahonReaderSettings {
-        return ChimahonReaderSettings(
+        return ChimahonReaderSettings()
+            .loadReaderDisplaySettings()
+            .loadReaderControlSettings()
+            .loadReaderReadingSettings()
+            .loadReaderPerformanceSettings()
+    }
+
+    private suspend fun ChimahonReaderSettings.loadReaderDisplaySettings(): ChimahonReaderSettings {
+        return copy(
             mode = readEnum(READER_MODE_KEY, ChimahonReaderMode.Webtoon),
             scale = readEnum(READER_SCALE_KEY, ChimahonReaderScale.FitWidth),
             canvas = readEnum(READER_CANVAS_KEY, ChimahonReaderCanvas.Black),
@@ -670,6 +732,15 @@ internal class ChimahonSettingsRepository(
             grayscale = settingsStore.readBoolean(READER_GRAYSCALE_KEY),
             invertColors = settingsStore.readBoolean(READER_INVERT_COLORS_KEY),
             brightness = settingsStore.readInt(READER_BRIGHTNESS_KEY),
+        )
+    }
+
+    private suspend fun ChimahonReaderSettings.loadReaderControlSettings(): ChimahonReaderSettings {
+        return copy(
+            doubleTapAnimationSpeedMillis = settingsStore.readInt(
+                READER_DOUBLE_TAP_ANIMATION_SPEED_KEY,
+                defaultValue = 500,
+            ),
             navigationMode = readEnum(
                 READER_NAVIGATION_MODE_KEY,
                 ChimahonReaderNavigationMode.Automatic,
@@ -700,9 +771,15 @@ internal class ChimahonSettingsRepository(
             keepScreenOn = settingsStore.readBoolean(READER_KEEP_SCREEN_ON_KEY),
             fullscreen = settingsStore.readBoolean(READER_FULLSCREEN_KEY, defaultValue = true),
             drawUnderCutout = settingsStore.readBoolean(READER_DRAW_UNDER_CUTOUT_KEY),
+        )
+    }
+
+    private suspend fun ChimahonReaderSettings.loadReaderReadingSettings(): ChimahonReaderSettings {
+        return copy(
             ocrOutlineVisible = settingsStore.readBoolean(READER_OCR_OUTLINE_VISIBLE_KEY),
             cropBorders = settingsStore.readBoolean(READER_CROP_BORDERS_KEY),
             pageTransitions = settingsStore.readBoolean(READER_PAGE_TRANSITIONS_KEY, defaultValue = true),
+            eInkSwipeSensitivity = settingsStore.readBoolean(READER_E_INK_SWIPE_SENSITIVITY_KEY),
             flashOnPageChange = settingsStore.readBoolean(READER_FLASH_ON_PAGE_CHANGE_KEY),
             flashDurationMillis = settingsStore.readInt(READER_FLASH_DURATION_MILLIS_KEY, defaultValue = 500),
             flashPageInterval = settingsStore.readInt(READER_FLASH_PAGE_INTERVAL_KEY, defaultValue = 1),
@@ -725,6 +802,11 @@ internal class ChimahonSettingsRepository(
             showProgressTop = settingsStore.readBoolean(READER_SHOW_PROGRESS_TOP_KEY, defaultValue = true),
             showReadingSpeed = settingsStore.readBoolean(READER_SHOW_READING_SPEED_KEY, defaultValue = true),
             showReadingTime = settingsStore.readBoolean(READER_SHOW_READING_TIME_KEY, defaultValue = true),
+        )
+    }
+
+    private suspend fun ChimahonReaderSettings.loadReaderPerformanceSettings(): ChimahonReaderSettings {
+        return copy(
             tapZonePercent = settingsStore.readInt(READER_TAP_ZONE_PERCENT_KEY, defaultValue = 20),
             chapterSwipeDistance = settingsStore.readInt(READER_CHAPTER_SWIPE_DISTANCE_KEY, defaultValue = 96),
             readerStartupDelay = settingsStore.readBoolean(READER_STARTUP_DELAY_KEY),
@@ -749,6 +831,29 @@ internal class ChimahonSettingsRepository(
             useAutoWebtoon = settingsStore.readBoolean(READER_USE_AUTO_WEBTOON_KEY),
             invertDoublePages = settingsStore.readBoolean(READER_INVERT_DOUBLE_PAGES_KEY),
             centerMarginDp = settingsStore.readInt(READER_CENTER_MARGIN_DP_KEY),
+            pagedZoomStart = readEnum(READER_PAGED_ZOOM_START_KEY, ChimahonReaderZoomStart.Automatic),
+            landscapeZoom = settingsStore.readBoolean(READER_LANDSCAPE_ZOOM_KEY, defaultValue = true),
+            landscapeZoomType = readEnum(
+                READER_LANDSCAPE_ZOOM_TYPE_KEY,
+                ChimahonReaderLandscapeZoomType.Fit,
+            ),
+            pagedDisableZoomIn = settingsStore.readBoolean(READER_PAGED_DISABLE_ZOOM_IN_KEY),
+            webtoonScaleType = readEnum(READER_WEBTOON_SCALE_TYPE_KEY, ChimahonWebtoonScaleType.Fit),
+            smartLongStripGapScale = settingsStore.readBoolean(READER_SMART_LONG_STRIP_GAP_SCALE_KEY),
+            webtoonSidePaddingPercent = settingsStore.readInt(READER_WEBTOON_SIDE_PADDING_KEY),
+            webtoonReaderHideThreshold = readEnum(
+                READER_WEBTOON_HIDE_THRESHOLD_KEY,
+                ChimahonReaderHideThreshold.Low,
+            ),
+            webtoonPinchToZoom = settingsStore.readBoolean(
+                READER_WEBTOON_PINCH_TO_ZOOM_KEY,
+                defaultValue = true,
+            ),
+            webtoonDisableZoomOut = settingsStore.readBoolean(READER_WEBTOON_DISABLE_ZOOM_OUT_KEY),
+            continuousVerticalTappingByPage = settingsStore.readBoolean(
+                READER_CONTINUOUS_VERTICAL_TAPPING_BY_PAGE_KEY,
+            ),
+            ocrAutoOnDownload = settingsStore.readBoolean(READER_OCR_AUTO_ON_DOWNLOAD_KEY),
             bottomButtons = readStringList(
                 READER_BOTTOM_BUTTONS_KEY,
                 defaultValue = ChimahonReaderSettings().bottomButtons,
@@ -768,6 +873,10 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(READER_GRAYSCALE_KEY, settings.grayscale)
         settingsStore.writeBoolean(READER_INVERT_COLORS_KEY, settings.invertColors)
         settingsStore.writeInt(READER_BRIGHTNESS_KEY, settings.brightness)
+        settingsStore.writeInt(
+            READER_DOUBLE_TAP_ANIMATION_SPEED_KEY,
+            settings.doubleTapAnimationSpeedMillis,
+        )
         settingsStore.writeString(READER_NAVIGATION_MODE_KEY, settings.navigationMode.name)
         settingsStore.writeBoolean(READER_PAGE_STRIP_KEY, settings.showPageStrip)
         settingsStore.writeBoolean(READER_FORCE_HORIZONTAL_SEEKBAR_KEY, settings.forceHorizontalSeekbar)
@@ -789,6 +898,7 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(READER_OCR_OUTLINE_VISIBLE_KEY, settings.ocrOutlineVisible)
         settingsStore.writeBoolean(READER_CROP_BORDERS_KEY, settings.cropBorders)
         settingsStore.writeBoolean(READER_PAGE_TRANSITIONS_KEY, settings.pageTransitions)
+        settingsStore.writeBoolean(READER_E_INK_SWIPE_SENSITIVITY_KEY, settings.eInkSwipeSensitivity)
         settingsStore.writeBoolean(READER_FLASH_ON_PAGE_CHANGE_KEY, settings.flashOnPageChange)
         settingsStore.writeInt(READER_FLASH_DURATION_MILLIS_KEY, settings.flashDurationMillis)
         settingsStore.writeInt(READER_FLASH_PAGE_INTERVAL_KEY, settings.flashPageInterval)
@@ -833,6 +943,27 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(READER_USE_AUTO_WEBTOON_KEY, settings.useAutoWebtoon)
         settingsStore.writeBoolean(READER_INVERT_DOUBLE_PAGES_KEY, settings.invertDoublePages)
         settingsStore.writeInt(READER_CENTER_MARGIN_DP_KEY, settings.centerMarginDp)
+        settingsStore.writeString(READER_PAGED_ZOOM_START_KEY, settings.pagedZoomStart.name)
+        settingsStore.writeBoolean(READER_LANDSCAPE_ZOOM_KEY, settings.landscapeZoom)
+        settingsStore.writeString(READER_LANDSCAPE_ZOOM_TYPE_KEY, settings.landscapeZoomType.name)
+        settingsStore.writeBoolean(READER_PAGED_DISABLE_ZOOM_IN_KEY, settings.pagedDisableZoomIn)
+        settingsStore.writeString(READER_WEBTOON_SCALE_TYPE_KEY, settings.webtoonScaleType.name)
+        settingsStore.writeBoolean(
+            READER_SMART_LONG_STRIP_GAP_SCALE_KEY,
+            settings.smartLongStripGapScale,
+        )
+        settingsStore.writeInt(READER_WEBTOON_SIDE_PADDING_KEY, settings.webtoonSidePaddingPercent)
+        settingsStore.writeString(
+            READER_WEBTOON_HIDE_THRESHOLD_KEY,
+            settings.webtoonReaderHideThreshold.name,
+        )
+        settingsStore.writeBoolean(READER_WEBTOON_PINCH_TO_ZOOM_KEY, settings.webtoonPinchToZoom)
+        settingsStore.writeBoolean(READER_WEBTOON_DISABLE_ZOOM_OUT_KEY, settings.webtoonDisableZoomOut)
+        settingsStore.writeBoolean(
+            READER_CONTINUOUS_VERTICAL_TAPPING_BY_PAGE_KEY,
+            settings.continuousVerticalTappingByPage,
+        )
+        settingsStore.writeBoolean(READER_OCR_AUTO_ON_DOWNLOAD_KEY, settings.ocrAutoOnDownload)
         writeStringList(READER_BOTTOM_BUTTONS_KEY, settings.bottomButtons)
         return settings
     }
@@ -1068,6 +1199,30 @@ internal class ChimahonSettingsRepository(
                 BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY,
                 defaultValue = true,
             ),
+            relatedMangaRecommendations = settingsStore.readBoolean(
+                BROWSE_RELATED_MANGA_RECOMMENDATIONS_KEY,
+                defaultValue = true,
+            ),
+            expandRelatedMangaSections = settingsStore.readBoolean(
+                BROWSE_EXPAND_RELATED_MANGA_KEY,
+                defaultValue = true,
+            ),
+            relatedMangaInOverflow = settingsStore.readBoolean(BROWSE_RELATED_MANGA_IN_OVERFLOW_KEY),
+            showHomeInRelatedManga = settingsStore.readBoolean(
+                BROWSE_SHOW_HOME_IN_RELATED_MANGA_KEY,
+                defaultValue = true,
+            ),
+            sourceCategoriesFilter = settingsStore.readBoolean(BROWSE_SOURCE_CATEGORIES_FILTER_KEY),
+            useNewSourceNavigation = settingsStore.readBoolean(
+                BROWSE_USE_NEW_SOURCE_NAVIGATION_KEY,
+                defaultValue = true,
+            ),
+            allowLocalSourceHiddenFolders = settingsStore.readBoolean(
+                BROWSE_ALLOW_LOCAL_SOURCE_HIDDEN_FOLDERS_KEY,
+            ),
+            hideFeedTab = settingsStore.readBoolean(BROWSE_HIDE_FEED_TAB_KEY),
+            feedTabInFront = settingsStore.readBoolean(BROWSE_FEED_TAB_IN_FRONT_KEY),
+            hideLibraryFeedEntries = settingsStore.readBoolean(BROWSE_HIDE_LIBRARY_FEED_ENTRIES_KEY),
         )
     }
 
@@ -1089,6 +1244,25 @@ internal class ChimahonSettingsRepository(
             BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY,
             settings.extensionUpdateNotificationsEnabled,
         )
+        settingsStore.writeBoolean(
+            BROWSE_RELATED_MANGA_RECOMMENDATIONS_KEY,
+            settings.relatedMangaRecommendations,
+        )
+        settingsStore.writeBoolean(BROWSE_EXPAND_RELATED_MANGA_KEY, settings.expandRelatedMangaSections)
+        settingsStore.writeBoolean(BROWSE_RELATED_MANGA_IN_OVERFLOW_KEY, settings.relatedMangaInOverflow)
+        settingsStore.writeBoolean(
+            BROWSE_SHOW_HOME_IN_RELATED_MANGA_KEY,
+            settings.showHomeInRelatedManga,
+        )
+        settingsStore.writeBoolean(BROWSE_SOURCE_CATEGORIES_FILTER_KEY, settings.sourceCategoriesFilter)
+        settingsStore.writeBoolean(BROWSE_USE_NEW_SOURCE_NAVIGATION_KEY, settings.useNewSourceNavigation)
+        settingsStore.writeBoolean(
+            BROWSE_ALLOW_LOCAL_SOURCE_HIDDEN_FOLDERS_KEY,
+            settings.allowLocalSourceHiddenFolders,
+        )
+        settingsStore.writeBoolean(BROWSE_HIDE_FEED_TAB_KEY, settings.hideFeedTab)
+        settingsStore.writeBoolean(BROWSE_FEED_TAB_IN_FRONT_KEY, settings.feedTabInFront)
+        settingsStore.writeBoolean(BROWSE_HIDE_LIBRARY_FEED_ENTRIES_KEY, settings.hideLibraryFeedEntries)
         return settings
     }
 
@@ -1335,6 +1509,7 @@ internal class ChimahonSettingsRepository(
         return ChimahonSecuritySettings(
             secureScreenMode = readEnum(SECURITY_SECURE_SCREEN_KEY, ChimahonSecureScreenMode.Incognito),
             hideNotificationContent = settingsStore.readBoolean(SECURITY_HIDE_NOTIFICATION_CONTENT_KEY),
+            crashReportsEnabled = settingsStore.readBoolean(SECURITY_CRASH_REPORTS_ENABLED_KEY),
             requireAuthentication = settingsStore.readBoolean(SECURITY_REQUIRE_AUTHENTICATION_KEY),
             lockAfterMinutes = settingsStore.readInt(SECURITY_LOCK_AFTER_MINUTES_KEY),
             lockOnAppExit = settingsStore.readBoolean(SECURITY_LOCK_ON_APP_EXIT_KEY),
@@ -1368,6 +1543,7 @@ internal class ChimahonSettingsRepository(
             SECURITY_HIDE_NOTIFICATION_CONTENT_KEY,
             settings.hideNotificationContent,
         )
+        settingsStore.writeBoolean(SECURITY_CRASH_REPORTS_ENABLED_KEY, settings.crashReportsEnabled)
         settingsStore.writeBoolean(SECURITY_REQUIRE_AUTHENTICATION_KEY, settings.requireAuthentication)
         settingsStore.writeInt(SECURITY_LOCK_AFTER_MINUTES_KEY, settings.lockAfterMinutes)
         settingsStore.writeBoolean(SECURITY_LOCK_ON_APP_EXIT_KEY, settings.lockOnAppExit)
@@ -1492,6 +1668,8 @@ internal class ChimahonSettingsRepository(
         const val READER_GRAYSCALE_KEY = "__APP_STATE_chimahon_reader_grayscale"
         const val READER_INVERT_COLORS_KEY = "__APP_STATE_chimahon_reader_invert_colors"
         const val READER_BRIGHTNESS_KEY = "__APP_STATE_chimahon_reader_brightness"
+        const val READER_DOUBLE_TAP_ANIMATION_SPEED_KEY =
+            "__APP_STATE_chimahon_reader_double_tap_animation_speed"
         const val READER_NAVIGATION_MODE_KEY = "__APP_STATE_chimahon_reader_navigation_mode"
         const val READER_PAGE_STRIP_KEY = "__APP_STATE_chimahon_reader_page_strip"
         const val READER_FORCE_HORIZONTAL_SEEKBAR_KEY =
@@ -1517,6 +1695,8 @@ internal class ChimahonSettingsRepository(
             "__APP_STATE_chimahon_reader_ocr_outline_visible"
         const val READER_CROP_BORDERS_KEY = "__APP_STATE_chimahon_reader_crop_borders"
         const val READER_PAGE_TRANSITIONS_KEY = "__APP_STATE_chimahon_reader_page_transitions"
+        const val READER_E_INK_SWIPE_SENSITIVITY_KEY =
+            "__APP_STATE_chimahon_reader_e_ink_swipe_sensitivity"
         const val READER_FLASH_ON_PAGE_CHANGE_KEY =
             "__APP_STATE_chimahon_reader_flash_on_page_change"
         const val READER_FLASH_DURATION_MILLIS_KEY =
@@ -1571,6 +1751,28 @@ internal class ChimahonSettingsRepository(
         const val READER_INVERT_DOUBLE_PAGES_KEY =
             "__APP_STATE_chimahon_reader_invert_double_pages"
         const val READER_CENTER_MARGIN_DP_KEY = "__APP_STATE_chimahon_reader_center_margin_dp"
+        const val READER_PAGED_ZOOM_START_KEY = "__APP_STATE_chimahon_reader_paged_zoom_start"
+        const val READER_LANDSCAPE_ZOOM_KEY = "__APP_STATE_chimahon_reader_landscape_zoom"
+        const val READER_LANDSCAPE_ZOOM_TYPE_KEY =
+            "__APP_STATE_chimahon_reader_landscape_zoom_type"
+        const val READER_PAGED_DISABLE_ZOOM_IN_KEY =
+            "__APP_STATE_chimahon_reader_paged_disable_zoom_in"
+        const val READER_WEBTOON_SCALE_TYPE_KEY =
+            "__APP_STATE_chimahon_reader_webtoon_scale_type"
+        const val READER_SMART_LONG_STRIP_GAP_SCALE_KEY =
+            "__APP_STATE_chimahon_reader_smart_long_strip_gap_scale"
+        const val READER_WEBTOON_SIDE_PADDING_KEY =
+            "__APP_STATE_chimahon_reader_webtoon_side_padding"
+        const val READER_WEBTOON_HIDE_THRESHOLD_KEY =
+            "__APP_STATE_chimahon_reader_webtoon_hide_threshold"
+        const val READER_WEBTOON_PINCH_TO_ZOOM_KEY =
+            "__APP_STATE_chimahon_reader_webtoon_pinch_to_zoom"
+        const val READER_WEBTOON_DISABLE_ZOOM_OUT_KEY =
+            "__APP_STATE_chimahon_reader_webtoon_disable_zoom_out"
+        const val READER_CONTINUOUS_VERTICAL_TAPPING_BY_PAGE_KEY =
+            "__APP_STATE_chimahon_reader_continuous_vertical_tapping_by_page"
+        const val READER_OCR_AUTO_ON_DOWNLOAD_KEY =
+            "__APP_STATE_chimahon_reader_ocr_auto_on_download"
         const val READER_BOTTOM_BUTTONS_KEY = "__APP_STATE_chimahon_reader_bottom_buttons"
         const val LIBRARY_DISPLAY_MODE_KEY = "__APP_STATE_chimahon_library_display_mode"
         const val LIBRARY_GRID_COLUMNS_PORTRAIT_KEY =
@@ -1664,6 +1866,25 @@ internal class ChimahonSettingsRepository(
             "__APP_STATE_chimahon_browse_show_source_language"
         const val BROWSE_EXTENSION_UPDATE_NOTIFICATIONS_KEY =
             "__APP_STATE_chimahon_browse_extension_update_notifications"
+        const val BROWSE_RELATED_MANGA_RECOMMENDATIONS_KEY =
+            "__APP_STATE_chimahon_browse_related_manga_recommendations"
+        const val BROWSE_EXPAND_RELATED_MANGA_KEY =
+            "__APP_STATE_chimahon_browse_expand_related_manga"
+        const val BROWSE_RELATED_MANGA_IN_OVERFLOW_KEY =
+            "__APP_STATE_chimahon_browse_related_manga_in_overflow"
+        const val BROWSE_SHOW_HOME_IN_RELATED_MANGA_KEY =
+            "__APP_STATE_chimahon_browse_show_home_in_related_manga"
+        const val BROWSE_SOURCE_CATEGORIES_FILTER_KEY =
+            "__APP_STATE_chimahon_browse_source_categories_filter"
+        const val BROWSE_USE_NEW_SOURCE_NAVIGATION_KEY =
+            "__APP_STATE_chimahon_browse_use_new_source_navigation"
+        const val BROWSE_ALLOW_LOCAL_SOURCE_HIDDEN_FOLDERS_KEY =
+            "__APP_STATE_chimahon_browse_allow_local_source_hidden_folders"
+        const val BROWSE_HIDE_FEED_TAB_KEY = "__APP_STATE_chimahon_browse_hide_feed_tab"
+        const val BROWSE_FEED_TAB_IN_FRONT_KEY =
+            "__APP_STATE_chimahon_browse_feed_tab_in_front"
+        const val BROWSE_HIDE_LIBRARY_FEED_ENTRIES_KEY =
+            "__APP_STATE_chimahon_browse_hide_library_feed_entries"
         const val TRACKING_AUTO_SYNC_ENABLED_KEY =
             "__APP_STATE_chimahon_tracking_auto_sync_enabled"
         const val TRACKING_UPDATE_INTERVAL_HOURS_KEY =
@@ -1759,6 +1980,8 @@ internal class ChimahonSettingsRepository(
         const val SECURITY_SECURE_SCREEN_KEY = "__APP_STATE_chimahon_security_secure_screen"
         const val SECURITY_HIDE_NOTIFICATION_CONTENT_KEY =
             "__APP_STATE_chimahon_security_hide_notification_content"
+        const val SECURITY_CRASH_REPORTS_ENABLED_KEY =
+            "__APP_STATE_chimahon_security_crash_reports_enabled"
         const val SECURITY_REQUIRE_AUTHENTICATION_KEY =
             "__APP_STATE_chimahon_security_require_authentication"
         const val SECURITY_LOCK_AFTER_MINUTES_KEY = "__APP_STATE_chimahon_security_lock_after_minutes"
