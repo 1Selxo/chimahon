@@ -3569,12 +3569,27 @@ private fun SourceDetailHome(
                     )
                 }
                 is SourcePreviewUiState.Ready -> {
-                    if (preview.preview.entries.isEmpty()) {
+                    val libraryRemoteKeys = snapshot.mangaDetails.values
+                        .map { "${it.sourceId}:${it.url}" }
+                        .toSet()
+                    val visiblePreview = preview.preview.copy(
+                        entries = preview.preview.entries.filter { entry ->
+                            !browseSettings.hideLibraryEntries ||
+                                "${entry.sourceId}:${entry.url}" !in libraryRemoteKeys
+                        },
+                    )
+                    if (visiblePreview.entries.isEmpty()) {
                         EmptyMobileState(
                             marker = "S",
-                            title = "No entries returned",
+                            title = if (preview.preview.entries.isEmpty()) {
+                                "No entries returned"
+                            } else {
+                                "No new entries"
+                            },
                             detail = if (preview.preview.mode == ChimahonSourceBrowseMode.Search) {
                                 "No results matched \"$submittedQuery\"."
+                            } else if (preview.preview.entries.isNotEmpty()) {
+                                "All returned titles are already in your library. Disable Hide library entries to show them."
                             } else {
                                 "${source.name} returned an empty ${preview.preview.mode.title.lowercase()} page."
                             },
@@ -3583,15 +3598,15 @@ private fun SourceDetailHome(
                         val gridState = rememberLazyGridState()
                         LaunchedEffect(
                             gridState,
-                            preview.preview.entries.size,
-                            preview.preview.hasNextPage,
+                            visiblePreview.entries.size,
+                            visiblePreview.hasNextPage,
                             browseSettings.autoLoadMore,
                             loadingMore,
                             loadMoreError,
                         ) {
                             if (
                                 !browseSettings.autoLoadMore ||
-                                !preview.preview.hasNextPage ||
+                                !visiblePreview.hasNextPage ||
                                 loadingMore ||
                                 loadMoreError != null
                             ) {
@@ -3619,19 +3634,17 @@ private fun SourceDetailHome(
                             verticalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
-                                SourcePreviewHeader(preview.preview)
+                                SourcePreviewHeader(visiblePreview)
                             }
-                            items(preview.preview.entries, key = { "${it.sourceId}:${it.url}" }) { entry ->
+                            items(visiblePreview.entries, key = { "${it.sourceId}:${it.url}" }) { entry ->
                                 RemoteMangaGridCard(
                                     entry = entry,
-                                    inLibrary = snapshot.mangaDetails.values.any {
-                                        it.sourceId == entry.sourceId && it.url == entry.url
-                                    },
+                                    inLibrary = "${entry.sourceId}:${entry.url}" in libraryRemoteKeys,
                                     onClick = { onOpenRemoteManga(entry) },
                                 )
                             }
                             if (
-                                preview.preview.hasNextPage &&
+                                visiblePreview.hasNextPage &&
                                 (!browseSettings.autoLoadMore || loadingMore || loadMoreError != null)
                             ) {
                                 item(span = { GridItemSpan(maxLineSpan) }) {
