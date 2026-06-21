@@ -17,6 +17,11 @@ internal actual class ChimahonPlatformServices actual constructor() {
     actual val platformName: String = "Desktop"
     actual val backgroundState: String = "Coroutine scheduler ready"
     actual val storageDirectories: PlatformStorageDirectories = DesktopPlatformStorageDirectories(APP_NAME)
+
+    init {
+        storageDirectories.ensureChimahonDirectories()
+    }
+
     actual val sourceRegistry: SourceRegistry = SourceRegistry()
     actual val apkExtensionManager = ChimahonPlatformApkExtensionManager(storageDirectories, sourceRegistry)
     private val databaseDriver = DesktopDatabaseDriverFactory(
