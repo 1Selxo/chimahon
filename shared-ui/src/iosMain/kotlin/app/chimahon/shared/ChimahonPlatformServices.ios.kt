@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceRegistry
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ScriptHttpSource
+import kotlinx.cinterop.ExperimentalForeignApi
 import okio.FileSystem
 import platform.posix.time
 import tachiyomi.core.database.NativeDatabaseDriverFactory
@@ -38,14 +39,16 @@ internal actual class ChimahonPlatformServices actual constructor() {
     actual val databaseHandler: DatabaseHandler = NativeDatabaseHandler(database, databaseDriver)
     actual val javaScriptRuntimeFactory: JavaScriptRuntimeFactory = IosJavaScriptRuntimeFactory
 
+    @OptIn(ExperimentalForeignApi::class)
     actual fun currentTimeMillis(): Long {
         return time(null) * 1_000L
     }
 
     actual fun resolveExternalMangaUrl(source: CatalogueSource, manga: SManga): String? {
+        val mangaUrl = manga.safeSourceUrl()
         return when (source) {
-            is ScriptHttpSource -> resolveScriptMangaUrl(source.baseUrl, manga.url)
-            else -> manga.url
+            is ScriptHttpSource -> resolveScriptMangaUrl(source.baseUrl, mangaUrl)
+            else -> mangaUrl
         }
     }
 
@@ -79,6 +82,12 @@ private fun resolveScriptMangaUrl(baseUrl: String, path: String): String? {
     } else {
         "$root/${candidate.trimStart('/')}"
     }
+}
+
+private fun SManga.safeSourceUrl(): String {
+    return runCatching { url }
+        .getOrNull()
+        .orEmpty()
 }
 
 private fun String.hasUrlScheme(): Boolean {

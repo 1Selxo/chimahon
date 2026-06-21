@@ -929,7 +929,15 @@ class ChimahonSharedAppServices private constructor(
             thumbnail_url = remoteManga.thumbnailUrl,
             initialized = remoteManga.initialized,
         )
-        val details = source.getMangaDetails(seed).withSeedFallback(seed)
+        val details = runCatching {
+            source.getMangaDetails(seed).withSeedFallback(seed)
+        }.getOrElse { error ->
+            if (error.isUninitializedSourceUrlFailure()) {
+                seed.withSeedFallback(seed)
+            } else {
+                throw error
+            }
+        }
         val chapters = source.getChapterList(details)
 
         return ChimahonRemoteMangaDetail(
@@ -942,7 +950,7 @@ class ChimahonSharedAppServices private constructor(
             genres = details.getGenres().orEmpty(),
             status = mangaStatus(details.status.toLong()),
             statusCode = details.status.toLong(),
-            url = details.url,
+            url = details.safeUrl(remoteManga.url),
             thumbnailUrl = details.thumbnail_url,
             initialized = details.initialized,
             chapters = chapters
@@ -1966,8 +1974,8 @@ private fun Mangas.toSharedMangaEntry(): ChimahonMangaEntry {
 }
 
 internal fun SManga.withSeedFallback(seed: SManga): SManga {
-    if (runCatching { url }.getOrNull().isNullOrBlank()) {
-        url = seed.url
+    if (safeUrl().isBlank()) {
+        url = seed.safeUrl()
     }
     if (title.isBlank()) {
         title = seed.title
@@ -1980,6 +1988,33 @@ internal fun SManga.withSeedFallback(seed: SManga): SManga {
     }
     initialized = true
     return this
+}
+
+private fun Throwable.isUninitializedSourceUrlFailure(): Boolean {
+    val detail = message.orEmpty()
+    return detail.contains("url", ignoreCase = true) &&
+        detail.contains("initialized", ignoreCase = true)
+}
+
+private fun SManga.safeUrl(fallback: String = ""): String {
+    return runCatching { url }
+        .getOrNull()
+        .orEmpty()
+        .ifBlank { fallback }
+}
+
+private fun SChapter.safeUrl(fallback: String = ""): String {
+    return runCatching { url }
+        .getOrNull()
+        .orEmpty()
+        .ifBlank { fallback }
+}
+
+private fun SChapter.safeName(): String {
+    return runCatching { name }
+        .getOrNull()
+        .orEmpty()
+        .ifBlank { "Chapter" }
 }
 
 private fun CatalogueSource.toSharedSourceEntry(): ChimahonSourceEntry {
@@ -2088,7 +2123,7 @@ private fun SManga.toRemoteMangaEntry(sourceId: Long): ChimahonRemoteMangaEntry 
         title = title,
         author = author ?: artist,
         status = mangaStatus(status.toLong()),
-        url = url,
+        url = safeUrl(),
         thumbnailUrl = thumbnail_url,
         initialized = initialized,
     )
@@ -2096,8 +2131,8 @@ private fun SManga.toRemoteMangaEntry(sourceId: Long): ChimahonRemoteMangaEntry 
 
 private fun SChapter.toRemoteChapterEntry(): ChimahonRemoteChapterEntry {
     return ChimahonRemoteChapterEntry(
-        name = name,
-        url = url,
+        name = safeName(),
+        url = safeUrl(),
         chapterNumber = chapter_number.toDouble(),
         scanlator = scanlator,
         dateUpload = date_upload,

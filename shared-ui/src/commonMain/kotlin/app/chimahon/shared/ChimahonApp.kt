@@ -8629,12 +8629,20 @@ private fun ReaderScaffold(
                         }
                     }
                     Key.MoveHome -> {
-                        onPageSelected(0)
-                        true
+                        if (pageCount > 0) {
+                            onPageSelected(0)
+                            true
+                        } else {
+                            false
+                        }
                     }
                     Key.MoveEnd -> {
-                        onPageSelected(pageCount - 1)
-                        true
+                        if (pageCount > 0) {
+                            onPageSelected(pageCount - 1)
+                            true
+                        } else {
+                            false
+                        }
                     }
                     Key.Escape -> {
                         when {
@@ -8692,10 +8700,23 @@ private fun ReaderScaffold(
                         true
                     }
                 }
-                .pointerInput(currentPage, pageCount, controlsVisible, readerSettings, inputLocked) {
+                .pointerInput(
+                    currentPage,
+                    pageCount,
+                    controlsVisible,
+                    readerSettings,
+                    inputLocked,
+                    onMarkChapterRead,
+                ) {
                     detectTapGestures(
                         onLongPress = {
-                            if (!inputLocked && readerSettings.longTapEnabled) onToggleControls()
+                            if (!inputLocked && readerSettings.longTapEnabled) {
+                                if (readerSettings.readWithLongTap && onMarkChapterRead != null) {
+                                    onMarkChapterRead()
+                                } else {
+                                    onToggleControls()
+                                }
+                            }
                         },
                         onDoubleTap = {
                             if (!inputLocked && readerSettings.doubleTapToZoom) {
@@ -12962,8 +12983,8 @@ private fun ExtensionsSection(
     var repoActionMessage by remember { mutableStateOf<String?>(null) }
     var catalogRequestKey by remember { mutableIntStateOf(0) }
     var catalogState by remember { mutableStateOf<ExtensionRepoCatalogUiState>(ExtensionRepoCatalogUiState.Idle) }
-    var installingExtensionId by remember { mutableStateOf<String?>(null) }
-    var uninstallingExtensionId by remember { mutableStateOf<String?>(null) }
+    var installingExtensionKey by remember { mutableStateOf<ExtensionInstallKey?>(null) }
+    var uninstallingExtensionKey by remember { mutableStateOf<ExtensionInstallKey?>(null) }
     var installMessage by remember { mutableStateOf<String?>(null) }
     var uninstallMessage by remember { mutableStateOf<String?>(null) }
     var selectedFilter by remember { mutableStateOf(ExtensionFilter.All) }
@@ -13018,14 +13039,18 @@ private fun ExtensionsSection(
     ) {
         mutableIntStateOf(EXTENSION_CATALOG_PAGE_SIZE)
     }
+    val extensionAutoLoadMore = true
     val visibleExtensions = filteredExtensions.take(visibleExtensionCount)
     val hasMoreExtensions = visibleExtensionCount < filteredExtensions.size
     val catalogTotalCount = readyCatalog?.catalog?.extensions?.size ?: 0
 
     LaunchedEffect(snapshot.extensionRepos) {
-        selectedRepo = snapshot.extensionRepos.firstOrNull { it.baseUrl == selectedRepo?.baseUrl }
-            ?: selectedRepo?.takeIf { repo -> snapshot.extensionRepos.none { it.baseUrl == repo.baseUrl } }
+        val selectedBaseUrl = selectedRepo?.baseUrl
+        selectedRepo = snapshot.extensionRepos.firstOrNull { it.baseUrl == selectedBaseUrl }
             ?: snapshot.extensionRepos.firstOrNull()
+        if (selectedRepo == null) {
+            catalogState = ExtensionRepoCatalogUiState.Idle
+        }
     }
 
     LaunchedEffect(repoInputRequestKey) {
@@ -13052,12 +13077,12 @@ private fun ExtensionsSection(
 
     LaunchedEffect(
         listState,
-        browseSettings.autoLoadMore,
+        extensionAutoLoadMore,
         hasMoreExtensions,
         visibleExtensionCount,
         filteredExtensions.size,
     ) {
-        if (!browseSettings.autoLoadMore || !hasMoreExtensions) return@LaunchedEffect
+        if (!extensionAutoLoadMore || !hasMoreExtensions) return@LaunchedEffect
         snapshotFlow {
             val layoutInfo = listState.layoutInfo
             val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
