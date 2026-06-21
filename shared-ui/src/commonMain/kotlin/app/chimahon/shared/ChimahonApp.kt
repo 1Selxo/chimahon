@@ -857,6 +857,7 @@ fun ChimahonApp(
                         selected = selectedTab,
                         state = state,
                         compact = persistedSettings.appearance.compactNavigation,
+                        appIcon = persistedSettings.appearance.appIcon,
                         onSelect = {
                             selectedTab = it
                             homeSearchActive = false
@@ -1617,6 +1618,7 @@ private fun HomeNavigationRail(
     selected: HomeTab,
     state: ChimahonUiState,
     compact: Boolean,
+    appIcon: ChimahonAppIcon,
     onSelect: (HomeTab) -> Unit,
 ) {
     Column(
@@ -1628,7 +1630,7 @@ private fun HomeNavigationRail(
             .padding(vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AppMark()
+        AppMark(appIcon = appIcon)
         Spacer(Modifier.height(if (compact) 10.dp else 18.dp))
         HomeTab.entries.forEach { tab ->
             RailItem(
@@ -6102,6 +6104,26 @@ private fun ReaderSettingsPanel(
             checked = settings.invertColors,
             onCheckedChange = { onSettingsChange(settings.copy(invertColors = it, colorFilterEnabled = true)) },
         )
+        ReaderValueStepperRow(
+            label = "Brightness",
+            value = settings.brightness.toString(),
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(
+                        brightness = (settings.brightness - 5).coerceIn(-100, 100),
+                        colorFilterEnabled = true,
+                    ),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(
+                        brightness = (settings.brightness + 5).coerceIn(-100, 100),
+                        colorFilterEnabled = true,
+                    ),
+                )
+            },
+        )
         ReaderSheetSectionTitle("Navigation")
         ReaderOptionRow(
             label = "Navigation",
@@ -10339,7 +10361,7 @@ private fun MoreHome(
         contentPadding = PaddingValues(bottom = 16.dp),
     ) {
         item {
-            MoreLogoHeader(snapshot)
+            MoreLogoHeader(snapshot, settings.appearance.appIcon)
         }
         item {
             PreferenceSwitchRow(
@@ -12200,7 +12222,7 @@ private fun MoreDetailPage(
                 }
                 MorePage.About -> {
                     item {
-                        MoreLogoHeader(snapshot)
+                        MoreLogoHeader(snapshot, settings.appearance.appIcon)
                     }
                     item { RuntimeLineRow("Database", snapshot.runtime.databaseState) }
                     item { RuntimeLineRow("Extension engine", snapshot.runtime.extensionState) }
@@ -12944,14 +12966,17 @@ private fun RuntimeLineRow(
 }
 
 @Composable
-private fun MoreLogoHeader(snapshot: ChimahonSnapshot) {
+private fun MoreLogoHeader(
+    snapshot: ChimahonSnapshot,
+    appIcon: ChimahonAppIcon,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AppMark(size = 72.dp)
+        AppMark(size = 72.dp, appIcon = appIcon)
         Label(
             "Chimahon",
             ChimahonPalette.onSurface,
@@ -13426,15 +13451,35 @@ private fun ReaderTextAction(
 }
 
 @Composable
-private fun AppMark(size: androidx.compose.ui.unit.Dp = 44.dp) {
+private fun AppMark(
+    size: androidx.compose.ui.unit.Dp = 44.dp,
+    appIcon: ChimahonAppIcon = ChimahonAppIcon.Default,
+) {
+    val background = when (appIcon) {
+        ChimahonAppIcon.Default -> ChimahonPalette.primary
+        ChimahonAppIcon.Classic -> Color(0xFF5B587F)
+        ChimahonAppIcon.Monochrome -> ChimahonPalette.onSurface
+        ChimahonAppIcon.Legacy -> Color(0xFF4D6B8A)
+        ChimahonAppIcon.Tachiyomi -> Color(0xFF7E57C2)
+        ChimahonAppIcon.Mihon -> Color(0xFF3367D6)
+    }
+    val label = when (appIcon) {
+        ChimahonAppIcon.Default,
+        ChimahonAppIcon.Classic,
+        -> "C"
+        ChimahonAppIcon.Monochrome -> "M"
+        ChimahonAppIcon.Legacy -> "L"
+        ChimahonAppIcon.Tachiyomi -> "T"
+        ChimahonAppIcon.Mihon -> "M"
+    }
     Box(
         modifier = Modifier
             .size(size)
             .clip(RoundedCornerShape(12.dp))
-            .background(ChimahonPalette.primary),
+            .background(background),
         contentAlignment = Alignment.Center,
     ) {
-        Label("C", Color.White, if (size > 50.dp) 30 else 20, weight = FontWeight.Bold)
+        Label(label, Color.White, if (size > 50.dp) 30 else 20, weight = FontWeight.Bold)
     }
 }
 
