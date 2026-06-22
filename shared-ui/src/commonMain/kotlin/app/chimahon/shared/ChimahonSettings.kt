@@ -223,11 +223,12 @@ data class ChimahonReaderSettings(
     val continuousVerticalTappingByPage: Boolean = false,
     val ocrAutoOnDownload: Boolean = false,
     val bottomButtons: List<String> = listOf(
-        "chapters",
-        "source",
-        "mode",
-        "crop",
-        "stats",
+        "vc",
+        "wb",
+        "cbp",
+        "cbc",
+        "pl",
+        "ms",
     ),
 )
 

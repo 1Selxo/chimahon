@@ -72,12 +72,12 @@ import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.FormatListNumbered
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.Link
-import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.NewReleases
 import androidx.compose.material.icons.outlined.Palette
@@ -88,15 +88,18 @@ import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Reorder
+import androidx.compose.material.icons.outlined.ScreenRotation
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -124,6 +127,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -640,6 +644,13 @@ private fun ReaderMode.nextDesktopMode(): ReaderMode = when (this) {
     ReaderMode.Vertical -> ReaderMode.LeftToRight
     ReaderMode.LeftToRight -> ReaderMode.RightToLeft
     ReaderMode.RightToLeft -> ReaderMode.Webtoon
+}
+
+private fun ReaderMode.cropBottomButtonKey(): String = when (this) {
+    ReaderMode.Webtoon -> "cbw"
+    ReaderMode.Vertical -> "cbc"
+    ReaderMode.LeftToRight -> "cbp"
+    ReaderMode.RightToLeft -> "cbp"
 }
 
 private enum class ReaderScale(val title: String) {
@@ -1942,6 +1953,8 @@ private fun ReaderTopBar(
     onDownloadChapter: (() -> Unit)? = null,
     readBusy: Boolean = false,
     onMarkChapterRead: (() -> Unit)? = null,
+    onOpenChapterUrl: (() -> Unit)? = null,
+    onShareChapter: (() -> Unit)? = null,
 ) {
     val hudBackground = readerHudBackground(canvas)
     val hudContent = readerHudContent(canvas)
@@ -2024,6 +2037,22 @@ private fun ReaderTopBar(
                 contentDescription = "Mark chapter read",
                 active = readBusy,
                 enabled = !readBusy,
+                tint = hudContent,
+                onClick = it,
+            )
+        }
+        onOpenChapterUrl?.let {
+            ReaderAction(
+                icon = UiIcon.Web,
+                contentDescription = "Open in WebView",
+                tint = hudContent,
+                onClick = it,
+            )
+        }
+        onShareChapter?.let {
+            ReaderAction(
+                icon = UiIcon.Share,
+                contentDescription = "Share chapter",
                 tint = hudContent,
                 onClick = it,
             )
@@ -7787,6 +7816,16 @@ private fun ReaderContent(
     val openChapterUrl: (() -> Unit)? = chapter.request.chapterUrl
         .takeIf { it.isNotBlank() }
         ?.let { url -> { onOpenExternalUrl(url) } }
+    val shareChapterUrl: (() -> Unit)? = chapter.request.chapterUrl
+        .takeIf { it.isNotBlank() }
+        ?.let { url ->
+            {
+                ChimahonPlatformIntegration.shareText(
+                    text = url,
+                    title = chapter.request.mangaTitle.ifBlank { APP_NAME },
+                )
+            }
+        }
     val toggleControls = {
         controlsVisible = !controlsVisible
         if (!controlsVisible) {
@@ -7978,6 +8017,7 @@ private fun ReaderContent(
                 onMarkChapterRead = markChapterRead,
                 onDownloadChapter = downloadChapter,
                 onOpenChapterUrl = openChapterUrl,
+                onShareChapter = shareChapterUrl,
                 onBookmarkChapterRef = bookmarkChapterRef,
                 onDownloadChapterRef = downloadChapterRef,
                 onMarkChapterRefRead = markChapterRefRead,
@@ -8279,6 +8319,7 @@ private fun ReaderContent(
                 onMarkChapterRead = markChapterRead,
                 onDownloadChapter = downloadChapter,
                 onOpenChapterUrl = openChapterUrl,
+                onShareChapter = shareChapterUrl,
                 onBookmarkChapterRef = bookmarkChapterRef,
                 onDownloadChapterRef = downloadChapterRef,
                 onMarkChapterRefRead = markChapterRefRead,
@@ -8414,6 +8455,7 @@ private fun ReaderScaffold(
     onMarkChapterRead: (() -> Unit)?,
     onDownloadChapter: (() -> Unit)?,
     onOpenChapterUrl: (() -> Unit)?,
+    onShareChapter: (() -> Unit)?,
     onBookmarkChapterRef: (ChimahonReaderChapterRef) -> Unit,
     onDownloadChapterRef: (ChimahonReaderChapterRef) -> Unit,
     onMarkChapterRefRead: (ChimahonReaderChapterRef) -> Unit,
@@ -8933,6 +8975,8 @@ private fun ReaderScaffold(
                     onDownloadChapter = onDownloadChapter,
                     readBusy = readBusy,
                     onMarkChapterRead = onMarkChapterRead,
+                    onOpenChapterUrl = onOpenChapterUrl,
+                    onShareChapter = onShareChapter,
                 )
                 if (readerSettings.keepScreenOn) {
                     Label(
@@ -9068,11 +9112,30 @@ private fun ReaderScaffold(
                     wideLayout = readerWidth >= 720.dp,
                     bottomButtons = readerSettings.bottomButtons,
                     cropActive = readerSettings.cropBorders,
+                    orientation = readerSettings.orientation,
+                    dualPageMode = readerSettings.dualPageMode,
+                    invertDoublePages = readerSettings.invertDoublePages,
                     showPercentage = readerSettings.showPercentage,
                     onOpenChapterUrl = onOpenChapterUrl,
+                    onShareChapter = onShareChapter,
                     onCycleMode = {
                         val nextIndex = (ReaderMode.entries.indexOf(mode) + 1) % ReaderMode.entries.size
                         onModeChange(ReaderMode.entries[nextIndex])
+                    },
+                    onCycleOrientation = {
+                        onReaderSettingsChange(
+                            readerSettings.copy(orientation = readerSettings.orientation.nextReaderOrientation()),
+                        )
+                    },
+                    onCyclePageLayout = {
+                        onReaderSettingsChange(
+                            readerSettings.copy(dualPageMode = readerSettings.dualPageMode.nextDualPageMode()),
+                        )
+                    },
+                    onShiftDoublePages = {
+                        onReaderSettingsChange(
+                            readerSettings.copy(invertDoublePages = !readerSettings.invertDoublePages),
+                        )
                     },
                     onToggleSettings = onToggleSettings,
                     onToggleChapters = onToggleChapters,
@@ -9570,17 +9633,24 @@ private fun ReaderPageIndicator(
     pageCount: Int,
     modifier: Modifier = Modifier,
 ) {
-    Label(
-        text = "$currentPage / $pageCount",
-        color = Color.White,
-        size = 11,
-        weight = FontWeight.Bold,
-        maxLines = 1,
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(ReaderPalette.chrome.copy(alpha = 0.78f))
-            .padding(horizontal = 9.dp, vertical = 5.dp),
+    val text = "$currentPage / $pageCount"
+    val fillStyle = TextStyle(
+        color = ReaderPalette.selectedControl,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
     )
+    val strokeStyle = fillStyle.copy(
+        color = Color(0xFF2D2D2D),
+        drawStyle = Stroke(width = 4f),
+    )
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(text = text, style = strokeStyle)
+        BasicText(text = text, style = fillStyle)
+    }
 }
 
 @Composable
@@ -10619,12 +10689,12 @@ private fun ReaderSettingsPanel(
                 readerBottomButtonOptions().forEach { option ->
                     ReaderToggleRow(
                         label = option.title,
-                        checked = option.key in settings.bottomButtons,
+                        checked = option.isEnabledIn(settings.bottomButtons),
                         onCheckedChange = { checked ->
                             val updatedButtons = if (checked) {
-                                (settings.bottomButtons + option.key).distinct()
+                                (option.removeFrom(settings.bottomButtons) + option.key).distinct()
                             } else {
-                                settings.bottomButtons.filterNot { it == option.key }
+                                option.removeFrom(settings.bottomButtons)
                             }
                             onSettingsChange(settings.copy(bottomButtons = updatedButtons))
                         },
@@ -10721,15 +10791,49 @@ private fun ChimahonReaderSettings.initialReaderMode(
 private data class ReaderBottomButtonOption(
     val key: String,
     val title: String,
+    val aliases: Set<String> = emptySet(),
 )
 
 private fun readerBottomButtonOptions(): List<ReaderBottomButtonOption> = listOf(
-    ReaderBottomButtonOption("chapters", "Chapters"),
-    ReaderBottomButtonOption("source", "Source"),
-    ReaderBottomButtonOption("mode", "Reading mode"),
-    ReaderBottomButtonOption("crop", "Crop borders"),
-    ReaderBottomButtonOption("stats", "Manga stats"),
+    ReaderBottomButtonOption("vc", "View chapters", aliases = setOf("chapters")),
+    ReaderBottomButtonOption("wb", "Open in WebView", aliases = setOf("source")),
+    ReaderBottomButtonOption("br", "Open in browser", aliases = setOf("browser")),
+    ReaderBottomButtonOption("sh", "Share", aliases = setOf("share")),
+    ReaderBottomButtonOption("rm", "Reading mode", aliases = setOf("mode")),
+    ReaderBottomButtonOption("rot", "Rotation", aliases = setOf("rotation")),
+    ReaderBottomButtonOption("cbp", "Crop borders pager", aliases = setOf("crop")),
+    ReaderBottomButtonOption("cbc", "Crop borders continuous vertical"),
+    ReaderBottomButtonOption("cbw", "Crop borders webtoon"),
+    ReaderBottomButtonOption("pl", "Page layout", aliases = setOf("layout")),
+    ReaderBottomButtonOption("ms", "Manga stats", aliases = setOf("stats")),
 )
+
+private fun List<String>.readerButtonEnabled(vararg keys: String): Boolean {
+    return any { saved -> keys.any { it == saved } }
+}
+
+private fun ReaderBottomButtonOption.isEnabledIn(buttons: List<String>): Boolean {
+    return buttons.readerButtonEnabled(key, *aliases.toTypedArray())
+}
+
+private fun ReaderBottomButtonOption.removeFrom(buttons: List<String>): List<String> {
+    val removable = aliases + key
+    return buttons.filterNot { it in removable }
+}
+
+private fun ChimahonReaderOrientation.nextReaderOrientation(): ChimahonReaderOrientation = when (this) {
+    ChimahonReaderOrientation.Free -> ChimahonReaderOrientation.Portrait
+    ChimahonReaderOrientation.Portrait -> ChimahonReaderOrientation.Landscape
+    ChimahonReaderOrientation.Landscape -> ChimahonReaderOrientation.ReversePortrait
+    ChimahonReaderOrientation.ReversePortrait -> ChimahonReaderOrientation.ReverseLandscape
+    ChimahonReaderOrientation.ReverseLandscape -> ChimahonReaderOrientation.Free
+}
+
+private fun ChimahonDualPageMode.nextDualPageMode(): ChimahonDualPageMode = when (this) {
+    ChimahonDualPageMode.Off -> ChimahonDualPageMode.Automatic
+    ChimahonDualPageMode.Automatic -> ChimahonDualPageMode.Always
+    ChimahonDualPageMode.Always -> ChimahonDualPageMode.Off
+}
 
 private fun ChimahonReaderRequest.readerChapterMarker(): String {
     return when {
@@ -12273,9 +12377,16 @@ private fun ReaderControlBar(
     wideLayout: Boolean,
     bottomButtons: List<String>,
     cropActive: Boolean,
+    orientation: ChimahonReaderOrientation,
+    dualPageMode: ChimahonDualPageMode,
+    invertDoublePages: Boolean,
     showPercentage: Boolean,
     onOpenChapterUrl: (() -> Unit)?,
+    onShareChapter: (() -> Unit)?,
     onCycleMode: () -> Unit,
+    onCycleOrientation: () -> Unit,
+    onCyclePageLayout: () -> Unit,
+    onShiftDoublePages: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleChapters: () -> Unit,
     onToggleStats: () -> Unit,
@@ -12315,7 +12426,7 @@ private fun ReaderControlBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if ("chapters" in bottomButtons) {
+            if (bottomButtons.readerButtonEnabled("vc", "chapters")) {
                 ReaderAction(
                     icon = UiIcon.Chapters,
                     contentDescription = "Chapters",
@@ -12324,15 +12435,31 @@ private fun ReaderControlBar(
                     onClick = onToggleChapters,
                 )
             }
-            if ("source" in bottomButtons) onOpenChapterUrl?.let {
+            if (bottomButtons.readerButtonEnabled("wb", "source")) onOpenChapterUrl?.let {
                 ReaderAction(
                     icon = UiIcon.Web,
-                    contentDescription = "Open source page",
+                    contentDescription = "Open in WebView",
                     tint = actionTint,
                     onClick = it,
                 )
             }
-            if ("mode" in bottomButtons) {
+            if (bottomButtons.readerButtonEnabled("br", "browser")) onOpenChapterUrl?.let {
+                ReaderAction(
+                    icon = UiIcon.Browse,
+                    contentDescription = "Open in browser",
+                    tint = actionTint,
+                    onClick = it,
+                )
+            }
+            if (bottomButtons.readerButtonEnabled("sh", "share")) onShareChapter?.let {
+                ReaderAction(
+                    icon = UiIcon.Share,
+                    contentDescription = "Share chapter",
+                    tint = actionTint,
+                    onClick = it,
+                )
+            }
+            if (bottomButtons.readerButtonEnabled("rm", "mode")) {
                 ReaderAction(
                     icon = UiIcon.Swap,
                     contentDescription = "Reading mode: ${mode.title}",
@@ -12340,7 +12467,16 @@ private fun ReaderControlBar(
                     onClick = onCycleMode,
                 )
             }
-            if ("crop" in bottomButtons) {
+            if (bottomButtons.readerButtonEnabled("rot", "rotation")) {
+                ReaderAction(
+                    icon = UiIcon.Rotation,
+                    contentDescription = "Orientation: ${orientation.readerTitle()}",
+                    active = orientation != ChimahonReaderOrientation.Free,
+                    tint = actionTint,
+                    onClick = onCycleOrientation,
+                )
+            }
+            if (bottomButtons.readerButtonEnabled(mode.cropBottomButtonKey(), "crop")) {
                 ReaderAction(
                     icon = UiIcon.Crop,
                     contentDescription = "Crop borders",
@@ -12349,7 +12485,25 @@ private fun ReaderControlBar(
                     onClick = onToggleCrop,
                 )
             }
-            if ("stats" in bottomButtons) {
+            if (mode.paged && bottomButtons.readerButtonEnabled("pl", "layout")) {
+                ReaderAction(
+                    icon = UiIcon.PageLayout,
+                    contentDescription = "Page layout: ${dualPageMode.readerTitle()}",
+                    active = dualPageMode != ChimahonDualPageMode.Off,
+                    tint = actionTint,
+                    onClick = onCyclePageLayout,
+                )
+            }
+            if (mode.paged && dualPageMode != ChimahonDualPageMode.Off && bottomButtons.readerButtonEnabled("pl", "layout")) {
+                ReaderAction(
+                    icon = UiIcon.ShiftPage,
+                    contentDescription = if (invertDoublePages) "Shift double pages back" else "Shift double pages",
+                    active = invertDoublePages,
+                    tint = actionTint,
+                    onClick = onShiftDoublePages,
+                )
+            }
+            if (bottomButtons.readerButtonEnabled("ms", "stats")) {
                 ReaderAction(
                     icon = UiIcon.Statistics,
                     contentDescription = "Statistics",
@@ -25120,6 +25274,10 @@ private enum class UiIcon {
     Delete,
     Crop,
     Link,
+    Share,
+    Rotation,
+    PageLayout,
+    ShiftPage,
     Close,
 }
 
@@ -25177,12 +25335,16 @@ private val UiIcon.imageVector: ImageVector
         UiIcon.Star -> Icons.Outlined.Star
         UiIcon.Add -> Icons.Outlined.Add
         UiIcon.Reorder -> Icons.Outlined.Reorder
-        UiIcon.Chapters -> Icons.Outlined.MenuBook
+        UiIcon.Chapters -> Icons.Outlined.FormatListNumbered
         UiIcon.SkipPrevious -> Icons.Outlined.SkipPrevious
         UiIcon.SkipNext -> Icons.Outlined.SkipNext
         UiIcon.Delete -> Icons.Outlined.DeleteOutline
         UiIcon.Crop -> Icons.Outlined.CropFree
         UiIcon.Link -> Icons.Outlined.Link
+        UiIcon.Share -> Icons.Outlined.Share
+        UiIcon.Rotation -> Icons.Outlined.ScreenRotation
+        UiIcon.PageLayout -> Icons.Outlined.ViewColumn
+        UiIcon.ShiftPage -> Icons.Outlined.SwapHoriz
         UiIcon.Close -> Icons.Outlined.Close
     }
 
