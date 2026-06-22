@@ -279,6 +279,15 @@ private fun createDesktopMenuBar(
             add(item("Toggle Crop Borders", appShortcut(AwtKeyEvent.VK_F, InputEvent.ALT_DOWN_MASK)) {
                 onCommand(ChimahonDesktopCommand.ReaderToggleCrop)
             })
+            add(item("Cycle Orientation", appShortcut(AwtKeyEvent.VK_T, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderCycleOrientation)
+            })
+            add(item("Cycle Page Layout", appShortcut(AwtKeyEvent.VK_L, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderCyclePageLayout)
+            })
+            add(item("Shift Double Pages", appShortcut(AwtKeyEvent.VK_P, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.ReaderShiftDoublePages)
+            })
             addSeparator()
             add(item("Bookmark Chapter", appShortcut(AwtKeyEvent.VK_B, InputEvent.ALT_DOWN_MASK)) {
                 onCommand(ChimahonDesktopCommand.ReaderBookmarkChapter)
@@ -292,6 +301,14 @@ private fun createDesktopMenuBar(
             add(item("Open Chapter URL", appShortcut(AwtKeyEvent.VK_O, InputEvent.ALT_DOWN_MASK)) {
                 onCommand(ChimahonDesktopCommand.ReaderOpenChapterUrl)
             })
+            add(
+                item(
+                    "Share Chapter URL",
+                    appShortcut(AwtKeyEvent.VK_S, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
+                ) {
+                    onCommand(ChimahonDesktopCommand.ReaderShareChapter)
+                },
+            )
         })
     }
 }

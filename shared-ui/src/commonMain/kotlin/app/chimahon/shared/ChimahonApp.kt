@@ -749,10 +749,14 @@ enum class ChimahonDesktopCommand {
     ReaderOpenChapters,
     ReaderToggleStats,
     ReaderToggleCrop,
+    ReaderCycleOrientation,
+    ReaderCyclePageLayout,
+    ReaderShiftDoublePages,
     ReaderBookmarkChapter,
     ReaderDownloadChapter,
     ReaderMarkChapterRead,
     ReaderOpenChapterUrl,
+    ReaderShareChapter,
 }
 
 private val ChimahonDesktopCommand.readerScoped: Boolean
@@ -769,10 +773,14 @@ private val ChimahonDesktopCommand.readerScoped: Boolean
         ChimahonDesktopCommand.ReaderOpenChapters,
         ChimahonDesktopCommand.ReaderToggleStats,
         ChimahonDesktopCommand.ReaderToggleCrop,
+        ChimahonDesktopCommand.ReaderCycleOrientation,
+        ChimahonDesktopCommand.ReaderCyclePageLayout,
+        ChimahonDesktopCommand.ReaderShiftDoublePages,
         ChimahonDesktopCommand.ReaderBookmarkChapter,
         ChimahonDesktopCommand.ReaderDownloadChapter,
         ChimahonDesktopCommand.ReaderMarkChapterRead,
         ChimahonDesktopCommand.ReaderOpenChapterUrl,
+        ChimahonDesktopCommand.ReaderShareChapter,
         -> true
         else -> false
     }
@@ -8484,6 +8492,25 @@ private fun ReaderScaffold(
     var flashVisible by remember(request) { mutableStateOf(false) }
     var flashPulse by remember(request) { mutableIntStateOf(0) }
     var lastFlashPage by remember(request) { mutableIntStateOf(currentPage) }
+    val cycleOrientation = {
+        onReaderSettingsChange(
+            readerSettings.copy(orientation = readerSettings.orientation.nextReaderOrientation()),
+        )
+    }
+    val cyclePageLayout = {
+        if (mode.paged) {
+            onReaderSettingsChange(
+                readerSettings.copy(dualPageMode = readerSettings.dualPageMode.nextDualPageMode()),
+            )
+        }
+    }
+    val shiftDoublePages = {
+        if (mode.paged && readerSettings.dualPageMode != ChimahonDualPageMode.Off) {
+            onReaderSettingsChange(
+                readerSettings.copy(invertDoublePages = !readerSettings.invertDoublePages),
+            )
+        }
+    }
 
     LaunchedEffect(request) {
         focusRequester.requestFocus()
@@ -8507,10 +8534,14 @@ private fun ReaderScaffold(
             ChimahonDesktopCommand.ReaderOpenChapters -> onToggleChapters()
             ChimahonDesktopCommand.ReaderToggleStats -> onToggleStats()
             ChimahonDesktopCommand.ReaderToggleCrop -> onToggleCrop()
+            ChimahonDesktopCommand.ReaderCycleOrientation -> cycleOrientation()
+            ChimahonDesktopCommand.ReaderCyclePageLayout -> cyclePageLayout()
+            ChimahonDesktopCommand.ReaderShiftDoublePages -> shiftDoublePages()
             ChimahonDesktopCommand.ReaderBookmarkChapter -> onToggleBookmark?.invoke()
             ChimahonDesktopCommand.ReaderDownloadChapter -> onDownloadChapter?.invoke()
             ChimahonDesktopCommand.ReaderMarkChapterRead -> onMarkChapterRead?.invoke()
             ChimahonDesktopCommand.ReaderOpenChapterUrl -> onOpenChapterUrl?.invoke()
+            ChimahonDesktopCommand.ReaderShareChapter -> onShareChapter?.invoke()
             else -> Unit
         }
         onDesktopCommandHandled(commandRequest.id)
@@ -9122,21 +9153,9 @@ private fun ReaderScaffold(
                         val nextIndex = (ReaderMode.entries.indexOf(mode) + 1) % ReaderMode.entries.size
                         onModeChange(ReaderMode.entries[nextIndex])
                     },
-                    onCycleOrientation = {
-                        onReaderSettingsChange(
-                            readerSettings.copy(orientation = readerSettings.orientation.nextReaderOrientation()),
-                        )
-                    },
-                    onCyclePageLayout = {
-                        onReaderSettingsChange(
-                            readerSettings.copy(dualPageMode = readerSettings.dualPageMode.nextDualPageMode()),
-                        )
-                    },
-                    onShiftDoublePages = {
-                        onReaderSettingsChange(
-                            readerSettings.copy(invertDoublePages = !readerSettings.invertDoublePages),
-                        )
-                    },
+                    onCycleOrientation = cycleOrientation,
+                    onCyclePageLayout = cyclePageLayout,
+                    onShiftDoublePages = shiftDoublePages,
                     onToggleSettings = onToggleSettings,
                     onToggleChapters = onToggleChapters,
                     onToggleStats = onToggleStats,
