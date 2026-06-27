@@ -42,7 +42,6 @@ import tachiyomi.data.Mangas
 import tachiyomi.data.StringListColumnAdapter
 import tachiyomi.data.libraryUpdateError.LibraryUpdateErrorRepositoryImpl
 import tachiyomi.data.libraryUpdateErrorMessage.LibraryUpdateErrorMessageRepositoryImpl
-import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.libraryUpdateError.interactor.GetLibraryUpdateErrors
 import tachiyomi.domain.libraryUpdateErrorMessage.interactor.GetLibraryUpdateErrorMessages
 import tachiyomi.view.History
@@ -2275,7 +2274,7 @@ private fun SChapter.toRemoteChapterEntry(
     return ChimahonRemoteChapterEntry(
         name = safeName(),
         url = safeUrl(),
-        chapterNumber = ChapterRecognition.parseChapterNumber(
+        chapterNumber = parseRemoteChapterNumber(
             mangaTitle = mangaTitle,
             chapterName = safeName(),
             chapterNumber = chapter_number.toDouble(),
@@ -2284,6 +2283,69 @@ private fun SChapter.toRemoteChapterEntry(
         dateUpload = date_upload,
         sourceOrder = sourceOrder,
     )
+}
+
+private const val REMOTE_CHAPTER_NUMBER_PATTERN = """([0-9]+)(\.[0-9]+)?(\.?[a-z]+)?"""
+
+private val remoteChapterBasicNumber = Regex("""(?<=ch\.) *$REMOTE_CHAPTER_NUMBER_PATTERN""")
+private val remoteChapterNumber = Regex(REMOTE_CHAPTER_NUMBER_PATTERN)
+private val remoteChapterUnwanted =
+    Regex("""\b(?:v|ver|vol|version|volume|season|s)[^a-z]?[0-9]+""")
+private val remoteChapterUnwantedWhiteSpace = Regex("""\s(?=extra|special|omake)""")
+
+private fun parseRemoteChapterNumber(
+    mangaTitle: String,
+    chapterName: String,
+    chapterNumber: Double? = null,
+): Double {
+    if (chapterNumber != null && (chapterNumber == -2.0 || chapterNumber > -1.0)) {
+        return chapterNumber
+    }
+
+    val cleanChapterName = chapterName.lowercase()
+        .replace(mangaTitle.lowercase(), "")
+        .trim()
+        .replace(',', '.')
+        .replace('-', '.')
+        .replace(remoteChapterUnwantedWhiteSpace, "")
+    val matches = remoteChapterNumber.findAll(cleanChapterName)
+
+    when {
+        matches.none() -> return chapterNumber ?: -1.0
+        matches.count() > 1 -> {
+            val withoutTags = remoteChapterUnwanted.replace(cleanChapterName, "")
+            remoteChapterBasicNumber.find(withoutTags)?.let { return it.remoteChapterNumberValue() }
+            remoteChapterNumber.find(withoutTags)?.let { return it.remoteChapterNumberValue() }
+        }
+    }
+
+    return matches.first().remoteChapterNumberValue()
+}
+
+private fun MatchResult.remoteChapterNumberValue(): Double {
+    val initial = groups[1]?.value?.toDoubleOrNull() ?: return -1.0
+    val subChapterDecimal = groups[2]?.value
+    val subChapterAlpha = groups[3]?.value
+    val addition = when {
+        subChapterDecimal != null -> "0$subChapterDecimal".toDoubleOrNull() ?: 0.0
+        subChapterAlpha != null -> parseRemoteChapterAlphaPostFix(subChapterAlpha)
+        else -> 0.0
+    }
+    return initial + addition
+}
+
+private fun parseRemoteChapterAlphaPostFix(alpha: String): Double {
+    val lowered = alpha.lowercase()
+    if ("extra" in lowered) return 0.99
+    if ("omake" in lowered) return 0.98
+    if ("special" in lowered) return 0.97
+
+    val trimmed = lowered.trimStart('.')
+    if (trimmed.length == 1) {
+        val number = trimmed[0].code - ('a'.code - 1)
+        if (number in 1..9) return number / 10.0
+    }
+    return 0.0
 }
 
 private fun normalizeExtensionRepoBaseUrl(input: String): String {
