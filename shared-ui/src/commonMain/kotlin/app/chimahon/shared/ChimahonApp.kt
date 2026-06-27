@@ -6178,10 +6178,17 @@ private fun SourcesSection(
     onOpenSource: (Long, ChimahonSourceBrowseMode) -> Unit,
     onInstallExtension: () -> Unit,
 ) {
+    var sourceSettingsSourceId by remember { mutableStateOf<Long?>(null) }
     var selectedLanguage by remember(sources) { mutableStateOf("All") }
     var quickFilter by remember { mutableStateOf(SourceQuickFilter.All) }
     var sourceSort by remember { mutableStateOf(SourceSort.Name) }
     val pinnedSourceIds = settings.pinnedSourceIds.toSet()
+    val allLanguageOptions = remember(sources) {
+        sources
+            .map { it.language.sourceLanguageCode() }
+            .distinct()
+            .sorted()
+    }
     val languageOptions = remember(sources, settings.enabledLanguages) {
         listOf("All") + sources
             .map { it.language.sourceLanguageCode() }
@@ -6222,6 +6229,18 @@ private fun SourcesSection(
     }
     val pinnedFilteredSources = filteredSources.filter { it.id in pinnedSourceIds }
     val unpinnedFilteredSources = filteredSources.filterNot { it.id in pinnedSourceIds }
+    sourceSettingsSourceId
+        ?.let { sourceId -> sources.firstOrNull { it.id == sourceId } }
+        ?.let { source ->
+            SourcePreferencesHome(
+                source = source,
+                languageOptions = allLanguageOptions,
+                settings = settings,
+                onSettingsChange = onSettingsChange,
+                onClose = { sourceSettingsSourceId = null },
+            )
+            return
+        }
     fun togglePinned(sourceId: Long) {
         val nextPins = if (sourceId in pinnedSourceIds) {
             settings.pinnedSourceIds.filterNot { it == sourceId }
@@ -6290,6 +6309,7 @@ private fun SourcesSection(
                             pinned = pinned,
                             showLanguage = settings.showSourceLanguage,
                             onTogglePinned = { togglePinned(source.id) },
+                            onOpenSettings = { sourceSettingsSourceId = source.id },
                             onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
                             onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
                         )
@@ -6313,6 +6333,7 @@ private fun SourcesSection(
                             pinned = pinned,
                             showLanguage = settings.showSourceLanguage,
                             onTogglePinned = { togglePinned(source.id) },
+                            onOpenSettings = { sourceSettingsSourceId = source.id },
                             onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
                             onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
                         )
@@ -6459,6 +6480,153 @@ private fun SourceLanguageHeader(
 }
 
 @Composable
+private fun SourcePreferencesHome(
+    source: ChimahonSourceEntry,
+    languageOptions: List<String>,
+    settings: ChimahonBrowseSettings,
+    onSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onClose: () -> Unit,
+) {
+    val pinned = source.id in settings.pinnedSourceIds
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 20.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(ChimahonPalette.surface)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButtonLike("Back", onClick = onClose)
+                SourceIconTile(
+                    source = source,
+                    size = 38.dp,
+                    cornerRadius = 10.dp,
+                    compact = true,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 12.dp),
+                ) {
+                    Label(source.name, ChimahonPalette.onSurface, 16, weight = FontWeight.SemiBold, maxLines = 1)
+                    Label(
+                        "${source.language.ifBlank { "multi" }.uppercase()} - ${if (source.supportsLatest) "Latest and popular" else "Popular"}",
+                        ChimahonPalette.secondaryText,
+                        11,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        }
+        item { ListGroupHeader("Source") }
+        item {
+            PreferenceSwitchRow(
+                "Pinned source",
+                "Keep this source at the top of Browse > Sources",
+                UiIcon.Star,
+                checked = pinned,
+                onCheckedChange = {
+                    val nextPins = if (source.id in settings.pinnedSourceIds) {
+                        settings.pinnedSourceIds.filterNot { it == source.id }
+                    } else {
+                        (settings.pinnedSourceIds + source.id).distinct()
+                    }
+                    onSettingsChange(settings.copy(pinnedSourceIds = nextPins))
+                },
+            )
+        }
+        item {
+            PreferenceValueRow(
+                title = "Source ID",
+                subtitle = "Shared registry key used by library, history, and source preferences",
+                icon = UiIcon.Info,
+                value = source.id.toString(),
+            )
+        }
+        item {
+            PreferenceValueRow(
+                title = "Preference store",
+                subtitle = "Desktop source preference storage namespace",
+                icon = UiIcon.Storage,
+                value = "source_${source.id}",
+            )
+        }
+        item { ListGroupHeader("Browse display") }
+        item {
+            SettingsChoiceRow(
+                title = "Source list display",
+                options = ChimahonBrowseSourceDisplayMode.entries.map { it.browseTitle() },
+                selected = settings.sourceDisplayMode.browseTitle(),
+                onSelect = { selected ->
+                    ChimahonBrowseSourceDisplayMode.entries
+                        .firstOrNull { it.browseTitle() == selected }
+                        ?.let { onSettingsChange(settings.copy(sourceDisplayMode = it)) }
+                },
+            )
+        }
+        item {
+            PreferenceSwitchRow(
+                "Show language badges",
+                "Display each source language beside its name",
+                UiIcon.Tag,
+                checked = settings.showSourceLanguage,
+                onCheckedChange = { onSettingsChange(settings.copy(showSourceLanguage = it)) },
+            )
+        }
+        item {
+            PreferenceSwitchRow(
+                "Group by language",
+                "Split Browse > Sources into language sections",
+                UiIcon.Reorder,
+                checked = settings.groupSourcesByLanguage,
+                onCheckedChange = { onSettingsChange(settings.copy(groupSourcesByLanguage = it)) },
+            )
+        }
+        item {
+            PreferenceSwitchRow(
+                "Hide library entries",
+                "Hide catalogue entries already saved to the library",
+                UiIcon.VisibilityOff,
+                checked = settings.hideLibraryEntries,
+                onCheckedChange = { onSettingsChange(settings.copy(hideLibraryEntries = it)) },
+            )
+        }
+        item {
+            PreferenceSwitchRow(
+                "Auto-load catalogue pages",
+                "Continue loading source pages while browsing near the end",
+                UiIcon.Refresh,
+                checked = settings.autoLoadMore,
+                onCheckedChange = { onSettingsChange(settings.copy(autoLoadMore = it)) },
+            )
+        }
+        item { ListGroupHeader("Languages") }
+        item {
+            SettingsMultiChoiceRow(
+                title = "Enabled source languages",
+                options = languageOptions,
+                selected = settings.enabledLanguages,
+                emptyLabel = "All",
+                onToggle = { language ->
+                    val next = if (language in settings.enabledLanguages) {
+                        settings.enabledLanguages.filterNot { it == language }
+                    } else {
+                        (settings.enabledLanguages + language).distinct().sorted()
+                    }
+                    onSettingsChange(settings.copy(enabledLanguages = next))
+                },
+            )
+        }
+    }
+}
+
+@Composable
 private fun SourceIconTile(
     source: ChimahonSourceEntry,
     size: androidx.compose.ui.unit.Dp,
@@ -6532,6 +6700,7 @@ private fun SourceListItem(
     pinned: Boolean,
     showLanguage: Boolean,
     onTogglePinned: () -> Unit,
+    onOpenSettings: () -> Unit,
     onClick: () -> Unit,
     onClickLatest: () -> Unit,
 ) {
@@ -6590,6 +6759,12 @@ private fun SourceListItem(
                 active = pinned,
                 onClick = onTogglePinned,
             )
+            ChapterQuickAction(
+                icon = UiIcon.Settings,
+                contentDescription = "Source settings for ${source.name}",
+                active = false,
+                onClick = onOpenSettings,
+            )
             if (source.supportsLatest) {
                 ChapterQuickAction(
                     icon = UiIcon.Updates,
@@ -6635,6 +6810,7 @@ private fun SourceGridCard(
     pinned: Boolean,
     showLanguage: Boolean,
     onTogglePinned: () -> Unit,
+    onOpenSettings: () -> Unit,
     onClick: () -> Unit,
     onClickLatest: () -> Unit,
 ) {
@@ -6664,6 +6840,12 @@ private fun SourceGridCard(
                 contentDescription = if (pinned) "Unpin ${source.name}" else "Pin ${source.name}",
                 active = pinned,
                 onClick = onTogglePinned,
+            )
+            ChapterQuickAction(
+                icon = UiIcon.Settings,
+                contentDescription = "Source settings for ${source.name}",
+                active = false,
+                onClick = onOpenSettings,
             )
             if (source.supportsLatest) {
                 Box(
