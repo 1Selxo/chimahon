@@ -697,8 +697,18 @@ class ChimahonSharedAppServices private constructor(
     }
 
     suspend fun deleteExtensionRepo(baseUrl: String) {
+        val normalizedBaseUrl = normalizeExtensionRepoBaseUrl(baseUrl)
         platformServices.databaseHandler.await {
-            extension_reposQueries.delete(baseUrl)
+            extension_reposQueries.delete(normalizedBaseUrl)
+        }
+        val browseSettings = settingsRepository.loadBrowseSettings()
+        if (normalizedBaseUrl in browseSettings.disabledExtensionRepoUrls) {
+            settingsRepository.saveBrowseSettings(
+                browseSettings.copy(
+                    disabledExtensionRepoUrls = browseSettings.disabledExtensionRepoUrls
+                        .filterNot { it == normalizedBaseUrl },
+                ),
+            )
         }
     }
 
@@ -809,9 +819,12 @@ class ChimahonSharedAppServices private constructor(
         val repos = platformServices.databaseHandler.awaitList {
             extension_reposQueries.findAll()
         }.map(Extension_repos::toSharedExtensionRepoEntry)
+        val disabledRepoUrls = settingsRepository.loadBrowseSettings()
+            .disabledExtensionRepoUrls
+            .toSet()
         val availableExtensions = mutableListOf<ChimahonRepoExtensionEntry>()
         val catalogErrors = mutableListOf<String>()
-        repos.forEach { repo ->
+        repos.filterNot { it.baseUrl in disabledRepoUrls }.forEach { repo ->
             runCatching { loadExtensionRepoCatalog(repo) }
                 .onSuccess { catalog -> availableExtensions += catalog.extensions }
                 .onFailure { error ->
@@ -2213,6 +2226,10 @@ private fun LoadedScriptExtension.toRepoExtensionEntry(
         name = manifest.name,
         version = manifest.version,
         artifactUrl = scriptUrl,
+        packageType = ChimahonExtensionPackageType.JavaScript,
+        language = manifest.language,
+        sourceCount = manifest.sourceCount,
+        isNsfw = manifest.isNsfw,
     )
 }
 
@@ -2221,7 +2238,7 @@ private fun LoadedScriptExtension.toSharedInstalledExtensionEntry(): ChimahonIns
         id = manifest.id,
         name = manifest.name,
         version = manifest.version,
-        sourceCount = manifest.sources.size,
+        sourceCount = manifest.sourceCount,
         packageType = ChimahonExtensionPackageType.JavaScript,
     )
 }

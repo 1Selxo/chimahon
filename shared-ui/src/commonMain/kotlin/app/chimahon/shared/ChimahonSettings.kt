@@ -535,6 +535,7 @@ data class ChimahonBrowseSettings(
     val autoLoadMore: Boolean = true,
     val enabledLanguages: List<String> = emptyList(),
     val pinnedSourceIds: List<Long> = emptyList(),
+    val disabledExtensionRepoUrls: List<String> = emptyList(),
     val sourceDisplayMode: ChimahonBrowseSourceDisplayMode = ChimahonBrowseSourceDisplayMode.List,
     val groupSourcesByLanguage: Boolean = true,
     val showSourceLanguage: Boolean = true,
@@ -1624,6 +1625,7 @@ internal class ChimahonSettingsRepository(
             autoLoadMore = settingsStore.readBoolean(BROWSE_AUTO_LOAD_MORE_KEY, defaultValue = true),
             enabledLanguages = readStringList(BROWSE_ENABLED_LANGUAGES_KEY),
             pinnedSourceIds = readStringList(BROWSE_PINNED_SOURCE_IDS_KEY).mapNotNull { it.toLongOrNull() },
+            disabledExtensionRepoUrls = readStringList(BROWSE_DISABLED_EXTENSION_REPOS_KEY),
             sourceDisplayMode = readEnum(
                 BROWSE_SOURCE_DISPLAY_MODE_KEY,
                 ChimahonBrowseSourceDisplayMode.List,
@@ -1673,6 +1675,7 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(BROWSE_AUTO_LOAD_MORE_KEY, settings.autoLoadMore)
         writeStringList(BROWSE_ENABLED_LANGUAGES_KEY, settings.enabledLanguages)
         writeStringList(BROWSE_PINNED_SOURCE_IDS_KEY, settings.pinnedSourceIds.map(Long::toString))
+        writeStringList(BROWSE_DISABLED_EXTENSION_REPOS_KEY, settings.disabledExtensionRepoUrls)
         settingsStore.writeString(BROWSE_SOURCE_DISPLAY_MODE_KEY, settings.sourceDisplayMode.name)
         settingsStore.writeBoolean(
             BROWSE_GROUP_SOURCES_BY_LANGUAGE_KEY,
@@ -2790,6 +2793,8 @@ internal class ChimahonSettingsRepository(
         const val BROWSE_AUTO_LOAD_MORE_KEY = "__APP_STATE_chimahon_browse_auto_load_more"
         const val BROWSE_ENABLED_LANGUAGES_KEY = "__APP_STATE_chimahon_browse_enabled_languages"
         const val BROWSE_PINNED_SOURCE_IDS_KEY = "__APP_STATE_chimahon_browse_pinned_source_ids"
+        const val BROWSE_DISABLED_EXTENSION_REPOS_KEY =
+            "__APP_STATE_chimahon_browse_disabled_extension_repos"
         const val BROWSE_SOURCE_DISPLAY_MODE_KEY =
             "__APP_STATE_chimahon_browse_source_display_mode"
         const val BROWSE_GROUP_SOURCES_BY_LANGUAGE_KEY =
