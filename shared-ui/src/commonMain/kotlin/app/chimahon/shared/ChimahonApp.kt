@@ -755,6 +755,8 @@ enum class ChimahonDesktopCommand {
     BrowseMigrate,
     More,
     Settings,
+    AnimeSettings,
+    PlayerSettings,
     DownloadQueue,
     AnimeDownloadQueue,
     ReaderPreviousPage,
@@ -1220,6 +1222,14 @@ internal fun ChimahonApp(
             ChimahonDesktopCommand.Settings -> {
                 selectHomeTab(HomeTab.More)
                 requestedMorePage = MorePage.Settings
+            }
+            ChimahonDesktopCommand.AnimeSettings -> {
+                selectHomeTab(HomeTab.More)
+                requestedMorePage = MorePage.AnimeLibrarySettings
+            }
+            ChimahonDesktopCommand.PlayerSettings -> {
+                selectHomeTab(HomeTab.More)
+                requestedMorePage = MorePage.PlayerSettings
             }
             ChimahonDesktopCommand.DownloadQueue,
             ChimahonDesktopCommand.AnimeDownloadQueue,

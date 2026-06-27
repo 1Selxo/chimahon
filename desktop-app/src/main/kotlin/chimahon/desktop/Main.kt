@@ -263,28 +263,12 @@ private fun createDesktopMenuBar(
             )
             addSeparator()
             add(
-                placeholderItem(
-                    surface = "Anime",
-                    title = "Open Anime Details",
-                    shortcut = appShortcut(AwtKeyEvent.VK_I, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+I",
-                ),
-            )
-            add(
-                placeholderItem(
-                    surface = "Anime",
-                    title = "Open Episode List",
-                    shortcut = appShortcut(AwtKeyEvent.VK_G, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+G",
-                ),
-            )
-            add(
-                placeholderItem(
-                    surface = "Anime",
-                    title = "Track Anime",
-                    shortcut = appShortcut(AwtKeyEvent.VK_T, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+T",
-                ),
+                item(
+                    "Anime Settings",
+                    appShortcut(AwtKeyEvent.VK_COMMA, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
+                ) {
+                    onCommand(ChimahonDesktopCommand.AnimeSettings)
+                },
             )
         })
         add(menu("Edit", AwtKeyEvent.VK_E) {
@@ -468,7 +452,7 @@ private fun createDesktopMenuBar(
                 ),
             )
             add(item("Player Settings", appShortcut(AwtKeyEvent.VK_COMMA, InputEvent.SHIFT_DOWN_MASK)) {
-                onCommand(ChimahonDesktopCommand.Settings)
+                onCommand(ChimahonDesktopCommand.PlayerSettings)
             })
         })
         add(menu("Window", AwtKeyEvent.VK_W) {
@@ -560,8 +544,12 @@ private fun AwtKeyEvent.desktopCommandOrNull(): ChimahonDesktopCommand? {
             ChimahonDesktopCommand.BrowseFeed
         keyCode == AwtKeyEvent.VK_M && menuShortcutDown && !altDown && shiftDown ->
             ChimahonDesktopCommand.BrowseMigrate
-        keyCode == AwtKeyEvent.VK_COMMA && menuShortcutDown && !altDown ->
+        keyCode == AwtKeyEvent.VK_COMMA && menuShortcutDown && !altDown && !shiftDown ->
             ChimahonDesktopCommand.Settings
+        keyCode == AwtKeyEvent.VK_COMMA && menuShortcutDown && altDown && shiftDown ->
+            ChimahonDesktopCommand.AnimeSettings
+        keyCode == AwtKeyEvent.VK_COMMA && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerSettings
         keyCode == AwtKeyEvent.VK_D && menuShortcutDown && !altDown && !shiftDown ->
             ChimahonDesktopCommand.DownloadQueue
         keyCode == AwtKeyEvent.VK_A && menuShortcutDown && altDown && !shiftDown ->
@@ -593,7 +581,7 @@ private fun AwtKeyEvent.desktopCommandOrNull(): ChimahonDesktopCommand? {
             ChimahonDesktopCommand.ReaderToggleControls
         keyCode == AwtKeyEvent.VK_M && menuShortcutDown && altDown ->
             ChimahonDesktopCommand.ReaderCycleMode
-        keyCode == AwtKeyEvent.VK_COMMA && menuShortcutDown && altDown ->
+        keyCode == AwtKeyEvent.VK_COMMA && menuShortcutDown && altDown && !shiftDown ->
             ChimahonDesktopCommand.ReaderOpenSettings
         keyCode == AwtKeyEvent.VK_C && menuShortcutDown && altDown ->
             ChimahonDesktopCommand.ReaderOpenChapters
@@ -675,9 +663,7 @@ private fun desktopShortcutReference(): String {
         Anime library/updates/history: $shortcut+Alt+A/U/H
         Browse anime sources/extensions: $shortcut+Alt+Shift+A/E
         Anime download queue: $shortcut+Alt+Shift+Q
-        Open anime details: $shortcut+Shift+I
-        Episode list: $shortcut+Shift+G
-        Track anime: $shortcut+Shift+T
+        Anime settings: $shortcut+Alt+Shift+Comma
 
         Reader
         Previous/next page: Left/Right, Page Up/Page Down, or $shortcut+Alt+Left/Right
@@ -695,7 +681,7 @@ private fun desktopShortcutReference(): String {
         Open chapter URL: O or $shortcut+Alt+O
         Share chapter URL: $shortcut+Alt+Shift+S
 
-        Player placeholders
+        Player
         Close player: Esc
         Play/pause: $shortcut+Shift+Space
         Seek backward/forward: $shortcut+Shift+J/L
