@@ -7271,7 +7271,16 @@ private fun SourceDetailHome(
                             },
                         )
                     } else {
-                        val gridState = rememberLazyGridState()
+                        val requestNextPage = {
+                            if (loadMoreError == null) {
+                                loadingMore = true
+                                pageNumber++
+                            } else {
+                                loadMoreError = null
+                                loadingMore = true
+                                pageRequestKey++
+                            }
+                        }
                         LaunchedEffect(
                             visiblePreview.entries.size,
                             visiblePreview.hasNextPage,
@@ -7290,76 +7299,135 @@ private fun SourceDetailHome(
                                 pageNumber++
                             }
                         }
-                        LaunchedEffect(
-                            gridState,
-                            visiblePreview.entries.size,
-                            visiblePreview.hasNextPage,
-                            browseSettings.autoLoadMore,
-                            loadingMore,
-                            loadMoreError,
-                        ) {
-                            if (
-                                !browseSettings.autoLoadMore ||
-                                !visiblePreview.hasNextPage ||
-                                loadingMore ||
-                                loadMoreError != null
+                        if (browseSettings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.Grid) {
+                            val gridState = rememberLazyGridState()
+                            LaunchedEffect(
+                                gridState,
+                                visiblePreview.entries.size,
+                                visiblePreview.hasNextPage,
+                                browseSettings.autoLoadMore,
+                                loadingMore,
+                                loadMoreError,
                             ) {
-                                return@LaunchedEffect
+                                if (
+                                    !browseSettings.autoLoadMore ||
+                                    !visiblePreview.hasNextPage ||
+                                    loadingMore ||
+                                    loadMoreError != null
+                                ) {
+                                    return@LaunchedEffect
+                                }
+                                snapshotFlow {
+                                    val layoutInfo = gridState.layoutInfo
+                                    val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                                    lastVisibleIndex >= (layoutInfo.totalItemsCount - 6).coerceAtLeast(0)
+                                }
+                                    .distinctUntilChanged()
+                                    .collect { nearEnd ->
+                                        if (nearEnd && !loadingMore && loadMoreError == null) {
+                                            loadingMore = true
+                                            pageNumber++
+                                        }
+                                    }
                             }
-                            snapshotFlow {
-                                val layoutInfo = gridState.layoutInfo
-                                val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                                lastVisibleIndex >= (layoutInfo.totalItemsCount - 6).coerceAtLeast(0)
-                            }
-                                .distinctUntilChanged()
-                                .collect { nearEnd ->
-                                    if (nearEnd && !loadingMore && loadMoreError == null) {
-                                        loadingMore = true
-                                        pageNumber++
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(124.dp),
+                                state = gridState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    SourceDetailHeader(
+                                        source = source,
+                                        localCount = sourceLibraryCount,
+                                    )
+                                }
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    SourcePreviewHeader(visiblePreview)
+                                }
+                                items(visiblePreview.entries, key = { "${it.sourceId}:${it.url}" }) { entry ->
+                                    RemoteMangaGridCard(
+                                        entry = entry,
+                                        inLibrary = "${entry.sourceId}:${entry.url}" in libraryRemoteKeys,
+                                        onClick = { onOpenRemoteManga(entry) },
+                                    )
+                                }
+                                if (visiblePreview.hasNextPage) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        SourceCatalogFooter(
+                                            autoLoadMore = browseSettings.autoLoadMore,
+                                            loadingMore = loadingMore,
+                                            loadMoreError = loadMoreError,
+                                            onLoadMore = requestNextPage,
+                                        )
                                     }
                                 }
-                        }
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(124.dp),
-                            state = gridState,
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                        ) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                SourceDetailHeader(
-                                    source = source,
-                                    localCount = sourceLibraryCount,
-                                )
                             }
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                SourcePreviewHeader(visiblePreview)
+                        } else {
+                            val listState = rememberLazyListState()
+                            val compactList = browseSettings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.CompactList
+                            LaunchedEffect(
+                                listState,
+                                visiblePreview.entries.size,
+                                visiblePreview.hasNextPage,
+                                browseSettings.autoLoadMore,
+                                loadingMore,
+                                loadMoreError,
+                            ) {
+                                if (
+                                    !browseSettings.autoLoadMore ||
+                                    !visiblePreview.hasNextPage ||
+                                    loadingMore ||
+                                    loadMoreError != null
+                                ) {
+                                    return@LaunchedEffect
+                                }
+                                snapshotFlow {
+                                    val layoutInfo = listState.layoutInfo
+                                    val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                                    lastVisibleIndex >= (layoutInfo.totalItemsCount - 5).coerceAtLeast(0)
+                                }
+                                    .distinctUntilChanged()
+                                    .collect { nearEnd ->
+                                        if (nearEnd && !loadingMore && loadMoreError == null) {
+                                            loadingMore = true
+                                            pageNumber++
+                                        }
+                                    }
                             }
-                            items(visiblePreview.entries, key = { "${it.sourceId}:${it.url}" }) { entry ->
-                                RemoteMangaGridCard(
-                                    entry = entry,
-                                    inLibrary = "${entry.sourceId}:${entry.url}" in libraryRemoteKeys,
-                                    onClick = { onOpenRemoteManga(entry) },
-                                )
-                            }
-                            if (visiblePreview.hasNextPage) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    SourceCatalogFooter(
-                                        autoLoadMore = browseSettings.autoLoadMore,
-                                        loadingMore = loadingMore,
-                                        loadMoreError = loadMoreError,
-                                        onLoadMore = {
-                                            if (loadMoreError == null) {
-                                                loadingMore = true
-                                                pageNumber++
-                                            } else {
-                                                loadMoreError = null
-                                                loadingMore = true
-                                                pageRequestKey++
-                                            }
-                                        },
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(vertical = 8.dp),
+                            ) {
+                                item {
+                                    SourceDetailHeader(
+                                        source = source,
+                                        localCount = sourceLibraryCount,
                                     )
+                                }
+                                item {
+                                    SourcePreviewHeader(visiblePreview)
+                                }
+                                items(visiblePreview.entries, key = { "${it.sourceId}:${it.url}" }) { entry ->
+                                    RemoteMangaListRow(
+                                        entry = entry,
+                                        inLibrary = "${entry.sourceId}:${entry.url}" in libraryRemoteKeys,
+                                        compact = compactList,
+                                        onClick = { onOpenRemoteManga(entry) },
+                                    )
+                                }
+                                if (visiblePreview.hasNextPage) {
+                                    item {
+                                        SourceCatalogFooter(
+                                            autoLoadMore = browseSettings.autoLoadMore,
+                                            loadingMore = loadingMore,
+                                            loadMoreError = loadMoreError,
+                                            onLoadMore = requestNextPage,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -7651,6 +7719,89 @@ private fun RemoteMangaGridCard(
             )
         }
     }
+}
+
+@Composable
+private fun RemoteMangaListRow(
+    entry: ChimahonRemoteMangaEntry,
+    inLibrary: Boolean,
+    compact: Boolean,
+    onClick: () -> Unit,
+) {
+    val fallbackColor = coverColor(entry.sourceId xor entry.url.hashCode().toLong(), entry.title)
+    val coverWidth = if (compact) 42.dp else 56.dp
+    val coverHeight = if (compact) 58.dp else 78.dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.surface)
+            .clickable(onClick = onClick)
+            .padding(
+                horizontal = 14.dp,
+                vertical = if (compact) 6.dp else 8.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ThumbnailArtwork(
+            url = entry.thumbnailUrl,
+            title = entry.title,
+            fallbackColor = fallbackColor,
+            modifier = Modifier
+                .width(coverWidth)
+                .height(coverHeight)
+                .clip(RoundedCornerShape(5.dp)),
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Label(
+                entry.title,
+                ChimahonPalette.onSurface,
+                if (compact) 13 else 14,
+                weight = FontWeight.SemiBold,
+                maxLines = if (compact) 1 else 2,
+            )
+            val subtitle = listOfNotNull(
+                entry.author?.takeIf { it.isNotBlank() },
+                entry.status.takeIf { it.isNotBlank() && it != "Unknown" },
+            ).joinToString(" - ")
+            Label(
+                subtitle.ifBlank { "Source manga" },
+                ChimahonPalette.secondaryText,
+                if (compact) 10 else 11,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+            if (!compact && inLibrary) {
+                Row(
+                    modifier = Modifier.padding(top = 7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    LibraryInlineBadge("In library", UiIcon.CheckCircle)
+                }
+            }
+        }
+        if (compact && inLibrary) {
+            LibraryBadgeChip(
+                label = "",
+                icon = UiIcon.CheckCircle,
+                containerColor = ChimahonPalette.primaryContainer,
+                contentColor = ChimahonPalette.primary,
+            )
+        }
+        IconGlyph(
+            icon = UiIcon.Forward,
+            contentDescription = "Open manga",
+            tint = ChimahonPalette.secondaryText.copy(alpha = 0.70f),
+            modifier = Modifier
+                .padding(start = 8.dp)
+                .size(18.dp),
+        )
+    }
+    BrowseRowDivider(start = coverWidth + 26.dp)
 }
 
 @Composable
@@ -20200,7 +20351,15 @@ private fun MoreDetailPage(
                             downloadsDirectory = snapshot.runtime.downloadsDir,
                             downloadedOnlyMode = downloadedOnlyMode,
                             queue = queue,
+                            preferences = settings.downloads,
                             onOpenSettings = { onOpenPage(MorePage.DownloadSettings) },
+                            onOpenFolder = {
+                                downloadQueueMessage = if (onOpenExternalUrl(snapshot.runtime.downloadsDir)) {
+                                    "Opening download folder"
+                                } else {
+                                    "Could not open the download folder from this platform"
+                                }
+                            },
                         )
                     }
                     item {
@@ -20251,6 +20410,27 @@ private fun MoreDetailPage(
                                         .onSuccess { downloadQueueMessage = "Cleared completed downloads" }
                                         .onFailure { downloadQueueMessage = it.message ?: "Could not clear completed downloads" }
                                         .getOrNull() ?: downloadQueue
+                                }
+                            },
+                            onRetryFailed = {
+                                val failedEntries = downloadQueue?.entries
+                                    .orEmpty()
+                                    .filter { it.status == ChimahonDownloadState.Error }
+                                if (failedEntries.isNotEmpty()) {
+                                    scope.launch {
+                                        var updatedQueue = downloadQueue
+                                        var retriedCount = 0
+                                        failedEntries.forEach { entry ->
+                                            updatedQueue = runCatching { onRetryDownload(entry.chapterId) }
+                                                .onSuccess { retriedCount++ }
+                                                .onFailure { downloadQueueMessage = it.message ?: "Could not retry failed downloads" }
+                                                .getOrNull() ?: updatedQueue
+                                        }
+                                        downloadQueue = updatedQueue
+                                        if (retriedCount > 0) {
+                                            downloadQueueMessage = "Retried $retriedCount failed download(s)"
+                                        }
+                                    }
                                 }
                             },
                         )
@@ -20645,13 +20825,43 @@ private fun MoreDetailPage(
                             StorageUsageHero(storage = maintenance.storage)
                         }
                         item {
-                            StorageSectionRow("Files", maintenance.storage.files)
+                            StorageSectionRow(
+                                title = "Files",
+                                section = maintenance.storage.files,
+                                onOpen = {
+                                    maintenanceMessage = if (onOpenExternalUrl(maintenance.storage.files.path)) {
+                                        "Opening files directory"
+                                    } else {
+                                        "Could not open the files directory from this platform"
+                                    }
+                                },
+                            )
                         }
                         item {
-                            StorageSectionRow("Cache", maintenance.storage.cache)
+                            StorageSectionRow(
+                                title = "Cache",
+                                section = maintenance.storage.cache,
+                                onOpen = {
+                                    maintenanceMessage = if (onOpenExternalUrl(maintenance.storage.cache.path)) {
+                                        "Opening cache directory"
+                                    } else {
+                                        "Could not open the cache directory from this platform"
+                                    }
+                                },
+                            )
                         }
                         item {
-                            StorageSectionRow("Downloads", maintenance.storage.downloads)
+                            StorageSectionRow(
+                                title = "Downloads",
+                                section = maintenance.storage.downloads,
+                                onOpen = {
+                                    maintenanceMessage = if (onOpenExternalUrl(maintenance.storage.downloads.path)) {
+                                        "Opening downloads directory"
+                                    } else {
+                                        "Could not open the downloads directory from this platform"
+                                    }
+                                },
+                            )
                         }
                         item {
                             ExtensionStatusRow(
@@ -20662,6 +20872,25 @@ private fun MoreDetailPage(
                             )
                         }
                         item { ListGroupHeader("Maintenance") }
+                        item {
+                            ExtensionStatusRow(
+                                title = "Storage scan",
+                                subtitle = "Refresh the file, cache, download, and database maintenance snapshot.",
+                                action = if (maintenanceBusy) "Working" else "Refresh",
+                                onAction = {
+                                    if (!maintenanceBusy) {
+                                        maintenanceBusy = true
+                                        scope.launch {
+                                            maintenanceSnapshot = runCatching { onLoadDataMaintenance() }
+                                                .onSuccess { maintenanceMessage = "Storage usage refreshed" }
+                                                .onFailure { maintenanceMessage = it.message ?: "Could not refresh storage data" }
+                                                .getOrNull() ?: maintenanceSnapshot
+                                            maintenanceBusy = false
+                                        }
+                                    }
+                                },
+                            )
+                        }
                         item {
                             ExtensionStatusRow(
                                 title = "Thumbnail cache",
