@@ -186,6 +186,8 @@ data class ChimahonReaderSettings(
     val orientation: ChimahonReaderOrientation = ChimahonReaderOrientation.Free,
     val dualPageMode: ChimahonDualPageMode = ChimahonDualPageMode.Off,
     val splitWidePages: Boolean = false,
+    val rotateWidePagesToFit: Boolean = false,
+    val invertWidePageRotation: Boolean = false,
     val customBrightnessEnabled: Boolean = false,
     val customBrightnessValue: Int = 0,
     val colorFilterEnabled: Boolean = false,
@@ -257,6 +259,8 @@ data class ChimahonReaderSettings(
     val preserveReadingPosition: Boolean = true,
     val useAutoWebtoon: Boolean = false,
     val invertDoublePages: Boolean = false,
+    val rotateWidePagesToFitWebtoon: Boolean = false,
+    val invertWidePageRotationWebtoon: Boolean = false,
     val centerMarginDp: Int = 0,
     val pagedZoomStart: ChimahonReaderZoomStart = ChimahonReaderZoomStart.Automatic,
     val landscapeZoom: Boolean = true,
@@ -1039,6 +1043,8 @@ internal class ChimahonSettingsRepository(
             orientation = readEnum(READER_ORIENTATION_KEY, ChimahonReaderOrientation.Free),
             dualPageMode = readEnum(READER_DUAL_PAGE_MODE_KEY, ChimahonDualPageMode.Off),
             splitWidePages = settingsStore.readBoolean(READER_SPLIT_WIDE_PAGES_KEY),
+            rotateWidePagesToFit = settingsStore.readBoolean(READER_ROTATE_WIDE_PAGES_TO_FIT_KEY),
+            invertWidePageRotation = settingsStore.readBoolean(READER_INVERT_WIDE_PAGE_ROTATION_KEY),
             customBrightnessEnabled = settingsStore.readBoolean(READER_CUSTOM_BRIGHTNESS_ENABLED_KEY),
             customBrightnessValue = settingsStore.readInt(READER_CUSTOM_BRIGHTNESS_VALUE_KEY),
             colorFilterEnabled = settingsStore.readBoolean(READER_COLOR_FILTER_ENABLED_KEY),
@@ -1148,6 +1154,8 @@ internal class ChimahonSettingsRepository(
             ),
             useAutoWebtoon = settingsStore.readBoolean(READER_USE_AUTO_WEBTOON_KEY),
             invertDoublePages = settingsStore.readBoolean(READER_INVERT_DOUBLE_PAGES_KEY),
+            rotateWidePagesToFitWebtoon = settingsStore.readBoolean(READER_ROTATE_WIDE_PAGES_TO_FIT_WEBTOON_KEY),
+            invertWidePageRotationWebtoon = settingsStore.readBoolean(READER_INVERT_WIDE_PAGE_ROTATION_WEBTOON_KEY),
             centerMarginDp = settingsStore.readInt(READER_CENTER_MARGIN_DP_KEY),
             pagedZoomStart = readEnum(READER_PAGED_ZOOM_START_KEY, ChimahonReaderZoomStart.Automatic),
             landscapeZoom = settingsStore.readBoolean(READER_LANDSCAPE_ZOOM_KEY, defaultValue = true),
@@ -1187,6 +1195,8 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(READER_ORIENTATION_KEY, settings.orientation.name)
         settingsStore.writeString(READER_DUAL_PAGE_MODE_KEY, settings.dualPageMode.name)
         settingsStore.writeBoolean(READER_SPLIT_WIDE_PAGES_KEY, settings.splitWidePages)
+        settingsStore.writeBoolean(READER_ROTATE_WIDE_PAGES_TO_FIT_KEY, settings.rotateWidePagesToFit)
+        settingsStore.writeBoolean(READER_INVERT_WIDE_PAGE_ROTATION_KEY, settings.invertWidePageRotation)
         settingsStore.writeBoolean(READER_CUSTOM_BRIGHTNESS_ENABLED_KEY, settings.customBrightnessEnabled)
         settingsStore.writeInt(READER_CUSTOM_BRIGHTNESS_VALUE_KEY, settings.customBrightnessValue)
         settingsStore.writeBoolean(READER_COLOR_FILTER_ENABLED_KEY, settings.colorFilterEnabled)
@@ -1264,6 +1274,8 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(READER_PRESERVE_READING_POSITION_KEY, settings.preserveReadingPosition)
         settingsStore.writeBoolean(READER_USE_AUTO_WEBTOON_KEY, settings.useAutoWebtoon)
         settingsStore.writeBoolean(READER_INVERT_DOUBLE_PAGES_KEY, settings.invertDoublePages)
+        settingsStore.writeBoolean(READER_ROTATE_WIDE_PAGES_TO_FIT_WEBTOON_KEY, settings.rotateWidePagesToFitWebtoon)
+        settingsStore.writeBoolean(READER_INVERT_WIDE_PAGE_ROTATION_WEBTOON_KEY, settings.invertWidePageRotationWebtoon)
         settingsStore.writeInt(READER_CENTER_MARGIN_DP_KEY, settings.centerMarginDp)
         settingsStore.writeString(READER_PAGED_ZOOM_START_KEY, settings.pagedZoomStart.name)
         settingsStore.writeBoolean(READER_LANDSCAPE_ZOOM_KEY, settings.landscapeZoom)
@@ -2519,6 +2531,10 @@ internal class ChimahonSettingsRepository(
         const val READER_ORIENTATION_KEY = "__APP_STATE_chimahon_reader_orientation"
         const val READER_DUAL_PAGE_MODE_KEY = "__APP_STATE_chimahon_reader_dual_page_mode"
         const val READER_SPLIT_WIDE_PAGES_KEY = "__APP_STATE_chimahon_reader_split_wide_pages"
+        const val READER_ROTATE_WIDE_PAGES_TO_FIT_KEY =
+            "__APP_STATE_chimahon_reader_rotate_wide_pages_to_fit"
+        const val READER_INVERT_WIDE_PAGE_ROTATION_KEY =
+            "__APP_STATE_chimahon_reader_invert_wide_page_rotation"
         const val READER_CUSTOM_BRIGHTNESS_ENABLED_KEY =
             "__APP_STATE_chimahon_reader_custom_brightness_enabled"
         const val READER_CUSTOM_BRIGHTNESS_VALUE_KEY =
@@ -2614,6 +2630,10 @@ internal class ChimahonSettingsRepository(
         const val READER_USE_AUTO_WEBTOON_KEY = "__APP_STATE_chimahon_reader_use_auto_webtoon"
         const val READER_INVERT_DOUBLE_PAGES_KEY =
             "__APP_STATE_chimahon_reader_invert_double_pages"
+        const val READER_ROTATE_WIDE_PAGES_TO_FIT_WEBTOON_KEY =
+            "__APP_STATE_chimahon_reader_rotate_wide_pages_to_fit_webtoon"
+        const val READER_INVERT_WIDE_PAGE_ROTATION_WEBTOON_KEY =
+            "__APP_STATE_chimahon_reader_invert_wide_page_rotation_webtoon"
         const val READER_CENTER_MARGIN_DP_KEY = "__APP_STATE_chimahon_reader_center_margin_dp"
         const val READER_PAGED_ZOOM_START_KEY = "__APP_STATE_chimahon_reader_paged_zoom_start"
         const val READER_LANDSCAPE_ZOOM_KEY = "__APP_STATE_chimahon_reader_landscape_zoom"

@@ -11152,6 +11152,18 @@ private fun ReaderReadingModeSettingsPage(
             onCheckedChange = { onSettingsChange(settings.copy(splitWidePages = it)) },
         )
         ReaderToggleRow(
+            label = "Rotate wide pages",
+            checked = settings.rotateWidePagesToFit,
+            onCheckedChange = { onSettingsChange(settings.copy(rotateWidePagesToFit = it)) },
+        )
+        if (settings.rotateWidePagesToFit) {
+            ReaderToggleRow(
+                label = "Invert page rotation",
+                checked = settings.invertWidePageRotation,
+                onCheckedChange = { onSettingsChange(settings.copy(invertWidePageRotation = it)) },
+            )
+        }
+        ReaderToggleRow(
             label = "Invert double pages",
             checked = settings.invertDoublePages,
             onCheckedChange = { onSettingsChange(settings.copy(invertDoublePages = it)) },
@@ -11264,6 +11276,18 @@ private fun ReaderReadingModeSettingsPage(
                 label = "Dual page invert",
                 checked = settings.invertDoublePages,
                 onCheckedChange = { onSettingsChange(settings.copy(invertDoublePages = it)) },
+            )
+        }
+        ReaderToggleRow(
+            label = "Rotate wide pages",
+            checked = settings.rotateWidePagesToFitWebtoon,
+            onCheckedChange = { onSettingsChange(settings.copy(rotateWidePagesToFitWebtoon = it)) },
+        )
+        if (settings.rotateWidePagesToFitWebtoon) {
+            ReaderToggleRow(
+                label = "Invert page rotation",
+                checked = settings.invertWidePageRotationWebtoon,
+                onCheckedChange = { onSettingsChange(settings.copy(invertWidePageRotationWebtoon = it)) },
             )
         }
         ReaderToggleRow(
@@ -21353,6 +21377,30 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceSwitchRow(
+                            "Rotate wide pages",
+                            "Rotate landscape manga pages to fit the screen",
+                            UiIcon.Rotation,
+                            checked = settings.reader.rotateWidePagesToFit,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(rotateWidePagesToFit = it))
+                            },
+                        )
+                    }
+                    if (settings.reader.rotateWidePagesToFit) {
+                        item {
+                            PreferenceSwitchRow(
+                                "Invert page rotation",
+                                "Use the opposite rotation direction for wide pages",
+                                UiIcon.Rotation,
+                                checked = settings.reader.invertWidePageRotation,
+                                onCheckedChange = {
+                                    onReaderSettingsChange(settings.reader.copy(invertWidePageRotation = it))
+                                },
+                            )
+                        }
+                    }
+                    item {
+                        PreferenceSwitchRow(
                             "Invert double pages",
                             "Swap left and right pages in two-page spreads",
                             UiIcon.Swap,
@@ -22027,6 +22075,32 @@ private fun MoreDetailPage(
                                 onReaderSettingsChange(settings.reader.copy(smartLongStripGapScale = it))
                             },
                         )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Rotate wide pages",
+                            "Rotate landscape webtoon pages to fit the screen",
+                            UiIcon.Rotation,
+                            checked = settings.reader.rotateWidePagesToFitWebtoon,
+                            onCheckedChange = {
+                                onReaderSettingsChange(settings.reader.copy(rotateWidePagesToFitWebtoon = it))
+                            },
+                        )
+                    }
+                    if (settings.reader.rotateWidePagesToFitWebtoon) {
+                        item {
+                            PreferenceSwitchRow(
+                                "Invert page rotation",
+                                "Use the opposite rotation direction for webtoon wide pages",
+                                UiIcon.Rotation,
+                                checked = settings.reader.invertWidePageRotationWebtoon,
+                                onCheckedChange = {
+                                    onReaderSettingsChange(
+                                        settings.reader.copy(invertWidePageRotationWebtoon = it),
+                                    )
+                                },
+                            )
+                        }
                     }
                     item {
                         SettingsChoiceRow(
