@@ -1186,6 +1186,17 @@ class ChimahonSharedAppServices private constructor(
         )
     }
 
+    suspend fun setMangaChapterFlags(
+        mangaId: Long,
+        chapterFlags: Long,
+    ) {
+        updateMangaChapterFlags(
+            databaseHandler = platformServices.databaseHandler,
+            mangaId = mangaId,
+            chapterFlags = chapterFlags,
+        )
+    }
+
     suspend fun resetHistoryEntry(historyId: Long) {
         platformServices.databaseHandler.await(inTransaction = true) {
             historyQueries.resetHistoryByIds(listOf(historyId))

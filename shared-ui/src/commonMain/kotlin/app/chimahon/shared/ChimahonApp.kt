@@ -345,8 +345,11 @@ private enum class SourceSort(val title: String) {
 private enum class ChapterFilter(val title: String) {
     All("All"),
     Unread("Unread"),
+    Read("Read"),
     Started("Started"),
     Bookmarked("Bookmarked"),
+    Downloaded("Downloaded"),
+    NotDownloaded("Not downloaded"),
 }
 
 private enum class ChapterSort(val title: String) {
@@ -356,13 +359,6 @@ private enum class ChapterSort(val title: String) {
     Name("Name"),
     Scanlator("Scanlator"),
 }
-
-private const val CHIMAHON_CHAPTER_SORT_DESC = 0x00000000L
-private const val CHIMAHON_CHAPTER_SORT_DIR_MASK = 0x00000001L
-private const val CHIMAHON_CHAPTER_SORTING_NUMBER = 0x00000100L
-private const val CHIMAHON_CHAPTER_SORTING_UPLOAD_DATE = 0x00000200L
-private const val CHIMAHON_CHAPTER_SORTING_ALPHABET = 0x00000300L
-private const val CHIMAHON_CHAPTER_SORTING_MASK = 0x00000300L
 
 private data class ChapterListSummary(
     val readCount: Int,
@@ -882,6 +878,7 @@ fun ChimahonServiceApp(
         onSetMangaFavorite = services::setMangaFavorite,
         onSetMangasFavorite = services::setMangasFavorite,
         onSetMangaNotes = services::setMangaNotes,
+        onSetMangaChapterFlags = services::setMangaChapterFlags,
         onResetHistoryEntry = services::resetHistoryEntry,
         onResetHistoryForManga = services::resetHistoryForManga,
         onClearHistory = services::clearHistory,
@@ -1003,6 +1000,7 @@ internal fun ChimahonApp(
         ChimahonLibraryBulkActionResult(mangaCount = mangaIds.size)
     },
     onSetMangaNotes: suspend (Long, String) -> Unit = { _, _ -> },
+    onSetMangaChapterFlags: suspend (Long, Long) -> Unit = { _, _ -> },
     onResetHistoryEntry: suspend (Long) -> Unit = {},
     onResetHistoryForManga: suspend (Long) -> Unit = {},
     onClearHistory: suspend () -> Unit = {},
@@ -1545,6 +1543,10 @@ internal fun ChimahonApp(
                                         },
                                         onSetMangaNotes = { mangaId, notes ->
                                             onSetMangaNotes(mangaId, notes)
+                                            onRefresh()
+                                        },
+                                        onSetMangaChapterFlags = { mangaId, chapterFlags ->
+                                            onSetMangaChapterFlags(mangaId, chapterFlags)
                                             onRefresh()
                                         },
                                         onSetMangaChaptersRead = { mangaId, read ->
@@ -16757,6 +16759,7 @@ private fun MangaDetailHome(
     onSetMangaFavorite: suspend (Long, Boolean) -> Unit,
     onSetMangaCategories: suspend (Long, Set<Long>) -> Unit,
     onSetMangaNotes: suspend (Long, String) -> Unit,
+    onSetMangaChapterFlags: suspend (Long, Long) -> Unit,
     onSetMangaChaptersRead: suspend (Long, Boolean) -> Unit,
     onSetChapterRead: suspend (Long, Boolean) -> Unit,
     onSetChapterBookmark: suspend (Long, Boolean) -> Unit,
@@ -16778,7 +16781,9 @@ private fun MangaDetailHome(
     }
 
     val chapters = snapshot.chaptersByMangaId[mangaId].orEmpty()
-    var selectedChapterFilter by remember(mangaId) { mutableStateOf(ChapterFilter.All) }
+    var selectedChapterFilter by remember(mangaId, manga.chapterFlags) {
+        mutableStateOf(manga.defaultChapterFilter())
+    }
     var selectedChapterSort by remember(mangaId, manga.chapterFlags) {
         mutableStateOf(manga.defaultChapterSort())
     }
@@ -16800,11 +16805,53 @@ private fun MangaDetailHome(
     val chapterListSummary = remember(chapters, chapterDownloadStatuses) {
         chapters.toChapterListSummary(chapterDownloadStatuses)
     }
+    val persistChapterFlags: (Long) -> Unit = { flags ->
+        scope.launch {
+            runCatching { onSetMangaChapterFlags(manga.id, flags) }
+        }
+    }
+    val updateChapterFilter: (ChapterFilter) -> Unit = { filter ->
+        selectedChapterFilter = filter
+        filter.toPersistedChapterFlags(manga.chapterFlags)?.let(persistChapterFlags)
+    }
+    val updateChapterSort: (ChapterSort) -> Unit = { sort ->
+        val nextDescending = if (sort == selectedChapterSort) {
+            !chapterDescending
+        } else {
+            sort.defaultPersistedDescending()
+        }
+        selectedChapterSort = sort
+        chapterDescending = nextDescending
+        sort.toChapterSortingFlag()?.let { sortingFlag ->
+            persistChapterFlags(
+                manga.chapterFlags
+                    .withChimahonFlag(sortingFlag, CHIMAHON_CHAPTER_SORTING_MASK)
+                    .withChimahonFlag(nextDescending.toChapterSortDirectionFlag(), CHIMAHON_CHAPTER_SORT_DIR_MASK),
+            )
+        }
+    }
+    val updateChapterSortDirection: (Boolean) -> Unit = { descending ->
+        chapterDescending = descending
+        if (selectedChapterSort.toChapterSortingFlag() != null) {
+            persistChapterFlags(
+                manga.chapterFlags.withChimahonFlag(
+                    descending.toChapterSortDirectionFlag(),
+                    CHIMAHON_CHAPTER_SORT_DIR_MASK,
+                ),
+            )
+        }
+    }
     val clearChapterFilters: () -> Unit = {
         selectedChapterFilter = ChapterFilter.All
         selectedChapterSort = manga.defaultChapterSort()
         chapterDescending = manga.chapterSortDescending()
         chapterQuery = ""
+        persistChapterFlags(
+            manga.chapterFlags
+                .withChimahonFlag(0L, CHIMAHON_CHAPTER_UNREAD_MASK)
+                .withChimahonFlag(0L, CHIMAHON_CHAPTER_BOOKMARKED_MASK)
+                .withChimahonFlag(0L, CHIMAHON_CHAPTER_DOWNLOADED_MASK),
+        )
     }
     val visibleChapters = chapters
         .filter { chapter ->
@@ -16814,8 +16861,11 @@ private fun MangaDetailHome(
             when (selectedChapterFilter) {
                 ChapterFilter.All -> true
                 ChapterFilter.Unread -> !chapter.read
+                ChapterFilter.Read -> chapter.read
                 ChapterFilter.Started -> chapter.lastPageRead > 0L && !chapter.read
                 ChapterFilter.Bookmarked -> chapter.bookmarked
+                ChapterFilter.Downloaded -> chapterDownloadStatuses[chapter.id]?.status == ChimahonDownloadState.Downloaded
+                ChapterFilter.NotDownloaded -> chapterDownloadStatuses[chapter.id]?.status != ChimahonDownloadState.Downloaded
             }
         }
         .let { entries ->
@@ -16911,9 +16961,9 @@ private fun MangaDetailHome(
                     query = chapterQuery,
                     onToggleFilters = { chapterFiltersVisible = !chapterFiltersVisible },
                     onQueryChange = { chapterQuery = it },
-                    onFilterChange = { selectedChapterFilter = it },
-                    onSortChange = { selectedChapterSort = it },
-                    onSortDirectionChange = { chapterDescending = it },
+                    onFilterChange = updateChapterFilter,
+                    onSortChange = updateChapterSort,
+                    onSortDirectionChange = updateChapterSortDirection,
                     onDownloadVisible = downloadVisibleChapters,
                     onClearFilters = clearChapterFilters,
                     onSelectBrowse = onSelectBrowse,
@@ -17061,7 +17111,7 @@ private fun MangaDetailHome(
                         query = chapterQuery,
                         filtersVisible = chapterFiltersVisible,
                         onToggleFilters = { chapterFiltersVisible = !chapterFiltersVisible },
-                        onSortDirectionChange = { chapterDescending = it },
+                        onSortDirectionChange = updateChapterSortDirection,
                         onDownloadVisible = downloadVisibleChapters,
                         modifier = Modifier.padding(top = 8.dp),
                     )
@@ -17075,9 +17125,9 @@ private fun MangaDetailHome(
                             summary = chapterListSummary,
                             query = chapterQuery,
                             onQueryChange = { chapterQuery = it },
-                            onFilterChange = { selectedChapterFilter = it },
-                            onSortChange = { selectedChapterSort = it },
-                            onSortDirectionChange = { chapterDescending = it },
+                            onFilterChange = updateChapterFilter,
+                            onSortChange = updateChapterSort,
+                            onSortDirectionChange = updateChapterSortDirection,
                             onClearFilters = clearChapterFilters,
                         )
                     }
@@ -28057,6 +28107,63 @@ private fun ChimahonMangaEntry.defaultChapterSort(): ChapterSort {
 
 private fun ChimahonMangaEntry.chapterSortDescending(): Boolean {
     return chapterFlags and CHIMAHON_CHAPTER_SORT_DIR_MASK == CHIMAHON_CHAPTER_SORT_DESC
+}
+
+private fun ChimahonMangaEntry.defaultChapterFilter(): ChapterFilter {
+    return when {
+        chapterFlags and CHIMAHON_CHAPTER_UNREAD_MASK == CHIMAHON_CHAPTER_SHOW_UNREAD -> ChapterFilter.Unread
+        chapterFlags and CHIMAHON_CHAPTER_UNREAD_MASK == CHIMAHON_CHAPTER_SHOW_READ -> ChapterFilter.Read
+        chapterFlags and CHIMAHON_CHAPTER_BOOKMARKED_MASK == CHIMAHON_CHAPTER_SHOW_BOOKMARKED -> ChapterFilter.Bookmarked
+        chapterFlags and CHIMAHON_CHAPTER_DOWNLOADED_MASK == CHIMAHON_CHAPTER_SHOW_DOWNLOADED -> ChapterFilter.Downloaded
+        chapterFlags and CHIMAHON_CHAPTER_DOWNLOADED_MASK == CHIMAHON_CHAPTER_SHOW_NOT_DOWNLOADED -> ChapterFilter.NotDownloaded
+        else -> ChapterFilter.All
+    }
+}
+
+private fun ChapterFilter.toPersistedChapterFlags(currentFlags: Long): Long? {
+    return when (this) {
+        ChapterFilter.All -> currentFlags
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_UNREAD_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_BOOKMARKED_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_DOWNLOADED_MASK)
+        ChapterFilter.Unread -> currentFlags
+            .withChimahonFlag(CHIMAHON_CHAPTER_SHOW_UNREAD, CHIMAHON_CHAPTER_UNREAD_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_BOOKMARKED_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_DOWNLOADED_MASK)
+        ChapterFilter.Read -> currentFlags
+            .withChimahonFlag(CHIMAHON_CHAPTER_SHOW_READ, CHIMAHON_CHAPTER_UNREAD_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_BOOKMARKED_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_DOWNLOADED_MASK)
+        ChapterFilter.Bookmarked -> currentFlags
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_UNREAD_MASK)
+            .withChimahonFlag(CHIMAHON_CHAPTER_SHOW_BOOKMARKED, CHIMAHON_CHAPTER_BOOKMARKED_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_DOWNLOADED_MASK)
+        ChapterFilter.Downloaded -> currentFlags
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_UNREAD_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_BOOKMARKED_MASK)
+            .withChimahonFlag(CHIMAHON_CHAPTER_SHOW_DOWNLOADED, CHIMAHON_CHAPTER_DOWNLOADED_MASK)
+        ChapterFilter.NotDownloaded -> currentFlags
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_UNREAD_MASK)
+            .withChimahonFlag(0L, CHIMAHON_CHAPTER_BOOKMARKED_MASK)
+            .withChimahonFlag(CHIMAHON_CHAPTER_SHOW_NOT_DOWNLOADED, CHIMAHON_CHAPTER_DOWNLOADED_MASK)
+        ChapterFilter.Started -> null
+    }
+}
+
+private fun ChapterSort.toChapterSortingFlag(): Long? {
+    return when (this) {
+        ChapterSort.SourceOrder -> CHIMAHON_CHAPTER_SORTING_SOURCE
+        ChapterSort.ChapterNumber -> CHIMAHON_CHAPTER_SORTING_NUMBER
+        ChapterSort.UploadDate -> CHIMAHON_CHAPTER_SORTING_UPLOAD_DATE
+        ChapterSort.Name -> CHIMAHON_CHAPTER_SORTING_ALPHABET
+        ChapterSort.Scanlator -> null
+    }
+}
+
+private fun ChapterSort.defaultPersistedDescending(): Boolean = false
+
+private fun Boolean.toChapterSortDirectionFlag(): Long {
+    return if (this) CHIMAHON_CHAPTER_SORT_DESC else CHIMAHON_CHAPTER_SORT_ASC
 }
 
 private fun chapterSortDirectionTitle(sort: ChapterSort, descending: Boolean): String {

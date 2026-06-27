@@ -108,6 +108,40 @@ internal suspend fun updateMangaNotes(
     }
 }
 
+internal suspend fun updateMangaChapterFlags(
+    databaseHandler: DatabaseHandler,
+    mangaId: Long,
+    chapterFlags: Long,
+) {
+    databaseHandler.await {
+        mangasQueries.update(
+            source = null,
+            url = null,
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = null,
+            status = null,
+            thumbnailUrl = null,
+            favorite = null,
+            lastUpdate = null,
+            nextUpdate = null,
+            initialized = null,
+            viewer = null,
+            chapterFlags = chapterFlags,
+            coverLastModified = null,
+            dateAdded = null,
+            updateStrategy = null,
+            calculateInterval = null,
+            version = null,
+            isSyncing = 0L,
+            notes = null,
+            mangaId = mangaId,
+        )
+    }
+}
+
 internal suspend fun updateChapterRead(
     databaseHandler: DatabaseHandler,
     chapterId: Long,
