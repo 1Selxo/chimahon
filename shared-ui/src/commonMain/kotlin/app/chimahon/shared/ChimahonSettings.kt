@@ -646,6 +646,14 @@ data class ChimahonPlayerSubtitleSettings(
     val blacklist: String = "",
     val jimakuApiKey: String = "",
     val jimakuTitle: String = "",
+    val regexRemoveSpeakerNames: Boolean = false,
+    val regexMergeMultiline: Boolean = false,
+    val regexRemoveBracketedText: Boolean = false,
+    val regexRemoveUppercaseLines: Boolean = false,
+    val regexRemoveMusicSymbols: Boolean = false,
+    val regexRemoveCurlyBracedText: Boolean = false,
+    val regexCustomEnabled: Boolean = false,
+    val regexCustomPattern: String = "",
     val screenshotSubtitles: Boolean = false,
     val listMode: ChimahonSubtitleListMode = ChimahonSubtitleListMode.SideList,
     val font: String = "Sans Serif",
@@ -1928,6 +1936,14 @@ internal class ChimahonSettingsRepository(
             blacklist = settingsStore.readString(PLAYER_SUBTITLE_BLACKLIST_KEY) ?: "",
             jimakuApiKey = settingsStore.readString(PLAYER_SUBTITLE_JIMAKU_API_KEY) ?: "",
             jimakuTitle = settingsStore.readString(PLAYER_SUBTITLE_JIMAKU_TITLE_KEY) ?: "",
+            regexRemoveSpeakerNames = settingsStore.readBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_SPEAKERS_KEY),
+            regexMergeMultiline = settingsStore.readBoolean(PLAYER_SUBTITLE_REGEX_MERGE_MULTILINE_KEY),
+            regexRemoveBracketedText = settingsStore.readBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_BRACKETED_KEY),
+            regexRemoveUppercaseLines = settingsStore.readBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_UPPERCASE_KEY),
+            regexRemoveMusicSymbols = settingsStore.readBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_MUSIC_KEY),
+            regexRemoveCurlyBracedText = settingsStore.readBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_CURLY_KEY),
+            regexCustomEnabled = settingsStore.readBoolean(PLAYER_SUBTITLE_REGEX_CUSTOM_ENABLED_KEY),
+            regexCustomPattern = settingsStore.readString(PLAYER_SUBTITLE_REGEX_CUSTOM_PATTERN_KEY) ?: "",
             screenshotSubtitles = settingsStore.readBoolean(PLAYER_SUBTITLE_SCREENSHOT_KEY),
             listMode = readEnum(PLAYER_SUBTITLE_LIST_MODE_KEY, ChimahonSubtitleListMode.SideList),
             font = settingsStore.readString(PLAYER_SUBTITLE_FONT_KEY) ?: "Sans Serif",
@@ -1965,6 +1981,14 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(PLAYER_SUBTITLE_BLACKLIST_KEY, settings.blacklist)
         settingsStore.writeString(PLAYER_SUBTITLE_JIMAKU_API_KEY, settings.jimakuApiKey)
         settingsStore.writeString(PLAYER_SUBTITLE_JIMAKU_TITLE_KEY, settings.jimakuTitle)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_SPEAKERS_KEY, settings.regexRemoveSpeakerNames)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_REGEX_MERGE_MULTILINE_KEY, settings.regexMergeMultiline)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_BRACKETED_KEY, settings.regexRemoveBracketedText)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_UPPERCASE_KEY, settings.regexRemoveUppercaseLines)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_MUSIC_KEY, settings.regexRemoveMusicSymbols)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_REGEX_REMOVE_CURLY_KEY, settings.regexRemoveCurlyBracedText)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_REGEX_CUSTOM_ENABLED_KEY, settings.regexCustomEnabled)
+        settingsStore.writeString(PLAYER_SUBTITLE_REGEX_CUSTOM_PATTERN_KEY, settings.regexCustomPattern)
         settingsStore.writeBoolean(PLAYER_SUBTITLE_SCREENSHOT_KEY, settings.screenshotSubtitles)
         settingsStore.writeString(PLAYER_SUBTITLE_LIST_MODE_KEY, settings.listMode.name)
         settingsStore.writeString(PLAYER_SUBTITLE_FONT_KEY, settings.font)
@@ -2881,6 +2905,22 @@ internal class ChimahonSettingsRepository(
             "__APP_STATE_chimahon_player_subtitle_jimaku_api_key"
         const val PLAYER_SUBTITLE_JIMAKU_TITLE_KEY =
             "__APP_STATE_chimahon_player_subtitle_jimaku_title"
+        const val PLAYER_SUBTITLE_REGEX_REMOVE_SPEAKERS_KEY =
+            "__APP_STATE_chimahon_player_subtitle_regex_remove_speakers"
+        const val PLAYER_SUBTITLE_REGEX_MERGE_MULTILINE_KEY =
+            "__APP_STATE_chimahon_player_subtitle_regex_merge_multiline"
+        const val PLAYER_SUBTITLE_REGEX_REMOVE_BRACKETED_KEY =
+            "__APP_STATE_chimahon_player_subtitle_regex_remove_bracketed"
+        const val PLAYER_SUBTITLE_REGEX_REMOVE_UPPERCASE_KEY =
+            "__APP_STATE_chimahon_player_subtitle_regex_remove_uppercase"
+        const val PLAYER_SUBTITLE_REGEX_REMOVE_MUSIC_KEY =
+            "__APP_STATE_chimahon_player_subtitle_regex_remove_music"
+        const val PLAYER_SUBTITLE_REGEX_REMOVE_CURLY_KEY =
+            "__APP_STATE_chimahon_player_subtitle_regex_remove_curly"
+        const val PLAYER_SUBTITLE_REGEX_CUSTOM_ENABLED_KEY =
+            "__APP_STATE_chimahon_player_subtitle_regex_custom_enabled"
+        const val PLAYER_SUBTITLE_REGEX_CUSTOM_PATTERN_KEY =
+            "__APP_STATE_chimahon_player_subtitle_regex_custom_pattern"
         const val PLAYER_SUBTITLE_SCREENSHOT_KEY =
             "__APP_STATE_chimahon_player_subtitle_screenshot"
         const val PLAYER_SUBTITLE_LIST_MODE_KEY =

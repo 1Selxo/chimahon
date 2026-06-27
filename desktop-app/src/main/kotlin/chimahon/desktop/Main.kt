@@ -172,21 +172,6 @@ private fun createDesktopMenuBar(
             build()
         }
 
-    fun placeholderItem(
-        surface: String,
-        title: String,
-        shortcut: KeyStroke? = null,
-        shortcutLabel: String? = null,
-    ): JMenuItem = item(title, shortcut) {
-        DesktopPlatformAffordances.copyDesktopActionPlaceholder(
-            surface = surface,
-            action = title,
-            shortcut = shortcutLabel,
-        )
-    }
-
-    val appShortcutLabel = DesktopPlatformAffordances.menuShortcutLabel
-
     return JMenuBar().apply {
         add(menu("File", AwtKeyEvent.VK_F) {
             DesktopDirectory.entries.forEach { directory ->
@@ -386,70 +371,46 @@ private fun createDesktopMenuBar(
             })
             addSeparator()
             add(
-                placeholderItem(
-                    surface = "Player",
-                    title = "Play / Pause",
-                    shortcut = appShortcut(AwtKeyEvent.VK_SPACE, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+Space",
-                ),
+                item("Play / Pause", appShortcut(AwtKeyEvent.VK_SPACE, InputEvent.SHIFT_DOWN_MASK)) {
+                    onCommand(ChimahonDesktopCommand.PlayerTogglePlayback)
+                },
             )
             add(
-                placeholderItem(
-                    surface = "Player",
-                    title = "Seek Backward",
-                    shortcut = appShortcut(AwtKeyEvent.VK_J, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+J",
-                ),
+                item("Seek Backward", appShortcut(AwtKeyEvent.VK_J, InputEvent.SHIFT_DOWN_MASK)) {
+                    onCommand(ChimahonDesktopCommand.PlayerSeekBackward)
+                },
             )
             add(
-                placeholderItem(
-                    surface = "Player",
-                    title = "Seek Forward",
-                    shortcut = appShortcut(AwtKeyEvent.VK_L, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+L",
-                ),
+                item("Seek Forward", appShortcut(AwtKeyEvent.VK_L, InputEvent.SHIFT_DOWN_MASK)) {
+                    onCommand(ChimahonDesktopCommand.PlayerSeekForward)
+                },
             )
             addSeparator()
             add(
-                placeholderItem(
-                    surface = "Player",
-                    title = "Previous Episode",
-                    shortcut = appShortcut(AwtKeyEvent.VK_OPEN_BRACKET, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+[",
-                ),
+                item("Previous Episode", appShortcut(AwtKeyEvent.VK_OPEN_BRACKET, InputEvent.SHIFT_DOWN_MASK)) {
+                    onCommand(ChimahonDesktopCommand.PlayerPreviousEpisode)
+                },
             )
             add(
-                placeholderItem(
-                    surface = "Player",
-                    title = "Next Episode",
-                    shortcut = appShortcut(AwtKeyEvent.VK_CLOSE_BRACKET, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+]",
-                ),
+                item("Next Episode", appShortcut(AwtKeyEvent.VK_CLOSE_BRACKET, InputEvent.SHIFT_DOWN_MASK)) {
+                    onCommand(ChimahonDesktopCommand.PlayerNextEpisode)
+                },
             )
             addSeparator()
             add(
-                placeholderItem(
-                    surface = "Player",
-                    title = "Subtitle Settings",
-                    shortcut = appShortcut(AwtKeyEvent.VK_S, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+S",
-                ),
+                item("Subtitle Settings", appShortcut(AwtKeyEvent.VK_S, InputEvent.SHIFT_DOWN_MASK)) {
+                    onCommand(ChimahonDesktopCommand.PlayerSubtitleSettings)
+                },
             )
             add(
-                placeholderItem(
-                    surface = "Player",
-                    title = "Audio Delay",
-                    shortcut = appShortcut(AwtKeyEvent.VK_Y, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+Y",
-                ),
+                item("Audio Delay", appShortcut(AwtKeyEvent.VK_Y, InputEvent.SHIFT_DOWN_MASK)) {
+                    onCommand(ChimahonDesktopCommand.PlayerAudioDelay)
+                },
             )
             add(
-                placeholderItem(
-                    surface = "Player",
-                    title = "Video Filters",
-                    shortcut = appShortcut(AwtKeyEvent.VK_V, InputEvent.SHIFT_DOWN_MASK),
-                    shortcutLabel = "$appShortcutLabel+Shift+V",
-                ),
+                item("Video Filters", appShortcut(AwtKeyEvent.VK_V, InputEvent.SHIFT_DOWN_MASK)) {
+                    onCommand(ChimahonDesktopCommand.PlayerVideoFilters)
+                },
             )
             add(item("Player Settings", appShortcut(AwtKeyEvent.VK_COMMA, InputEvent.SHIFT_DOWN_MASK)) {
                 onCommand(ChimahonDesktopCommand.PlayerSettings)
@@ -564,6 +525,23 @@ private fun AwtKeyEvent.desktopCommandOrNull(): ChimahonDesktopCommand? {
             ChimahonDesktopCommand.BrowseAnimeExtensions
         keyCode == AwtKeyEvent.VK_Q && menuShortcutDown && altDown && shiftDown ->
             ChimahonDesktopCommand.AnimeDownloadQueue
+
+        keyCode == AwtKeyEvent.VK_SPACE && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerTogglePlayback
+        keyCode == AwtKeyEvent.VK_J && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerSeekBackward
+        keyCode == AwtKeyEvent.VK_L && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerSeekForward
+        keyCode == AwtKeyEvent.VK_OPEN_BRACKET && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerPreviousEpisode
+        keyCode == AwtKeyEvent.VK_CLOSE_BRACKET && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerNextEpisode
+        keyCode == AwtKeyEvent.VK_S && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerSubtitleSettings
+        keyCode == AwtKeyEvent.VK_Y && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerAudioDelay
+        keyCode == AwtKeyEvent.VK_V && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.PlayerVideoFilters
 
         keyCode == AwtKeyEvent.VK_LEFT && menuShortcutDown && altDown && shiftDown ->
             ChimahonDesktopCommand.ReaderPreviousChapter

@@ -757,6 +757,14 @@ enum class ChimahonDesktopCommand {
     More,
     Settings,
     AnimeSettings,
+    PlayerTogglePlayback,
+    PlayerSeekBackward,
+    PlayerSeekForward,
+    PlayerPreviousEpisode,
+    PlayerNextEpisode,
+    PlayerSubtitleSettings,
+    PlayerAudioDelay,
+    PlayerVideoFilters,
     PlayerSettings,
     DownloadQueue,
     AnimeDownloadQueue,
@@ -1228,6 +1236,14 @@ internal fun ChimahonApp(
                 selectHomeTab(HomeTab.More)
                 requestedMorePage = MorePage.AnimeLibrarySettings
             }
+            ChimahonDesktopCommand.PlayerTogglePlayback,
+            ChimahonDesktopCommand.PlayerSeekBackward,
+            ChimahonDesktopCommand.PlayerSeekForward,
+            ChimahonDesktopCommand.PlayerPreviousEpisode,
+            ChimahonDesktopCommand.PlayerNextEpisode,
+            ChimahonDesktopCommand.PlayerSubtitleSettings,
+            ChimahonDesktopCommand.PlayerAudioDelay,
+            ChimahonDesktopCommand.PlayerVideoFilters,
             ChimahonDesktopCommand.PlayerSettings -> {
                 selectHomeTab(HomeTab.More)
                 requestedMorePage = MorePage.PlayerSettings
@@ -12056,6 +12072,25 @@ private fun ChimahonPlayerSelectionSettings.subtitleSelectionLabel(): String {
         ?: "None"
 }
 
+private fun ChimahonPlayerSubtitleSettings.hasSubtitleRegexCleanupEnabled(): Boolean {
+    return regexRemoveSpeakerNames ||
+        regexMergeMultiline ||
+        regexRemoveBracketedText ||
+        regexRemoveUppercaseLines ||
+        regexRemoveMusicSymbols ||
+        regexRemoveCurlyBracedText ||
+        (regexCustomEnabled && regexCustomPattern.isNotBlank())
+}
+
+private fun String.subtitleRegexPatternStatus(): String {
+    return when {
+        isBlank() -> "No custom pattern"
+        runCatching { Regex(this, setOf(RegexOption.MULTILINE)) }.isSuccess ->
+            "Valid multiline regex pattern"
+        else -> "Invalid regex pattern"
+    }
+}
+
 private fun String.selectionKeyDisplay(): String? {
     return split('\u001f')
         .firstOrNull { it.isNotBlank() }
@@ -22688,6 +22723,153 @@ private fun MoreDetailPage(
                                 onPlayerSettingsChange(
                                     settings.player.copy(
                                         subtitles = settings.player.subtitles.copy(blacklist = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Subtitle cleanup filters") }
+                    item {
+                        PreferenceSwitchRow(
+                            "No subtitle cleanup",
+                            "Turn off regex cleanup before subtitles are rendered",
+                            UiIcon.VisibilityOff,
+                            checked = !settings.player.subtitles.hasSubtitleRegexCleanupEnabled(),
+                            onCheckedChange = { disable ->
+                                if (disable) {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(
+                                                regexRemoveSpeakerNames = false,
+                                                regexMergeMultiline = false,
+                                                regexRemoveBracketedText = false,
+                                                regexRemoveUppercaseLines = false,
+                                                regexRemoveMusicSymbols = false,
+                                                regexRemoveCurlyBracedText = false,
+                                                regexCustomEnabled = false,
+                                            ),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Remove speaker names",
+                            "Strip leading names like (Narrator): from subtitle lines",
+                            UiIcon.Edit,
+                            checked = settings.player.subtitles.regexRemoveSpeakerNames,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(regexRemoveSpeakerNames = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Merge multiline captions",
+                            "Collapse cleaned subtitle text into a single line when possible",
+                            UiIcon.Reorder,
+                            checked = settings.player.subtitles.regexMergeMultiline,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(regexMergeMultiline = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Remove bracketed text",
+                            "Hide cue notes enclosed in square brackets",
+                            UiIcon.VisibilityOff,
+                            checked = settings.player.subtitles.regexRemoveBracketedText,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(regexRemoveBracketedText = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Remove uppercase lines",
+                            "Drop all-caps subtitle lines used for noisy labels",
+                            UiIcon.VisibilityOff,
+                            checked = settings.player.subtitles.regexRemoveUppercaseLines,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(regexRemoveUppercaseLines = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Remove music symbols",
+                            "Strip music notes and similar karaoke markers",
+                            UiIcon.Edit,
+                            checked = settings.player.subtitles.regexRemoveMusicSymbols,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(regexRemoveMusicSymbols = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Remove braced text",
+                            "Hide cue notes enclosed in curly braces",
+                            UiIcon.VisibilityOff,
+                            checked = settings.player.subtitles.regexRemoveCurlyBracedText,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(regexRemoveCurlyBracedText = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Custom regex cleanup",
+                            "Apply a custom multiline regex after built-in filters",
+                            UiIcon.Search,
+                            checked = settings.player.subtitles.regexCustomEnabled,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(regexCustomEnabled = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceTextInputRow(
+                            title = "Custom regex pattern",
+                            subtitle = settings.player.subtitles.regexCustomPattern.subtitleRegexPatternStatus(),
+                            icon = UiIcon.Search,
+                            value = settings.player.subtitles.regexCustomPattern,
+                            placeholder = "\\[[^\\]]*]",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(regexCustomPattern = it),
                                     ),
                                 )
                             },
