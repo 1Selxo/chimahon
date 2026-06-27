@@ -12073,20 +12073,13 @@ private fun ChimahonPlayerSelectionSettings.subtitleSelectionLabel(): String {
 }
 
 private fun ChimahonPlayerSubtitleSettings.hasSubtitleRegexCleanupEnabled(): Boolean {
-    return regexRemoveSpeakerNames ||
-        regexMergeMultiline ||
-        regexRemoveBracketedText ||
-        regexRemoveUppercaseLines ||
-        regexRemoveMusicSymbols ||
-        regexRemoveCurlyBracedText ||
-        (regexCustomEnabled && regexCustomPattern.isNotBlank())
+    return subtitleRegexFilterOptions().enabled
 }
 
 private fun String.subtitleRegexPatternStatus(): String {
     return when {
         isBlank() -> "No custom pattern"
-        runCatching { Regex(this, setOf(RegexOption.MULTILINE)) }.isSuccess ->
-            "Valid multiline regex pattern"
+        customChimahonSubtitleRegex(this) != null -> "Valid multiline regex pattern"
         else -> "Invalid regex pattern"
     }
 }
