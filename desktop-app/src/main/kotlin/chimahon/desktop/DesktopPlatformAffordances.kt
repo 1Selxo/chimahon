@@ -12,10 +12,17 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import javax.swing.JOptionPane
+import javax.swing.JScrollPane
+import javax.swing.JTextArea
 
 internal object DesktopPlatformAffordances {
     private const val appName = "chimahon"
     private const val displayName = "Chimahon"
+    private const val repositoryUrl = "https://github.com/sohilsayed/chimahon"
+    private const val releasesUrl = "$repositoryUrl/releases/latest"
+    private const val issuesUrl = "$repositoryUrl/issues"
+    private const val discordUrl = "https://discord.gg/Ak2sW9Nvr9"
     private val directories = DesktopAppDirectories.resolve(appName)
     val menuShortcutUsesMeta: Boolean
         get() = isMacOs
@@ -23,14 +30,29 @@ internal object DesktopPlatformAffordances {
         get() = if (isMacOs) "Cmd" else "Ctrl"
 
     fun configureRuntime() {
-        System.setProperty("apple.awt.application.name", displayName)
-        System.setProperty("apple.laf.useScreenMenuBar", "true")
-        System.setProperty("sun.awt.application.name", displayName)
+        setDefaultProperty("apple.awt.application.name", displayName)
+        setDefaultProperty("apple.awt.application.appearance", "system")
+        setDefaultProperty("apple.laf.useScreenMenuBar", "true")
+        setDefaultProperty("awt.useSystemAAFontSettings", "on")
+        setDefaultProperty("swing.aatext", "true")
+        setDefaultProperty("sun.awt.application.name", displayName)
+        setDefaultProperty("com.apple.mrj.application.apple.menu.about.name", displayName)
         ensureDirectories()
     }
 
     fun configureWindow(window: Window) {
         window.minimumSize = Dimension(900, 580)
+    }
+
+    fun toggleFullScreen(window: Window): Boolean {
+        val device = window.graphicsConfiguration?.device
+            ?: GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
+
+        return runCatching {
+            if (!device.isFullScreenSupported) return@runCatching false
+            device.fullScreenWindow = if (device.fullScreenWindow == window) null else window
+            true
+        }.getOrDefault(false)
     }
 
     fun openDirectory(directory: DesktopDirectory): Boolean {
@@ -45,6 +67,16 @@ internal object DesktopPlatformAffordances {
 
     fun copyStorageSummary(): Boolean {
         return copyText(storageSummary())
+    }
+
+    fun copyDiagnosticInfo(): Boolean {
+        return copyText(
+            buildString {
+                appendLine(aboutSummary())
+                appendLine()
+                appendLine(storageSummary())
+            }.trimEnd(),
+        )
     }
 
     fun shareStorageSummary(): Boolean {
@@ -67,6 +99,64 @@ internal object DesktopPlatformAffordances {
         return openMailDraft(title, body) || copyText(body)
     }
 
+    fun showTextDialog(
+        parent: Window,
+        title: String,
+        text: String,
+    ): Boolean {
+        if (GraphicsEnvironment.isHeadless()) return copyText(text)
+
+        return runCatching {
+            val textArea = JTextArea(text).apply {
+                isEditable = false
+                lineWrap = false
+                rows = 24
+                columns = 58
+                caretPosition = 0
+            }
+            JOptionPane.showMessageDialog(
+                parent,
+                JScrollPane(textArea),
+                title,
+                JOptionPane.INFORMATION_MESSAGE,
+            )
+            true
+        }.getOrDefault(false) || copyText(text)
+    }
+
+    fun showAboutDialog(parent: Window): Boolean {
+        return showTextDialog(
+            parent = parent,
+            title = "About $displayName",
+            text = aboutSummary(),
+        )
+    }
+
+    fun openProjectWebsite(): Boolean {
+        return browseUri(URI(repositoryUrl))
+    }
+
+    fun openLatestReleases(): Boolean {
+        return browseUri(URI(releasesUrl))
+    }
+
+    fun openIssueTracker(): Boolean {
+        return browseUri(URI(issuesUrl))
+    }
+
+    fun openDiscord(): Boolean {
+        return browseUri(URI(discordUrl))
+    }
+
+    private fun setDefaultProperty(
+        key: String,
+        value: String,
+    ) {
+        if (System.getProperty(key).isNullOrBlank()) {
+            System.setProperty(key, value)
+        }
+    }
+
     private fun ensureDirectories() {
         listOf(
             directories.files,
@@ -87,6 +177,29 @@ internal object DesktopPlatformAffordances {
             DesktopDirectory.Temporary -> directories.temporary
             DesktopDirectory.Downloads -> directories.downloads
         }
+    }
+
+    private fun aboutSummary(): String {
+        return buildString {
+            appendLine("$displayName ${appVersionLabel()}")
+            appendLine("Native desktop shell")
+            appendLine()
+            appendLine("Project: $repositoryUrl")
+            appendLine("Latest releases: $releasesUrl")
+            appendLine("Issues: $issuesUrl")
+            appendLine()
+            appendLine("Java: ${System.getProperty("java.version")} (${System.getProperty("java.vendor")})")
+            appendLine("Runtime: ${System.getProperty("java.runtime.name")}")
+            appendLine("OS: ${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})")
+            appendLine("Data: ${directories.files}")
+        }.trimEnd()
+    }
+
+    private fun appVersionLabel(): String {
+        return System.getProperty("chimahon.desktop.version")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { "v$it" }
+            ?: "development build"
     }
 
     private fun storageSummary(): String {
@@ -166,6 +279,23 @@ private fun openPath(path: Path): Boolean {
         isWindows -> launchCommand("explorer.exe", path.toString())
         isMacOs -> launchCommand("open", path.toString())
         else -> launchCommand("xdg-open", path.toString())
+    }
+}
+
+private fun browseUri(uri: URI): Boolean {
+    return runCatching {
+        if (Desktop.isDesktopSupported()) {
+            val desktop = Desktop.getDesktop()
+            if (desktop.isSupported(Desktop.Action.BROWSE)) {
+                desktop.browse(uri)
+                return true
+            }
+        }
+        false
+    }.getOrDefault(false) || when {
+        isWindows -> launchCommand("rundll32.exe", "url.dll,FileProtocolHandler", uri.toString())
+        isMacOs -> launchCommand("open", uri.toString())
+        else -> launchCommand("xdg-open", uri.toString())
     }
 }
 

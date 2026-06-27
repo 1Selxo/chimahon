@@ -40,6 +40,7 @@ import java.awt.event.AWTEventListener
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent as AwtKeyEvent
 import java.awt.event.MouseEvent as AwtMouseEvent
+import javax.swing.JCheckBoxMenuItem
 import javax.swing.JMenu
 import javax.swing.JMenuBar
 import javax.swing.JMenuItem
@@ -72,14 +73,21 @@ fun main() {
         ) {
             DisposableEffect(window) {
                 DesktopPlatformAffordances.configureWindow(window)
+                val toggleFullScreen = {
+                    if (!DesktopPlatformAffordances.toggleFullScreen(window)) {
+                        window.toggleMaximized()
+                    }
+                }
                 val inputBridge = installDesktopInputBridge(
                     window = window,
                     onCommand = dispatchDesktopCommand,
+                    onToggleFullScreen = toggleFullScreen,
                 )
                 window.jMenuBar = createDesktopMenuBar(
                     window = window,
                     onCommand = dispatchDesktopCommand,
                     onQuit = closeApplication,
+                    onToggleFullScreen = toggleFullScreen,
                 )
                 onDispose {
                     inputBridge.close()
@@ -144,6 +152,7 @@ private fun createDesktopMenuBar(
     window: java.awt.Window,
     onCommand: (ChimahonDesktopCommand) -> Unit,
     onQuit: () -> Unit,
+    onToggleFullScreen: () -> Unit,
 ): JMenuBar {
     val menuShortcutMask = Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx
 
@@ -157,6 +166,12 @@ private fun createDesktopMenuBar(
         modifiers: Int = 0,
     ): KeyStroke = shortcut(keyCode, menuShortcutMask or modifiers)
 
+    val fullScreenShortcut = if (DesktopPlatformAffordances.menuShortcutUsesMeta) {
+        shortcut(AwtKeyEvent.VK_F, menuShortcutMask or InputEvent.CTRL_DOWN_MASK)
+    } else {
+        shortcut(AwtKeyEvent.VK_F11)
+    }
+
     fun item(
         title: String,
         shortcut: KeyStroke? = null,
@@ -164,6 +179,16 @@ private fun createDesktopMenuBar(
     ): JMenuItem = JMenuItem(title).apply {
         accelerator = shortcut
         addActionListener { action() }
+    }
+
+    fun checkItem(
+        title: String,
+        selected: Boolean = false,
+        shortcut: KeyStroke? = null,
+        action: (Boolean) -> Unit,
+    ): JCheckBoxMenuItem = JCheckBoxMenuItem(title, selected).apply {
+        accelerator = shortcut
+        addActionListener { action(isSelected) }
     }
 
     fun menu(title: String, mnemonic: Int, build: JMenu.() -> Unit): JMenu =
@@ -418,9 +443,32 @@ private fun createDesktopMenuBar(
         })
         add(menu("Window", AwtKeyEvent.VK_W) {
             add(item("Minimize") { window.minimize() })
-            add(item("Toggle Maximize", shortcut(AwtKeyEvent.VK_F11)) { window.toggleMaximized() })
+            add(item("Bring to Front") {
+                window.toFront()
+                window.requestFocus()
+            })
+            addSeparator()
+            add(item("Toggle Full Screen", fullScreenShortcut, onToggleFullScreen))
+            add(item("Toggle Maximize") { window.toggleMaximized() })
+            add(
+                checkItem(
+                    title = "Always on Top",
+                    selected = window.isAlwaysOnTop,
+                ) { selected ->
+                    runCatching {
+                        window.isAlwaysOnTop = selected
+                    }
+                },
+            )
         })
         add(menu("Help", AwtKeyEvent.VK_H) {
+            add(item("Keyboard Shortcuts", shortcut(AwtKeyEvent.VK_F1)) {
+                DesktopPlatformAffordances.showTextDialog(
+                    parent = window,
+                    title = "Chimahon keyboard shortcuts",
+                    text = desktopShortcutReference(),
+                )
+            })
             add(item("Copy Keyboard Shortcuts") {
                 DesktopPlatformAffordances.copyTextToClipboard(desktopShortcutReference())
             })
@@ -430,6 +478,14 @@ private fun createDesktopMenuBar(
                     title = "Chimahon keyboard shortcuts",
                 )
             })
+            addSeparator()
+            add(item("About Chimahon") { DesktopPlatformAffordances.showAboutDialog(window) })
+            add(item("Copy Diagnostic Info") { DesktopPlatformAffordances.copyDiagnosticInfo() })
+            addSeparator()
+            add(item("Open Project on GitHub") { DesktopPlatformAffordances.openProjectWebsite() })
+            add(item("Open Latest Releases") { DesktopPlatformAffordances.openLatestReleases() })
+            add(item("Report an Issue") { DesktopPlatformAffordances.openIssueTracker() })
+            add(item("Join Discord") { DesktopPlatformAffordances.openDiscord() })
         })
     }
 }
@@ -437,11 +493,18 @@ private fun createDesktopMenuBar(
 private fun installDesktopInputBridge(
     window: java.awt.Window,
     onCommand: (ChimahonDesktopCommand) -> Unit,
+    onToggleFullScreen: () -> Unit,
 ): AutoCloseable {
     val keyListener = AWTEventListener { event ->
         val keyEvent = event as? AwtKeyEvent ?: return@AWTEventListener
         if (keyEvent.id != AwtKeyEvent.KEY_PRESSED) return@AWTEventListener
         if (!keyEvent.belongsTo(window)) return@AWTEventListener
+
+        if (keyEvent.isFullScreenShortcut()) {
+            onToggleFullScreen()
+            keyEvent.consume()
+            return@AWTEventListener
+        }
 
         val command = keyEvent.desktopCommandOrNull() ?: return@AWTEventListener
         onCommand(command)
@@ -471,6 +534,23 @@ private fun installDesktopInputBridge(
         Toolkit.getDefaultToolkit().removeAWTEventListener(keyListener)
         Toolkit.getDefaultToolkit().removeAWTEventListener(mouseListener)
     }
+}
+
+private fun AwtKeyEvent.isFullScreenShortcut(): Boolean {
+    val plainF11 = keyCode == AwtKeyEvent.VK_F11 &&
+        !isMenuShortcutDown() &&
+        !isControlDown &&
+        !isMetaDown &&
+        !isAltDown &&
+        !isShiftDown
+    val macFullScreen = DesktopPlatformAffordances.menuShortcutUsesMeta &&
+        keyCode == AwtKeyEvent.VK_F &&
+        isMetaDown &&
+        isControlDown &&
+        !isAltDown &&
+        !isShiftDown
+
+    return plainF11 || macFullScreen
 }
 
 private fun AwtKeyEvent.desktopCommandOrNull(): ChimahonDesktopCommand? {
@@ -618,6 +698,11 @@ private fun java.awt.Window.toggleMaximized() {
 
 private fun desktopShortcutReference(): String {
     val shortcut = DesktopPlatformAffordances.menuShortcutLabel
+    val fullScreenShortcut = if (DesktopPlatformAffordances.menuShortcutUsesMeta) {
+        "Cmd+Ctrl+F"
+    } else {
+        "F11"
+    }
     return """
         Chimahon desktop shortcuts
 
@@ -668,6 +753,11 @@ private fun desktopShortcutReference(): String {
         Audio delay: $shortcut+Shift+Y
         Video filters: $shortcut+Shift+V
         Player settings: $shortcut+Shift+Comma
+
+        Window and help
+        Full screen: $fullScreenShortcut
+        Keyboard shortcuts: F1
+        Storage paths, diagnostics, and project links: menu bar
 
         Mouse
         Back/forward mouse buttons: reader previous/next page
