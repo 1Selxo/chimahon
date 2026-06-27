@@ -6,19 +6,26 @@ import java.awt.GraphicsEnvironment
 import java.awt.Toolkit
 import java.awt.Window
 import java.awt.datatransfer.StringSelection
+import java.net.URI
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 
 internal object DesktopPlatformAffordances {
     private const val appName = "chimahon"
+    private const val displayName = "Chimahon"
     private val directories = DesktopAppDirectories.resolve(appName)
     val menuShortcutUsesMeta: Boolean
         get() = isMacOs
+    val menuShortcutLabel: String
+        get() = if (isMacOs) "Cmd" else "Ctrl"
 
     fun configureRuntime() {
-        System.setProperty("apple.awt.application.name", "Chimahon")
+        System.setProperty("apple.awt.application.name", displayName)
         System.setProperty("apple.laf.useScreenMenuBar", "true")
-        System.setProperty("sun.awt.application.name", "Chimahon")
+        System.setProperty("sun.awt.application.name", displayName)
         ensureDirectories()
     }
 
@@ -28,23 +35,36 @@ internal object DesktopPlatformAffordances {
 
     fun openDirectory(directory: DesktopDirectory): Boolean {
         ensureDirectories()
-        return openPath(
-            when (directory) {
-                DesktopDirectory.Files -> directories.files
-                DesktopDirectory.Cache -> directories.cache
-                DesktopDirectory.Downloads -> directories.downloads
-            },
-        )
+        return openPath(pathFor(directory))
     }
 
     fun copyDirectoryPath(directory: DesktopDirectory): Boolean {
         ensureDirectories()
-        val path = when (directory) {
-            DesktopDirectory.Files -> directories.files
-            DesktopDirectory.Cache -> directories.cache
-            DesktopDirectory.Downloads -> directories.downloads
-        }
-        return copyText(path.toString())
+        return copyText(pathFor(directory).toString())
+    }
+
+    fun copyStorageSummary(): Boolean {
+        return copyText(storageSummary())
+    }
+
+    fun shareStorageSummary(): Boolean {
+        return shareText(
+            text = storageSummary(),
+            title = "$displayName storage paths",
+        )
+    }
+
+    fun copyTextToClipboard(text: String): Boolean {
+        return copyText(text)
+    }
+
+    fun shareText(
+        text: String,
+        title: String = displayName,
+    ): Boolean {
+        val body = text.trim()
+        if (body.isBlank()) return false
+        return openMailDraft(title, body) || copyText(body)
     }
 
     private fun ensureDirectories() {
@@ -59,12 +79,32 @@ internal object DesktopPlatformAffordances {
             }
         }
     }
+
+    private fun pathFor(directory: DesktopDirectory): Path {
+        return when (directory) {
+            DesktopDirectory.Files -> directories.files
+            DesktopDirectory.Cache -> directories.cache
+            DesktopDirectory.Temporary -> directories.temporary
+            DesktopDirectory.Downloads -> directories.downloads
+        }
+    }
+
+    private fun storageSummary(): String {
+        ensureDirectories()
+        return buildString {
+            appendLine("$displayName storage paths")
+            DesktopDirectory.entries.forEach { directory ->
+                appendLine("${directory.title}: ${pathFor(directory)}")
+            }
+        }.trimEnd()
+    }
 }
 
-internal enum class DesktopDirectory {
-    Files,
-    Cache,
-    Downloads,
+internal enum class DesktopDirectory(val title: String) {
+    Downloads("Downloads"),
+    Files("Data"),
+    Cache("Cache"),
+    Temporary("Temporary"),
 }
 
 private data class DesktopAppDirectories(
@@ -130,11 +170,40 @@ private fun openPath(path: Path): Boolean {
 }
 
 private fun copyText(text: String): Boolean {
+    return copyTextWithToolkit(text) || copyTextWithCommand(text)
+}
+
+private fun copyTextWithToolkit(text: String): Boolean {
     if (GraphicsEnvironment.isHeadless()) return false
     return runCatching {
         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
         true
     }.getOrDefault(false)
+}
+
+private fun copyTextWithCommand(text: String): Boolean {
+    return when {
+        isWindows -> launchCommandWithInput(text, "clip.exe")
+        isMacOs -> launchCommandWithInput(text, "pbcopy")
+        else -> launchCommandWithInput(text, "wl-copy") ||
+            launchCommandWithInput(text, "xclip", "-selection", "clipboard") ||
+            launchCommandWithInput(text, "xsel", "--clipboard", "--input")
+    }
+}
+
+private fun openMailDraft(subject: String, body: String): Boolean {
+    val mailto = URI("mailto:?subject=${subject.urlEncoded()}&body=${body.urlEncoded()}")
+    return runCatching {
+        if (!Desktop.isDesktopSupported()) return@runCatching false
+        val desktop = Desktop.getDesktop()
+        if (!desktop.isSupported(Desktop.Action.MAIL)) return@runCatching false
+        desktop.mail(mailto)
+        true
+    }.getOrDefault(false) || when {
+        isWindows -> launchCommand("rundll32.exe", "url.dll,FileProtocolHandler", mailto.toString())
+        isMacOs -> launchCommand("open", mailto.toString())
+        else -> launchCommand("xdg-email", "--subject", subject, "--body", body)
+    }
 }
 
 private fun launchCommand(vararg command: String): Boolean {
@@ -144,6 +213,27 @@ private fun launchCommand(vararg command: String): Boolean {
             .start()
         true
     }.getOrDefault(false)
+}
+
+private fun launchCommandWithInput(
+    input: String,
+    vararg command: String,
+): Boolean {
+    return runCatching {
+        val process = ProcessBuilder(*command)
+            .redirectErrorStream(true)
+            .start()
+        process.outputStream.use { output ->
+            output.write(input.toByteArray(StandardCharsets.UTF_8))
+        }
+        process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0
+    }.getOrDefault(false)
+}
+
+private fun String.urlEncoded(): String {
+    return URLEncoder
+        .encode(this, StandardCharsets.UTF_8)
+        .replace("+", "%20")
 }
 
 private fun String.sanitizePathSegment(): String {

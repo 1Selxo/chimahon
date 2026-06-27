@@ -3,6 +3,7 @@ package app.chimahon.shared
 import platform.Foundation.NSBundle
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSHomeDirectory
+import platform.Foundation.NSThread
 import platform.Foundation.NSURL
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIApplication
@@ -12,6 +13,8 @@ import platform.UIKit.UIPasteboard
 import platform.UIKit.UITabBarController
 import platform.UIKit.UIViewController
 import platform.UIKit.UIWindow
+import platform.darwin.dispatch_get_main_queue
+import platform.darwin.dispatch_sync
 import tachiyomi.core.platform.storage.IosPlatformStorageDirectories
 
 private val iosStorageDirectories = IosPlatformStorageDirectories(APP_NAME)
@@ -26,31 +29,42 @@ internal actual object ChimahonPlatformIntegration {
     actual fun openExternalUrl(url: String): Boolean {
         val trimmed = url.trim()
         if (trimmed.isBlank()) return false
-        val nativeUrl = trimmed.externalUrlOrNull() ?: return copyText(trimmed)
-        return UIApplication.sharedApplication.open(nativeUrl) ||
-            presentShareSheet(listOf(nativeUrl), title = null) ||
-            copyText(nativeUrl.absoluteString ?: trimmed)
+        val nativeUrl = trimmed.externalUrlOrNull()
+        if (nativeUrl != null) {
+            return openUrl(nativeUrl) ||
+                presentShareSheet(listOf(nativeUrl), title = null) ||
+                copyText(nativeUrl.absoluteString ?: trimmed)
+        }
+
+        val fileUrl = trimmed.fileUrlOrNull()
+        return if (fileUrl != null) {
+            openUrl(fileUrl) ||
+                presentShareSheet(listOf(fileUrl), title = fileUrl.shareTitle()) ||
+                copyUrl(fileUrl)
+        } else {
+            copyText(trimmed)
+        }
     }
 
     actual fun openPath(path: String): Boolean {
         val fileUrl = path.fileUrlOrNull() ?: return false
-        return UIApplication.sharedApplication.open(fileUrl) ||
-            presentShareSheet(listOf(fileUrl), title = null) ||
+        return openUrl(fileUrl) ||
+            presentShareSheet(listOf(fileUrl), title = fileUrl.shareTitle()) ||
             copyUrl(fileUrl)
     }
 
     actual fun revealPath(path: String): Boolean {
         val fileUrl = path.fileUrlOrNull() ?: return false
         return presentShareSheet(listOf(fileUrl), title = "Open in Files") ||
-            UIApplication.sharedApplication.open(fileUrl) ||
+            openUrl(fileUrl) ||
             copyUrl(fileUrl)
     }
 
     actual fun copyText(text: String): Boolean {
-        return runCatching {
+        return performOnMainThread {
             UIPasteboard.generalPasteboard.string = text
             true
-        }.getOrDefault(false)
+        }
     }
 
     actual fun shareText(text: String, title: String?): Boolean {
@@ -60,7 +74,9 @@ internal actual object ChimahonPlatformIntegration {
 
     actual fun shareFile(path: String, title: String?): Boolean {
         val fileUrl = path.fileUrlOrNull() ?: return false
-        return presentShareSheet(listOf(fileUrl), title) || copyUrl(fileUrl)
+        return presentShareSheet(listOf(fileUrl), title.shareTitleOrNull() ?: fileUrl.shareTitle()) ||
+            openUrl(fileUrl) ||
+            copyUrl(fileUrl)
     }
 
     actual fun platformInfo(): ChimahonPlatformInfo {
@@ -110,9 +126,7 @@ private fun String.fileUrlOrNull(): NSURL? {
     if (candidate.isBlank()) return null
 
     if (candidate.startsWith("file:", ignoreCase = true)) {
-        val url = NSURL.URLWithString(candidate) ?: return null
-        val filePath = url.path ?: return null
-        return url.takeIf { NSFileManager.defaultManager.fileExistsAtPath(filePath) }
+        return candidate.fileSchemeUrlOrNull()?.existingFileUrlOrNull()
     }
 
     return candidate.pathCandidates()
@@ -128,6 +142,7 @@ private fun String.normalizedExternalUrlString(): String? {
     val candidate = trim()
     if (candidate.isBlank() || candidate.any(Char::isWhitespace)) return null
     return when {
+        candidate.startsWith("//") && candidate.drop(2).looksLikeHost() -> "https:$candidate"
         candidate.hasUrlScheme() -> candidate
         candidate.contains("@") -> null
         candidate.looksLikeHost() -> "https://$candidate"
@@ -150,6 +165,27 @@ private fun String.looksLikeHost(): Boolean {
         (host.contains('.') && host.any(Char::isLetter))
 }
 
+private fun String.fileSchemeUrlOrNull(): NSURL? {
+    val parsedUrl = NSURL.URLWithString(this)
+    val parsedPath = parsedUrl?.path?.takeIf(String::isNotBlank)
+    if (parsedPath != null) return NSURL.fileURLWithPath(parsedPath)
+
+    val rawPath = when {
+        startsWith("file://", ignoreCase = true) -> drop("file://".length)
+        startsWith("file:", ignoreCase = true) -> drop("file:".length)
+        else -> null
+    }?.substringBefore('#')
+        ?.substringBefore('?')
+        ?.takeIf(String::isNotBlank)
+
+    return rawPath?.let { NSURL.fileURLWithPath(it) }
+}
+
+private fun NSURL.existingFileUrlOrNull(): NSURL? {
+    val filePath = path ?: return null
+    return takeIf { filePath.isNotBlank() && NSFileManager.defaultManager.fileExistsAtPath(filePath) }
+}
+
 private fun String.pathCandidates(): List<String> {
     val normalized = replace('\\', '/')
     if (normalized == "~") return listOf(NSHomeDirectory())
@@ -158,19 +194,24 @@ private fun String.pathCandidates(): List<String> {
     if (normalized.hasUrlScheme()) return emptyList()
 
     val relativePath = normalized.trimStart('/')
+    if (relativePath.isBlank()) return emptyList()
     val roots = listOf(
-        iosStorageDirectories.filesDir.toString(),
         iosStorageDirectories.defaultDownloadsDir(APP_NAME).toString(),
+        iosStorageDirectories.filesDir.toString(),
         iosStorageDirectories.cacheDir.toString(),
         iosStorageDirectories.temporaryDir.toString(),
+        NSHomeDirectory(),
     )
-    return roots.map { root -> "$root/$relativePath" }
+    return roots.distinct().map { root -> "$root/$relativePath" }
 }
 
-private fun UIApplication.open(url: NSURL): Boolean {
-    if (!canOpenURL(url)) return false
-    openURL(url, options = emptyMap<Any?, Any>(), completionHandler = null)
-    return true
+private fun openUrl(url: NSURL): Boolean {
+    return performOnMainThread {
+        val application = UIApplication.sharedApplication
+        if (!application.canOpenURL(url)) return@performOnMainThread false
+        application.openURL(url, options = emptyMap<Any?, Any>(), completionHandler = null)
+        true
+    }
 }
 
 private fun copyUrl(url: NSURL): Boolean {
@@ -179,15 +220,55 @@ private fun copyUrl(url: NSURL): Boolean {
 }
 
 private fun presentShareSheet(items: List<*>, title: String?): Boolean {
-    if (items.isEmpty()) return false
-    val presenter = activeViewController() ?: return false
-    val activityController = UIActivityViewController(
-        activityItems = items,
-        applicationActivities = null,
-    )
-    activityController.title = title?.trim()?.takeIf(String::isNotBlank)
-    presenter.presentViewController(activityController, animated = true, completion = null)
-    return true
+    val shareItems = items.filterNotNull()
+    if (shareItems.isEmpty()) return false
+
+    return performOnMainThread {
+        val presenter = activeViewController() ?: return@performOnMainThread false
+        val activityController = UIActivityViewController(
+            activityItems = shareItems,
+            applicationActivities = null,
+        )
+        val shareTitle = title.shareTitleOrNull()
+        activityController.title = shareTitle
+        if (shareTitle != null) {
+            runCatching {
+                activityController.setValue(shareTitle, forKey = "subject")
+            }
+        }
+        val sourceView = presenter.view ?: return@performOnMainThread false
+        activityController.popoverPresentationController?.let { popover ->
+            popover.sourceView = sourceView
+            popover.sourceRect = sourceView.bounds
+        }
+        presenter.presentViewController(activityController, animated = true, completion = null)
+        true
+    }
+}
+
+private inline fun performOnMainThread(crossinline action: () -> Boolean): Boolean {
+    if (NSThread.isMainThread) {
+        return runCatching { action() }.getOrDefault(false)
+    }
+
+    var result = false
+    dispatch_sync(dispatch_get_main_queue()) {
+        result = runCatching { action() }.getOrDefault(false)
+    }
+    return result
+}
+
+private fun String?.shareTitleOrNull(): String? {
+    return this
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+}
+
+private fun NSURL.shareTitle(): String {
+    return lastPathComponent
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+        ?: APP_NAME
 }
 
 private fun activeViewController(): UIViewController? {

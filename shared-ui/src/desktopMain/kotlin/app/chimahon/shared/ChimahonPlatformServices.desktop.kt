@@ -7,7 +7,6 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import tachiyomi.core.database.DesktopDatabaseDriverFactory
 import tachiyomi.core.platform.javascript.DesktopJavaScriptRuntimeFactory
 import tachiyomi.core.platform.javascript.JavaScriptRuntimeFactory
-import tachiyomi.core.platform.storage.DesktopPlatformStorageDirectories
 import tachiyomi.core.platform.storage.PlatformStorageDirectories
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseHandler
@@ -16,7 +15,7 @@ import tachiyomi.data.DesktopDatabaseHandler
 internal actual class ChimahonPlatformServices actual constructor() {
     actual val platformName: String = "Desktop"
     actual val backgroundState: String = "Coroutine scheduler ready"
-    actual val storageDirectories: PlatformStorageDirectories = DesktopPlatformStorageDirectories(APP_NAME)
+    actual val storageDirectories: PlatformStorageDirectories = createChimahonDesktopStorageDirectories()
 
     init {
         storageDirectories.ensureChimahonDirectories()

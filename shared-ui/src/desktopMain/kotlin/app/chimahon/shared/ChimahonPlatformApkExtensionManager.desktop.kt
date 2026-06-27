@@ -43,45 +43,69 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
 
     actual suspend fun reload(): List<ChimahonInstalledExtensionEntry> = withContext(Dispatchers.IO) {
         synchronized(lifecycleLock) {
-            reloadLocked(reportTotalFailure = true)
+            reloadLocked(forceDiskScan = true)
         }
     }
 
-    private fun reloadLocked(reportTotalFailure: Boolean): List<ChimahonInstalledExtensionEntry> {
-        if (initialized) return installedEntries()
-        Files.createDirectories(extensionDirectory)
-        recoverInterruptedUpdates()
-        cleanupTemporaryFiles()
-        val apkPaths = Files.list(extensionDirectory).use { paths ->
-            paths
-                .filter { it.fileName.toString().endsWith(APK_SUFFIX, ignoreCase = true) }
-                .sorted()
-                .toList()
+    private fun reloadLocked(forceDiskScan: Boolean): List<ChimahonInstalledExtensionEntry> {
+        if (initialized && !forceDiskScan) return installedEntries()
+        val setupError = runCatching {
+            Files.createDirectories(extensionDirectory)
+            recoverInterruptedUpdates()
+            cleanupTemporaryFiles()
+        }.exceptionOrNull()
+        if (setupError != null) {
+            lastErrors = listOf("APK extension directory is unavailable: ${setupError.userMessage()}")
+            initialized = true
+            return installedEntries()
         }
+
+        val apkPaths = runCatching { apkPaths() }.getOrElse { error ->
+            lastErrors = listOf("APK extension directory could not be scanned: ${error.userMessage()}")
+            initialized = true
+            return installedEntries()
+        }
+        val diskPackageIds = apkPaths
+            .mapNotNull { path -> path.fileNamePackageIdOrNull() }
+            .toSet()
+        if (forceDiskScan) {
+            loadedPackages.keys
+                .filterNot { packageId -> packageId in diskPackageIds }
+                .toList()
+                .forEach(::deactivatePackage)
+        }
+
         val failures = mutableListOf<String>()
+        val failedPackageIds = mutableSetOf<String>()
+        val loadedPackageIds = mutableSetOf<String>()
         apkPaths.forEach { apkPath ->
             runCatching {
                 loadPersistedPackage(apkPath)
-            }.onSuccess {
-                Files.deleteIfExists(errorPath(apkPath))
+            }.onSuccess { loaded ->
+                loadedPackageIds += loaded.entry.id
+                deleteIfExistsQuietly(errorPath(apkPath))
             }.onFailure { error ->
+                apkPath.fileNamePackageIdOrNull()?.let { packageId ->
+                    failedPackageIds += packageId
+                    deactivatePackage(packageId)
+                }
                 val message = "${apkPath.fileName}: ${error.userMessage()}"
                 failures += message
                 writeErrorReport(apkPath, message)
             }
         }
+        if (forceDiskScan) {
+            val retainedPackageIds = (diskPackageIds - failedPackageIds) + loadedPackageIds
+            loadedPackages.keys
+                .filterNot { packageId -> packageId in retainedPackageIds }
+                .toList()
+                .forEach(::deactivatePackage)
+        }
         initialized = true
-        lastErrors = failures
-        if (reportTotalFailure && apkPaths.isNotEmpty() && loadedPackages.isEmpty() && failures.isNotEmpty()) {
-            error(
-                buildString {
-                    append("No installed APK extensions could be loaded. ")
-                    append(failures.take(MAX_REPORTED_ERRORS).joinToString(" | "))
-                    if (failures.size > MAX_REPORTED_ERRORS) {
-                        append(" | ${failures.size - MAX_REPORTED_ERRORS} more failure(s)")
-                    }
-                }
-            )
+        lastErrors = if (apkPaths.isNotEmpty() && loadedPackages.isEmpty() && failures.isNotEmpty()) {
+            listOf(totalReloadFailureMessage(failures))
+        } else {
+            failures
         }
         return installedEntries()
     }
@@ -103,7 +127,7 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
         require(apkBytes.isNotEmpty()) { "Downloaded APK is empty." }
         Files.createDirectories(extensionDirectory)
         if (!initialized) {
-            reloadLocked(reportTotalFailure = false)
+            reloadLocked(forceDiskScan = false)
         }
         val fileStem = extension.id.toSafeFileName()
         val temporaryApk = Files.createTempFile(extensionDirectory, "$fileStem-", ".download")
@@ -142,7 +166,7 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
             try {
                 validateCandidate(candidate, extension.id)
             } finally {
-                candidate.classLoader.close()
+                candidate.classLoader.closeQuietly()
             }
 
             val metadata = StoredPackageMetadata(
@@ -179,8 +203,8 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
                 removeBackup(backupJar)
                 removeBackup(backupMetadata)
                 removeBackup(backupApk)
-                Files.deleteIfExists(errorPath(finalApk))
-                lastErrors = emptyList()
+                deleteIfExistsQuietly(errorPath(finalApk))
+                lastErrors = lastErrors.withoutPackage(extension.id, fileStem)
                 initialized = true
                 return installed
             } catch (commitError: Throwable) {
@@ -207,10 +231,10 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
             lastErrors = listOf(message)
             throw IllegalStateException(message, error)
         } finally {
-            Files.deleteIfExists(temporaryApk)
-            Files.deleteIfExists(temporaryJar)
-            Files.deleteIfExists(temporaryMetadata)
-            Files.deleteIfExists(temporaryJar.resolveSibling("${temporaryJar.fileName}.errors.txt"))
+            deleteIfExistsQuietly(temporaryApk)
+            deleteIfExistsQuietly(temporaryJar)
+            deleteIfExistsQuietly(temporaryMetadata)
+            deleteIfExistsQuietly(temporaryJar.resolveSibling("${temporaryJar.fileName}.errors.txt"))
         }
     }
 
@@ -227,7 +251,8 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
                 Files.exists(jarPath) ||
                 Files.exists(metadataPath)
             deactivatePackage(packageId)
-            listOf(
+            val deletionFailures = mutableListOf<String>()
+            val pathsToDelete = listOf(
                 apkPath,
                 jarPath,
                 metadataPath,
@@ -235,9 +260,16 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
                 apkPath.resolveSibling("${apkPath.fileName}$BACKUP_SUFFIX"),
                 jarPath.resolveSibling("${jarPath.fileName}$BACKUP_SUFFIX"),
                 metadataPath.resolveSibling("${metadataPath.fileName}$BACKUP_SUFFIX"),
-            ).forEach(Files::deleteIfExists)
-            lastErrors = lastErrors.filterNot { it.contains(packageId) || it.contains(fileStem) }
-            existed
+            )
+            pathsToDelete.forEach { path ->
+                runCatching { Files.deleteIfExists(path) }
+                    .onFailure { error ->
+                        deletionFailures += "${path.fileName}: ${error.userMessage()}"
+                    }
+            }
+            lastErrors = lastErrors.withoutPackage(packageId, fileStem) +
+                deletionFailures.map { failure -> "Could not remove $packageId: $failure" }
+            existed && deletionFailures.isEmpty()
         }
     }
 
@@ -293,12 +325,12 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
                 try {
                     validateCandidate(candidate, manifest.packageName)
                 } finally {
-                    candidate.classLoader.close()
+                    candidate.classLoader.closeQuietly()
                 }
                 moveReplacing(temporaryJar, jarPath)
             } finally {
-                Files.deleteIfExists(temporaryJar)
-                Files.deleteIfExists(temporaryJar.resolveSibling("${temporaryJar.fileName}.errors.txt"))
+                deleteIfExistsQuietly(temporaryJar)
+                deleteIfExistsQuietly(temporaryJar.resolveSibling("${temporaryJar.fileName}.errors.txt"))
             }
         }
         writeMetadataAtomically(
@@ -341,7 +373,7 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
         try {
             validateCandidate(candidate, packageId)
         } catch (error: Throwable) {
-            candidate.classLoader.close()
+            candidate.classLoader.closeQuietly()
             throw error
         }
 
@@ -352,11 +384,13 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
             return candidate
         } catch (error: Throwable) {
             candidate.sources.forEach { source ->
-                if (sourceRegistry.get(source.id) === source) {
-                    sourceRegistry.unregister(source.id)
+                runCatching {
+                    if (sourceRegistry.get(source.id) === source) {
+                        sourceRegistry.unregister(source.id)
+                    }
                 }
             }
-            candidate.classLoader.close()
+            candidate.classLoader.closeQuietly()
             throw error
         }
     }
@@ -399,7 +433,7 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
                 classLoader = classLoader,
             )
         } catch (error: Throwable) {
-            classLoader.close()
+            classLoader.closeQuietly()
             if (error is IllegalStateException) throw error
             throw IllegalStateException(error.compatibilityMessage(), error)
         }
@@ -432,11 +466,13 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
     private fun deactivatePackage(packageId: String) {
         loadedPackages.remove(packageId)?.let { loaded ->
             loaded.sources.forEach { source ->
-                if (sourceRegistry.get(source.id) === source) {
-                    sourceRegistry.unregister(source.id)
+                runCatching {
+                    if (sourceRegistry.get(source.id) === source) {
+                        sourceRegistry.unregister(source.id)
+                    }
                 }
             }
-            loaded.classLoader.close()
+            loaded.classLoader.closeQuietly()
         }
     }
 
@@ -444,6 +480,33 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
         return loadedPackages.values
             .map(LoadedPackage::entry)
             .sortedBy { it.name.lowercase() }
+    }
+
+    private fun apkPaths(): List<Path> {
+        return extensionDirectoryEntries()
+            .filter { it.fileName.toString().endsWith(APK_SUFFIX, ignoreCase = true) }
+            .sortedBy { it.fileName.toString().lowercase() }
+    }
+
+    private fun extensionDirectoryEntries(): List<Path> {
+        return Files.list(extensionDirectory).use { paths -> paths.toList() }
+    }
+
+    private fun Path.fileNamePackageIdOrNull(): String? {
+        return fileName
+            .toString()
+            .removeSuffix(APK_SUFFIX)
+            .takeIf(::isValidPackageId)
+    }
+
+    private fun totalReloadFailureMessage(failures: List<String>): String {
+        return buildString {
+            append("No installed APK extensions could be loaded. ")
+            append(failures.take(MAX_REPORTED_ERRORS).joinToString(" | "))
+            if (failures.size > MAX_REPORTED_ERRORS) {
+                append(" | ${failures.size - MAX_REPORTED_ERRORS} more failure(s)")
+            }
+        }
     }
 
     private fun parseManifest(apkPath: Path): ApkManifest {
@@ -622,36 +685,31 @@ internal actual class ChimahonPlatformApkExtensionManager actual constructor(
             writeMetadata(temporary, metadata)
             moveReplacing(temporary, path)
         } finally {
-            Files.deleteIfExists(temporary)
+            deleteIfExistsQuietly(temporary)
         }
     }
 
     private fun cleanupTemporaryFiles() {
-        Files.list(extensionDirectory).use { paths ->
-            paths
-                .filter { path ->
-                    val name = path.fileName.toString()
-                    name.endsWith(".download") ||
-                        name.endsWith(".tmp") ||
-                        (
-                            (name.endsWith(JAR_SUFFIX) || name.endsWith(METADATA_SUFFIX)) &&
-                                Files.notExists(
-                                    path.resolveSibling(
-                                        "${name.substringBeforeLast(".")}$APK_SUFFIX",
-                                    ),
-                                )
+        extensionDirectoryEntries()
+            .filter { path ->
+                val name = path.fileName.toString()
+                name.endsWith(".download") ||
+                    name.endsWith(".tmp") ||
+                    (
+                        (name.endsWith(JAR_SUFFIX) || name.endsWith(METADATA_SUFFIX)) &&
+                            Files.notExists(
+                                path.resolveSibling(
+                                    "${name.substringBeforeLast(".")}$APK_SUFFIX",
+                                ),
                             )
-                }
-                .forEach(Files::deleteIfExists)
-        }
+                        )
+            }
+            .forEach(::deleteIfExistsQuietly)
     }
 
     private fun recoverInterruptedUpdates() {
-        val apkBackups = Files.list(extensionDirectory).use { paths ->
-            paths
-                .filter { it.fileName.toString().endsWith("$APK_SUFFIX$BACKUP_SUFFIX") }
-                .toList()
-        }
+        val apkBackups = extensionDirectoryEntries()
+            .filter { it.fileName.toString().endsWith("$APK_SUFFIX$BACKUP_SUFFIX") }
         apkBackups.forEach { backupApk ->
             val finalApk = backupApk.resolveSibling(
                 backupApk.fileName.toString().removeSuffix(BACKUP_SUFFIX),
@@ -938,15 +996,36 @@ private fun String.toSafeFileName(): String {
 }
 
 private fun requireValidPackageId(packageId: String) {
-    require(packageId.matches(PACKAGE_ID_PATTERN)) {
+    require(isValidPackageId(packageId)) {
         "Extension package id must contain only letters, numbers, dots, dashes, or underscores."
     }
+}
+
+private fun isValidPackageId(packageId: String): Boolean {
+    return packageId.matches(PACKAGE_ID_PATTERN)
 }
 
 private fun ByteArray.sha256(): String {
     return MessageDigest.getInstance("SHA-256")
         .digest(this)
         .joinToString("") { byte -> "%02x".format(byte) }
+}
+
+private fun deleteIfExistsQuietly(path: Path) {
+    runCatching { Files.deleteIfExists(path) }
+}
+
+private fun AutoCloseable.closeQuietly() {
+    runCatching { close() }
+}
+
+private fun List<String>.withoutPackage(
+    packageId: String,
+    fileStem: String,
+): List<String> {
+    return filterNot { message ->
+        message.contains(packageId) || message.contains(fileStem)
+    }
 }
 
 private fun Throwable.compatibilityMessage(): String {

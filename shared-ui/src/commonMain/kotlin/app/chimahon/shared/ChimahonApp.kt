@@ -118,6 +118,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -134,6 +135,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -435,6 +437,7 @@ data class ChimahonRemoteChapterEntry(
     val chapterNumber: Double,
     val scanlator: String?,
     val dateUpload: Long,
+    val sourceOrder: Int = Int.MAX_VALUE,
 )
 
 data class ChimahonReaderRequest(
@@ -1710,7 +1713,7 @@ private fun HomeTopBar(
             .fillMaxWidth()
             .height(if (showSubtitle) 64.dp else 56.dp)
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider)
+            .bottomDivider()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when {
@@ -1802,6 +1805,7 @@ private fun HomeTopBar(
                     icon = action.icon,
                     contentDescription = action.contentDescription,
                     tint = if (action.active) ChimahonPalette.primary else ChimahonPalette.secondaryText,
+                    active = action.active,
                     onClick = action.onClick,
                 )
             }
@@ -1820,7 +1824,7 @@ private fun MangaDetailTopBar(
             .fillMaxWidth()
             .height(64.dp)
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider)
+            .bottomDivider()
             .padding(start = 8.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1869,7 +1873,7 @@ private fun SourceDetailTopBar(
             .fillMaxWidth()
             .height(64.dp)
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider)
+            .bottomDivider()
             .padding(start = 8.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1917,7 +1921,7 @@ private fun RemoteMangaDetailTopBar(
             .fillMaxWidth()
             .height(64.dp)
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider)
+            .bottomDivider()
             .padding(start = 8.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -2112,7 +2116,7 @@ private fun HomeNavigationRail(
             .width(if (compact) 72.dp else 88.dp)
             .fillMaxHeight()
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider)
+            .endDivider()
             .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -2187,7 +2191,7 @@ private fun HomeNavigationBar(
                 },
             )
             .background(ChimahonPalette.surface)
-            .border(1.dp, ChimahonPalette.divider)
+            .topDivider()
             .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
@@ -6866,23 +6870,15 @@ private fun RemoteMangaDetailContent(
     onOpenRemoteMangaUrl: (ChimahonRemoteMangaDetail) -> Boolean,
     onAddToLibrary: suspend (ChimahonRemoteMangaDetail) -> Unit,
 ) {
-    var chapterDescending by remember(detail.sourceId, detail.url) { mutableStateOf(true) }
+    var chapterDescending by remember(detail.sourceId, detail.url) { mutableStateOf(false) }
+    var chapterSort by remember(detail.sourceId, detail.url) { mutableStateOf(ChapterSort.SourceOrder) }
     var chapterFiltersVisible by remember(detail.sourceId, detail.url) { mutableStateOf(false) }
     var chapterQuery by remember(detail.sourceId, detail.url) { mutableStateOf("") }
-    val searchedChapters = detail.chapters.filter { chapter ->
-        chapterQuery.isBlank() ||
-            chapter.name.contains(chapterQuery, ignoreCase = true) ||
-            chapter.scanlator.orEmpty().contains(chapterQuery, ignoreCase = true)
-    }
-    val visibleChapters = if (chapterDescending) {
-        searchedChapters.sortedWith(
-            compareByDescending<ChimahonRemoteChapterEntry> { it.chapterNumber }.thenBy { it.name },
-        )
-    } else {
-        searchedChapters.sortedWith(
-            compareBy<ChimahonRemoteChapterEntry> { it.chapterNumber }.thenBy { it.name },
-        )
-    }
+    val searchedChapters = detail.chapters.filter { it.matchesRemoteChapterQuery(chapterQuery) }
+    val visibleChapters = searchedChapters.sortedForRemoteDetail(
+        sort = chapterSort,
+        descending = chapterDescending,
+    )
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         if (maxWidth >= 900.dp) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -6921,10 +6917,12 @@ private fun RemoteMangaDetailContent(
                     detail = detail.copy(chapters = visibleChapters),
                     allChapterCount = detail.chapters.size,
                     filtersVisible = chapterFiltersVisible,
+                    selectedSort = chapterSort,
                     descending = chapterDescending,
                     query = chapterQuery,
                     onToggleFilters = { chapterFiltersVisible = !chapterFiltersVisible },
                     onQueryChange = { chapterQuery = it },
+                    onSortChange = { chapterSort = it },
                     onSortDirectionChange = { chapterDescending = it },
                     onOpenReader = onOpenReader,
                     modifier = Modifier
@@ -6965,6 +6963,7 @@ private fun RemoteMangaDetailContent(
                         chapters = visibleChapters,
                         allChapterCount = detail.chapters.size,
                         filtersVisible = chapterFiltersVisible,
+                        selectedSort = chapterSort,
                         descending = chapterDescending,
                         query = chapterQuery,
                         onToggleFilters = { chapterFiltersVisible = !chapterFiltersVisible },
@@ -6975,9 +6974,11 @@ private fun RemoteMangaDetailContent(
                 if (chapterFiltersVisible) {
                     item {
                         RemoteChapterFilterPanel(
+                            selectedSort = chapterSort,
                             descending = chapterDescending,
                             query = chapterQuery,
                             onQueryChange = { chapterQuery = it },
+                            onSortChange = { chapterSort = it },
                             onSortDirectionChange = { chapterDescending = it },
                         )
                     }
@@ -6995,7 +6996,7 @@ private fun RemoteMangaDetailContent(
                         RemoteChapterListItem(
                             chapter = chapter,
                             onClick = {
-                                onOpenReader(chapter.toReaderRequest(detail, detail.chapters))
+                                onOpenReader(chapter.toReaderRequest(detail, visibleChapters))
                             },
                         )
                     }
@@ -7010,10 +7011,12 @@ private fun RemoteChapterPane(
     detail: ChimahonRemoteMangaDetail,
     allChapterCount: Int,
     filtersVisible: Boolean,
+    selectedSort: ChapterSort,
     descending: Boolean,
     query: String,
     onToggleFilters: () -> Unit,
     onQueryChange: (String) -> Unit,
+    onSortChange: (ChapterSort) -> Unit,
     onSortDirectionChange: (Boolean) -> Unit,
     onOpenReader: (ChimahonReaderRequest) -> Unit,
     modifier: Modifier = Modifier,
@@ -7027,6 +7030,7 @@ private fun RemoteChapterPane(
                 chapters = detail.chapters,
                 allChapterCount = allChapterCount,
                 filtersVisible = filtersVisible,
+                selectedSort = selectedSort,
                 descending = descending,
                 query = query,
                 onToggleFilters = onToggleFilters,
@@ -7036,9 +7040,11 @@ private fun RemoteChapterPane(
         if (filtersVisible) {
             item {
                 RemoteChapterFilterPanel(
+                    selectedSort = selectedSort,
                     descending = descending,
                     query = query,
                     onQueryChange = onQueryChange,
+                    onSortChange = onSortChange,
                     onSortDirectionChange = onSortDirectionChange,
                 )
             }
@@ -7239,8 +7245,9 @@ private fun RemoteMangaActionRow(
                 title = "Start",
                 modifier = Modifier.weight(1f),
                 onClick = {
-                    detail.chapters.lastOrNull()?.let { chapter ->
-                        onOpenReader(chapter.toReaderRequest(detail, detail.chapters))
+                    val startQueue = detail.chapters.remoteStartReadingOrder()
+                    startQueue.firstOrNull()?.let { chapter ->
+                        onOpenReader(chapter.toReaderRequest(detail, startQueue))
                     }
                 },
             )
@@ -7337,6 +7344,7 @@ private fun RemoteChapterHeader(
     allChapterCount: Int,
     selectedCount: Int = 0,
     filtersVisible: Boolean,
+    selectedSort: ChapterSort,
     descending: Boolean,
     query: String,
     onToggleFilters: () -> Unit,
@@ -7379,8 +7387,8 @@ private fun RemoteChapterHeader(
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 ChapterHeaderAction(
                     icon = UiIcon.Swap,
-                    contentDescription = if (descending) "Sort ascending" else "Sort descending",
-                    active = !descending,
+                    contentDescription = chapterSortDirectionTitle(selectedSort, !descending),
+                    active = descending,
                     onClick = { onSortDirectionChange(!descending) },
                 )
                 ChapterHeaderAction(
@@ -7393,7 +7401,8 @@ private fun RemoteChapterHeader(
         }
         val summaryItems = listOfNotNull(
             "${chapters.size} visible" to false,
-            (if (descending) "Newest first" else "Oldest first") to false,
+            selectedSort.title to selectedSort != ChapterSort.SourceOrder,
+            chapterSortDirectionTitle(selectedSort, descending) to descending,
             query.takeIf { it.isNotBlank() }?.let { "Search" to true },
         )
         LazyRow(
@@ -7409,9 +7418,11 @@ private fun RemoteChapterHeader(
 
 @Composable
 private fun RemoteChapterFilterPanel(
+    selectedSort: ChapterSort,
     descending: Boolean,
     query: String,
     onQueryChange: (String) -> Unit,
+    onSortChange: (ChapterSort) -> Unit,
     onSortDirectionChange: (Boolean) -> Unit,
 ) {
     Column(
@@ -7437,7 +7448,7 @@ private fun RemoteChapterFilterPanel(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Label("Chapter filters", ChimahonPalette.onSurface, 14, weight = FontWeight.SemiBold, maxLines = 1)
-                Label("Search and order source chapters", ChimahonPalette.secondaryText, 11, maxLines = 1)
+                Label("Search and sort source chapters", ChimahonPalette.secondaryText, 11, maxLines = 1)
             }
         }
         Box(
@@ -7479,10 +7490,30 @@ private fun RemoteChapterFilterPanel(
                     .padding(start = 26.dp),
             )
         }
+        FilterPanelLabel(
+            "Sort by",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp, bottom = 4.dp),
+        )
+        ScrollableFilterChips(
+            chips = ChapterSort.entries.map { it.title },
+            selected = selectedSort.title,
+            onSelect = { title ->
+                ChapterSort.entries.firstOrNull { it.title == title }?.let(onSortChange)
+            },
+            modifier = Modifier.padding(vertical = 2.dp),
+        )
+        FilterPanelLabel(
+            "Direction",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp, bottom = 4.dp),
+        )
         SegmentTabs(
             values = listOf(true, false),
             selected = descending,
-            label = { if (it) "Newest first" else "Oldest first" },
+            label = { chapterSortDirectionTitle(selectedSort, it) },
             onSelect = onSortDirectionChange,
             modifier = Modifier.padding(top = 10.dp),
         )
@@ -8617,11 +8648,14 @@ private fun ReaderScaffold(
                         true
                     }
                     Key.DirectionRight,
-                    Key.Spacebar,
                     Key.PageDown,
                     Key.DirectionDown,
                     -> {
                         onNextPage()
+                        true
+                    }
+                    Key.Spacebar -> {
+                        if (event.isShiftPressed) onPreviousPage() else onNextPage()
                         true
                     }
                     Key.Enter -> {
@@ -8638,7 +8672,10 @@ private fun ReaderScaffold(
                         }
                     }
                     Key.S -> {
-                        if (chaptersVisible) {
+                        if ((event.isCtrlPressed || event.isMetaPressed) && onShareChapter != null) {
+                            onShareChapter()
+                            true
+                        } else if (chaptersVisible) {
                             false
                         } else {
                             onToggleSettings()
@@ -8666,6 +8703,36 @@ private fun ReaderScaffold(
                             false
                         } else {
                             onToggleCrop()
+                            true
+                        }
+                    }
+                    Key.T -> {
+                        if (settingsVisible || chaptersVisible || statsVisible) {
+                            false
+                        } else {
+                            cycleOrientation()
+                            true
+                        }
+                    }
+                    Key.L -> {
+                        if (settingsVisible || chaptersVisible || statsVisible || !mode.paged) {
+                            false
+                        } else {
+                            cyclePageLayout()
+                            true
+                        }
+                    }
+                    Key.P -> {
+                        if (
+                            settingsVisible ||
+                            chaptersVisible ||
+                            statsVisible ||
+                            !mode.paged ||
+                            readerSettings.dualPageMode == ChimahonDualPageMode.Off
+                        ) {
+                            false
+                        } else {
+                            shiftDoublePages()
                             true
                         }
                     }
@@ -8735,10 +8802,16 @@ private fun ReaderScaffold(
                     readerSettings.swipeNavigationEnabled &&
                     !settingsVisible &&
                     !chaptersVisible &&
-                    !statsVisible &&
-                    event.changes.any { abs(it.scrollDelta.y) > abs(it.scrollDelta.x) }
+                    !statsVisible
                 ) {
-                    val delta = event.changes.sumOf { it.scrollDelta.y.toDouble() }.toFloat()
+                    val verticalDelta = event.changes.sumOf { it.scrollDelta.y.toDouble() }.toFloat()
+                    val horizontalDelta = event.changes.sumOf { it.scrollDelta.x.toDouble() }.toFloat()
+                    val delta = if (abs(horizontalDelta) > abs(verticalDelta)) {
+                        horizontalDelta
+                    } else {
+                        verticalDelta
+                    }
+                    if (abs(delta) < 0.5f) return@onPointerEvent
                     wheelAccumulator += delta
                     if (abs(wheelAccumulator) >= 48f) {
                         if (wheelAccumulator > 0f) onNextPage() else onPreviousPage()
@@ -9026,10 +9099,13 @@ private fun ReaderScaffold(
                 if (readerWidth >= 720.dp) {
                     ReaderDesktopShortcutHintBar(
                         mode = mode,
+                        dualPageMode = readerSettings.dualPageMode,
                         canvas = canvas,
                         bookmarkAvailable = onToggleBookmark != null,
                         downloadAvailable = onDownloadChapter != null,
                         markReadAvailable = onMarkChapterRead != null,
+                        openChapterAvailable = onOpenChapterUrl != null,
+                        shareAvailable = onShareChapter != null,
                         modifier = Modifier
                             .fillMaxWidth(0.96f)
                             .widthIn(max = 760.dp)
@@ -9592,19 +9668,28 @@ private fun ReaderModeIndicator(
 @Composable
 private fun ReaderDesktopShortcutHintBar(
     mode: ReaderMode,
+    dualPageMode: ChimahonDualPageMode,
     canvas: ReaderCanvas,
     bookmarkAvailable: Boolean,
     downloadAvailable: Boolean,
     markReadAvailable: Boolean,
+    openChapterAvailable: Boolean,
+    shareAvailable: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val hints = buildList {
         add("\u2190/\u2192 Page")
+        add("Shift+Space Prev")
         if (mode.paged) add("Wheel Page")
         add("Enter HUD")
         add("M Mode")
         add("C Chapters")
         add("S Settings")
+        add("T Rotate")
+        if (mode.paged) add("L Layout")
+        if (mode.paged && dualPageMode != ChimahonDualPageMode.Off) add("P Shift")
+        if (openChapterAvailable) add("O Source")
+        if (shareAvailable) add("Ctrl+S Share")
         if (bookmarkAvailable) add("B Bookmark")
         if (downloadAvailable) add("D Download")
         if (markReadAvailable) add("R Read")
@@ -24353,17 +24438,46 @@ private fun TextButtonLike(
     }
 }
 
+private fun Modifier.topDivider(color: Color = ChimahonPalette.divider): Modifier = drawBehind {
+    drawLine(
+        color = color,
+        start = Offset(0f, 0f),
+        end = Offset(size.width, 0f),
+        strokeWidth = 1.dp.toPx(),
+    )
+}
+
+private fun Modifier.bottomDivider(color: Color = ChimahonPalette.divider): Modifier = drawBehind {
+    drawLine(
+        color = color,
+        start = Offset(0f, size.height),
+        end = Offset(size.width, size.height),
+        strokeWidth = 1.dp.toPx(),
+    )
+}
+
+private fun Modifier.endDivider(color: Color = ChimahonPalette.divider): Modifier = drawBehind {
+    drawLine(
+        color = color,
+        start = Offset(size.width, 0f),
+        end = Offset(size.width, size.height),
+        strokeWidth = 1.dp.toPx(),
+    )
+}
+
 @Composable
 private fun TopAction(
     icon: UiIcon,
     contentDescription: String,
     tint: Color = ChimahonPalette.primary,
+    active: Boolean = false,
     onClick: () -> Unit = {},
 ) {
     Box(
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
+            .background(if (active) ChimahonPalette.primaryContainer.copy(alpha = 0.92f) else Color.Transparent)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(10.dp),
         contentAlignment = Alignment.Center,
@@ -25010,6 +25124,14 @@ private fun ChimahonChapterEntry.matchesChapterQuery(query: String): Boolean {
         chapterStateLabel().contains(query, ignoreCase = true)
 }
 
+private fun ChimahonRemoteChapterEntry.matchesRemoteChapterQuery(query: String): Boolean {
+    if (query.isBlank()) return true
+    return name.contains(query, ignoreCase = true) ||
+        scanlator.orEmpty().contains(query, ignoreCase = true) ||
+        chapterNumber.toDisplayChapter().contains(query, ignoreCase = true) ||
+        dateUpload.takeIf { it > 0L }?.toDateBucket("Uploaded")?.contains(query, ignoreCase = true) == true
+}
+
 private fun List<ChimahonChapterEntry>.sortedForDetail(
     sort: ChapterSort,
     descending: Boolean,
@@ -25032,6 +25154,49 @@ private fun List<ChimahonChapterEntry>.sortedForDetail(
     }
     val sorted = sortedWith(comparator)
     return if (descending) sorted.asReversed() else sorted
+}
+
+private fun List<ChimahonRemoteChapterEntry>.sortedForRemoteDetail(
+    sort: ChapterSort,
+    descending: Boolean,
+): List<ChimahonRemoteChapterEntry> {
+    val comparator = when (sort) {
+        ChapterSort.SourceOrder -> compareBy<ChimahonRemoteChapterEntry> { it.sourceOrder }
+            .thenBy { it.chapterNumber }
+            .thenBy { it.name.lowercase() }
+        ChapterSort.ChapterNumber -> compareBy<ChimahonRemoteChapterEntry> { it.chapterNumber }
+            .thenBy { it.name.lowercase() }
+            .thenBy { it.sourceOrder }
+        ChapterSort.UploadDate -> compareBy<ChimahonRemoteChapterEntry> { it.dateUpload }
+            .thenBy { it.chapterNumber }
+            .thenBy { it.name.lowercase() }
+        ChapterSort.Name -> compareBy<ChimahonRemoteChapterEntry> { it.name.lowercase() }
+            .thenBy { it.chapterNumber }
+            .thenBy { it.sourceOrder }
+        ChapterSort.Scanlator -> compareBy<ChimahonRemoteChapterEntry> { it.scanlator.orEmpty().lowercase() }
+            .thenBy { it.chapterNumber }
+            .thenBy { it.name.lowercase() }
+    }
+    val sorted = sortedWith(comparator)
+    return if (descending) sorted.asReversed() else sorted
+}
+
+private fun chapterSortDirectionTitle(sort: ChapterSort, descending: Boolean): String {
+    return when (sort) {
+        ChapterSort.SourceOrder -> if (descending) "Reverse source order" else "Source order"
+        ChapterSort.ChapterNumber -> if (descending) "Highest first" else "Lowest first"
+        ChapterSort.UploadDate -> if (descending) "Newest first" else "Oldest first"
+        ChapterSort.Name -> if (descending) "Z-A" else "A-Z"
+        ChapterSort.Scanlator -> if (descending) "Z-A groups" else "A-Z groups"
+    }
+}
+
+private fun List<ChimahonRemoteChapterEntry>.remoteStartReadingOrder(): List<ChimahonRemoteChapterEntry> {
+    return if (any { it.chapterNumber > 0.0 }) {
+        sortedForRemoteDetail(sort = ChapterSort.ChapterNumber, descending = false)
+    } else {
+        sortedForRemoteDetail(sort = ChapterSort.SourceOrder, descending = false)
+    }
 }
 
 private fun ChimahonChapterEntry.chapterMarker(): String {

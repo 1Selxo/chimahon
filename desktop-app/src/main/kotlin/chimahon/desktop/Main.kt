@@ -34,6 +34,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import java.awt.AWTEvent
+import java.awt.Frame
 import java.awt.Toolkit
 import java.awt.event.AWTEventListener
 import java.awt.event.InputEvent
@@ -76,6 +77,7 @@ fun main() {
                     onCommand = dispatchDesktopCommand,
                 )
                 window.jMenuBar = createDesktopMenuBar(
+                    window = window,
                     onCommand = dispatchDesktopCommand,
                     onQuit = closeApplication,
                 )
@@ -139,6 +141,7 @@ fun main() {
 }
 
 private fun createDesktopMenuBar(
+    window: java.awt.Window,
     onCommand: (ChimahonDesktopCommand) -> Unit,
     onQuit: () -> Unit,
 ): JMenuBar {
@@ -171,9 +174,13 @@ private fun createDesktopMenuBar(
 
     return JMenuBar().apply {
         add(menu("File", AwtKeyEvent.VK_F) {
-            add(item("Open Downloads Folder") { DesktopPlatformAffordances.openDirectory(DesktopDirectory.Downloads) })
-            add(item("Open Data Folder") { DesktopPlatformAffordances.openDirectory(DesktopDirectory.Files) })
-            add(item("Open Cache Folder") { DesktopPlatformAffordances.openDirectory(DesktopDirectory.Cache) })
+            DesktopDirectory.entries.forEach { directory ->
+                add(item("Open ${directory.title} Folder") {
+                    DesktopPlatformAffordances.openDirectory(directory)
+                })
+            }
+            addSeparator()
+            add(item("Share Storage Paths") { DesktopPlatformAffordances.shareStorageSummary() })
             addSeparator()
             add(item("Quit", appShortcut(AwtKeyEvent.VK_Q), onQuit))
         })
@@ -199,7 +206,7 @@ private fun createDesktopMenuBar(
             })
             add(item("More", appShortcut(AwtKeyEvent.VK_M)) { onCommand(ChimahonDesktopCommand.More) })
             addSeparator()
-            add(item("Settings", appShortcut(AwtKeyEvent.VK_S)) { onCommand(ChimahonDesktopCommand.Settings) })
+            add(item("Settings", appShortcut(AwtKeyEvent.VK_COMMA)) { onCommand(ChimahonDesktopCommand.Settings) })
             add(item("Download Queue", appShortcut(AwtKeyEvent.VK_D)) {
                 onCommand(ChimahonDesktopCommand.DownloadQueue)
             })
@@ -220,11 +227,14 @@ private fun createDesktopMenuBar(
                 onCommand(ChimahonDesktopCommand.Refresh)
             })
             addSeparator()
-            add(item("Copy Downloads Path") {
-                DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Downloads)
+            DesktopDirectory.entries.forEach { directory ->
+                add(item("Copy ${directory.title} Path") {
+                    DesktopPlatformAffordances.copyDirectoryPath(directory)
+                })
+            }
+            add(item("Copy All Storage Paths", appShortcut(AwtKeyEvent.VK_P, InputEvent.SHIFT_DOWN_MASK)) {
+                DesktopPlatformAffordances.copyStorageSummary()
             })
-            add(item("Copy Data Path") { DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Files) })
-            add(item("Copy Cache Path") { DesktopPlatformAffordances.copyDirectoryPath(DesktopDirectory.Cache) })
         })
         add(menu("Reader", AwtKeyEvent.VK_R) {
             add(item("Previous Page", appShortcut(AwtKeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK)) {
@@ -310,6 +320,21 @@ private fun createDesktopMenuBar(
                 },
             )
         })
+        add(menu("Window", AwtKeyEvent.VK_W) {
+            add(item("Minimize") { window.minimize() })
+            add(item("Toggle Maximize", shortcut(AwtKeyEvent.VK_F11)) { window.toggleMaximized() })
+        })
+        add(menu("Help", AwtKeyEvent.VK_H) {
+            add(item("Copy Keyboard Shortcuts") {
+                DesktopPlatformAffordances.copyTextToClipboard(desktopShortcutReference())
+            })
+            add(item("Share Keyboard Shortcuts") {
+                DesktopPlatformAffordances.shareText(
+                    text = desktopShortcutReference(),
+                    title = "Chimahon keyboard shortcuts",
+                )
+            })
+        })
     }
 }
 
@@ -317,14 +342,26 @@ private fun installDesktopInputBridge(
     window: java.awt.Window,
     onCommand: (ChimahonDesktopCommand) -> Unit,
 ): AutoCloseable {
+    val keyListener = AWTEventListener { event ->
+        val keyEvent = event as? AwtKeyEvent ?: return@AWTEventListener
+        if (keyEvent.id != AwtKeyEvent.KEY_PRESSED) return@AWTEventListener
+        if (!keyEvent.belongsTo(window)) return@AWTEventListener
+
+        val command = keyEvent.desktopCommandOrNull() ?: return@AWTEventListener
+        onCommand(command)
+        keyEvent.consume()
+    }
+
     val mouseListener = AWTEventListener { event ->
         val mouseEvent = event as? AwtMouseEvent ?: return@AWTEventListener
         if (mouseEvent.id != AwtMouseEvent.MOUSE_PRESSED) return@AWTEventListener
         if (!mouseEvent.belongsTo(window)) return@AWTEventListener
 
-        val command = when (mouseEvent.button) {
-            4 -> ChimahonDesktopCommand.ReaderPreviousPage
-            5 -> ChimahonDesktopCommand.ReaderNextPage
+        val command = when {
+            mouseEvent.button == 4 && mouseEvent.isShiftDown -> ChimahonDesktopCommand.ReaderPreviousChapter
+            mouseEvent.button == 5 && mouseEvent.isShiftDown -> ChimahonDesktopCommand.ReaderNextChapter
+            mouseEvent.button == 4 -> ChimahonDesktopCommand.ReaderPreviousPage
+            mouseEvent.button == 5 -> ChimahonDesktopCommand.ReaderNextPage
             else -> null
         } ?: return@AWTEventListener
 
@@ -332,15 +369,165 @@ private fun installDesktopInputBridge(
         mouseEvent.consume()
     }
 
+    Toolkit.getDefaultToolkit().addAWTEventListener(keyListener, AWTEvent.KEY_EVENT_MASK)
     Toolkit.getDefaultToolkit().addAWTEventListener(mouseListener, AWTEvent.MOUSE_EVENT_MASK)
     return AutoCloseable {
+        Toolkit.getDefaultToolkit().removeAWTEventListener(keyListener)
         Toolkit.getDefaultToolkit().removeAWTEventListener(mouseListener)
     }
+}
+
+private fun AwtKeyEvent.desktopCommandOrNull(): ChimahonDesktopCommand? {
+    val menuShortcutDown = isMenuShortcutDown()
+    val altDown = isAltDown
+    val shiftDown = isShiftDown
+
+    return when {
+        keyCode == AwtKeyEvent.VK_ESCAPE && !menuShortcutDown && !altDown -> ChimahonDesktopCommand.Back
+        keyCode == AwtKeyEvent.VK_F5 && !menuShortcutDown && !altDown -> ChimahonDesktopCommand.Refresh
+        keyCode == AwtKeyEvent.VK_LEFT && altDown && !menuShortcutDown && !shiftDown -> ChimahonDesktopCommand.Back
+
+        keyCode == AwtKeyEvent.VK_F && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.ToggleFilters
+        keyCode == AwtKeyEvent.VK_F && menuShortcutDown && !altDown -> ChimahonDesktopCommand.Search
+        keyCode == AwtKeyEvent.VK_R && menuShortcutDown && !altDown && !shiftDown ->
+            ChimahonDesktopCommand.Refresh
+
+        menuShortcutDown && !altDown && !shiftDown && keyCode in setOf(AwtKeyEvent.VK_1, AwtKeyEvent.VK_L) ->
+            ChimahonDesktopCommand.Library
+        menuShortcutDown && !altDown && !shiftDown && keyCode in setOf(AwtKeyEvent.VK_2, AwtKeyEvent.VK_U) ->
+            ChimahonDesktopCommand.Updates
+        menuShortcutDown && !altDown && !shiftDown && keyCode in setOf(AwtKeyEvent.VK_3, AwtKeyEvent.VK_H) ->
+            ChimahonDesktopCommand.History
+        menuShortcutDown && !altDown && !shiftDown && keyCode in setOf(AwtKeyEvent.VK_4, AwtKeyEvent.VK_B) ->
+            ChimahonDesktopCommand.BrowseSources
+        menuShortcutDown && !altDown && !shiftDown && keyCode in setOf(AwtKeyEvent.VK_5, AwtKeyEvent.VK_M) ->
+            ChimahonDesktopCommand.More
+        keyCode == AwtKeyEvent.VK_E && menuShortcutDown && !altDown && !shiftDown ->
+            ChimahonDesktopCommand.BrowseExtensions
+        keyCode == AwtKeyEvent.VK_B && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.BrowseFeed
+        keyCode == AwtKeyEvent.VK_M && menuShortcutDown && !altDown && shiftDown ->
+            ChimahonDesktopCommand.BrowseMigrate
+        keyCode == AwtKeyEvent.VK_COMMA && menuShortcutDown && !altDown ->
+            ChimahonDesktopCommand.Settings
+        keyCode == AwtKeyEvent.VK_D && menuShortcutDown && !altDown && !shiftDown ->
+            ChimahonDesktopCommand.DownloadQueue
+
+        keyCode == AwtKeyEvent.VK_LEFT && menuShortcutDown && altDown && shiftDown ->
+            ChimahonDesktopCommand.ReaderPreviousChapter
+        keyCode == AwtKeyEvent.VK_RIGHT && menuShortcutDown && altDown && shiftDown ->
+            ChimahonDesktopCommand.ReaderNextChapter
+        keyCode == AwtKeyEvent.VK_LEFT && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderPreviousPage
+        keyCode == AwtKeyEvent.VK_RIGHT && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderNextPage
+        keyCode == AwtKeyEvent.VK_HOME && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderFirstPage
+        keyCode == AwtKeyEvent.VK_END && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderLastPage
+        keyCode == AwtKeyEvent.VK_ENTER && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderToggleControls
+        keyCode == AwtKeyEvent.VK_M && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderCycleMode
+        keyCode == AwtKeyEvent.VK_COMMA && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderOpenSettings
+        keyCode == AwtKeyEvent.VK_C && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderOpenChapters
+        keyCode == AwtKeyEvent.VK_I && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderToggleStats
+        keyCode == AwtKeyEvent.VK_F && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderToggleCrop
+        keyCode == AwtKeyEvent.VK_T && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderCycleOrientation
+        keyCode == AwtKeyEvent.VK_L && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderCyclePageLayout
+        keyCode == AwtKeyEvent.VK_P && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderShiftDoublePages
+        keyCode == AwtKeyEvent.VK_B && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderBookmarkChapter
+        keyCode == AwtKeyEvent.VK_D && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderDownloadChapter
+        keyCode == AwtKeyEvent.VK_R && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderMarkChapterRead
+        keyCode == AwtKeyEvent.VK_O && menuShortcutDown && altDown ->
+            ChimahonDesktopCommand.ReaderOpenChapterUrl
+        keyCode == AwtKeyEvent.VK_S && menuShortcutDown && altDown && shiftDown ->
+            ChimahonDesktopCommand.ReaderShareChapter
+
+        else -> null
+    }
+}
+
+private fun AwtKeyEvent.isMenuShortcutDown(): Boolean {
+    return if (DesktopPlatformAffordances.menuShortcutUsesMeta) isMetaDown else isControlDown
+}
+
+private fun AwtKeyEvent.belongsTo(window: java.awt.Window): Boolean {
+    val eventComponent = component ?: return false
+    return eventComponent == window || SwingUtilities.getWindowAncestor(eventComponent) == window
 }
 
 private fun AwtMouseEvent.belongsTo(window: java.awt.Window): Boolean {
     val eventComponent = component ?: return false
     return eventComponent == window || SwingUtilities.getWindowAncestor(eventComponent) == window
+}
+
+private fun java.awt.Window.minimize() {
+    (this as? Frame)?.state = Frame.ICONIFIED
+}
+
+private fun java.awt.Window.toggleMaximized() {
+    val frame = this as? Frame ?: return
+    val isMaximized = (frame.extendedState and Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH
+    frame.extendedState = if (isMaximized) {
+        frame.extendedState and Frame.MAXIMIZED_BOTH.inv()
+    } else {
+        frame.extendedState or Frame.MAXIMIZED_BOTH
+    }
+}
+
+private fun desktopShortcutReference(): String {
+    val shortcut = DesktopPlatformAffordances.menuShortcutLabel
+    return """
+        Chimahon desktop shortcuts
+
+        App
+        Back: Esc or Alt+Left
+        Search: $shortcut+F
+        Toggle filters: $shortcut+Shift+F
+        Refresh: F5 or $shortcut+R
+        Library: $shortcut+1 or $shortcut+L
+        Updates: $shortcut+2 or $shortcut+U
+        History: $shortcut+3 or $shortcut+H
+        Browse sources: $shortcut+4 or $shortcut+B
+        Browse extensions: $shortcut+E
+        Browse feed: $shortcut+Shift+B
+        Migrate: $shortcut+Shift+M
+        More: $shortcut+5 or $shortcut+M
+        Settings: $shortcut+Comma
+        Download queue: $shortcut+D
+
+        Reader
+        Previous/next page: Left/Right, Page Up/Page Down, or $shortcut+Alt+Left/Right
+        First/last page: Home/End or $shortcut+Alt+Home/End
+        Previous/next chapter: $shortcut+Alt+Shift+Left/Right
+        Toggle controls: Enter or $shortcut+Alt+Enter
+        Cycle reading mode: M or $shortcut+Alt+M
+        Reader settings: S or $shortcut+Alt+Comma
+        Chapter list: C or $shortcut+Alt+C
+        Stats: I or $shortcut+Alt+I
+        Crop borders: F or $shortcut+Alt+F
+        Bookmark chapter: B or $shortcut+Alt+B
+        Download chapter: D or $shortcut+Alt+D
+        Mark chapter read: R or $shortcut+Alt+R
+        Open chapter URL: O or $shortcut+Alt+O
+        Share chapter URL: $shortcut+Alt+Shift+S
+
+        Mouse
+        Back/forward mouse buttons: reader previous/next page
+        Shift+back/forward mouse buttons: reader previous/next chapter
+    """.trimIndent()
 }
 
 @Composable

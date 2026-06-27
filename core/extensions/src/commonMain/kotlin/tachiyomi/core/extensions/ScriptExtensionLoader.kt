@@ -1,6 +1,5 @@
 package tachiyomi.core.extensions
 
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import tachiyomi.core.platform.javascript.JavaScriptRuntimeFactory
 
@@ -13,33 +12,28 @@ class ScriptExtensionLoader(
     suspend fun load(script: String): LoadedScriptExtension {
         require(script.isNotBlank()) { "Extension script cannot be blank" }
 
-        val manifestJson = runtimeFactory.create().evaluate<String>(bootstrapScript(script))
-        val manifest = json.decodeFromString<ScriptExtensionManifest>(manifestJson)
+        val manifestJson = runtimeFactory.create().evaluate<String>(
+            ScriptExtensionJavaScriptBridge.manifestScript(script, json),
+        )
+        val manifest = json.decodeFromString<ScriptExtensionManifest>(manifestJson).normalize()
         validate(manifest)
         return LoadedScriptExtension(manifest, script)
     }
 
-    private fun bootstrapScript(script: String): String {
-        val encodedScript = json.encodeToString(script)
-        return """
-            (function () {
-                var module = { exports: {} };
-                var exports = module.exports;
-                eval($encodedScript);
-                var extension = module.exports;
-                if (extension && extension.default) {
-                    extension = extension.default;
-                }
-                if ((!extension || Object.keys(extension).length === 0) &&
-                    typeof chimahonExtension !== "undefined") {
-                    extension = chimahonExtension;
-                }
-                if (!extension) {
-                    throw new Error("Extension did not export a manifest");
-                }
-                return JSON.stringify(extension.manifest || extension);
-            })();
-        """.trimIndent()
+    private fun ScriptExtensionManifest.normalize(): ScriptExtensionManifest {
+        val normalizedSources = sources.map { source ->
+            source.copy(
+                language = source.language.ifBlank { language.ifBlank { DEFAULT_LANGUAGE } },
+                baseUrl = source.baseUrl.trim(),
+            )
+        }
+        return copy(
+            sources = normalizedSources,
+            packageName = packageName.ifBlank { id },
+            language = language.ifBlank { normalizedSources.commonLanguage() },
+            sourceCount = sourceCount.coerceAtLeast(normalizedSources.size),
+            isNsfw = isNsfw || normalizedSources.any(ScriptSourceManifest::isNsfw),
+        )
     }
 
     private fun validate(manifest: ScriptExtensionManifest) {
@@ -50,6 +44,9 @@ class ScriptExtensionLoader(
         require(manifest.name.isNotBlank()) { "Extension name cannot be blank" }
         require(manifest.version.isNotBlank()) { "Extension version cannot be blank" }
         require(manifest.sources.isNotEmpty()) { "Extension must declare at least one source" }
+        require(manifest.sourceCount >= manifest.sources.size) {
+            "Extension source count cannot be smaller than declared sources"
+        }
         require(manifest.sources.map(ScriptSourceManifest::id).distinct().size == manifest.sources.size) {
             "Extension source ids must be unique"
         }
@@ -63,6 +60,7 @@ class ScriptExtensionLoader(
     }
 
     private companion object {
+        const val DEFAULT_LANGUAGE = "all"
         val EXTENSION_ID_PATTERN = Regex("[A-Za-z0-9._-]+")
     }
 }

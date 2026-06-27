@@ -1,6 +1,6 @@
 package app.chimahon.shared
 
-import tachiyomi.core.platform.storage.DesktopPlatformStorageDirectories
+import tachiyomi.core.platform.storage.PlatformStorageDirectories
 import java.awt.Desktop
 import java.awt.GraphicsEnvironment
 import java.awt.Toolkit
@@ -13,7 +13,7 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
 internal actual object ChimahonPlatformIntegration {
-    private val storageDirectories = DesktopPlatformStorageDirectories(APP_NAME)
+    private val storageDirectories = createChimahonDesktopStorageDirectories()
 
     init {
         storageDirectories.ensureChimahonDirectories()
@@ -25,12 +25,14 @@ internal actual object ChimahonPlatformIntegration {
         if (scheme == "mailto") {
             return performDesktopAction(Desktop.Action.MAIL) { desktop ->
                 desktop.mail(uri)
-            } || launchUrlCommand(uri.toString())
+            } || launchUrlCommand(uri.toString()) ||
+                copyText(uri.toString())
         }
 
         return performDesktopAction(Desktop.Action.BROWSE) { desktop ->
             desktop.browse(uri)
-        } || launchUrlCommand(uri.toString())
+        } || launchUrlCommand(uri.toString()) ||
+            copyText(uri.toString())
     }
 
     actual fun openPath(path: String): Boolean {
@@ -48,7 +50,7 @@ internal actual object ChimahonPlatformIntegration {
         if (Files.isDirectory(target)) return openPath(target.toString())
 
         return when {
-            isWindows -> launchCommand("explorer.exe", "/select,$target")
+            isWindows -> launchCommand("explorer.exe", "/select,${target.toAbsolutePath()}")
             isMacOs -> launchCommand("open", "-R", target.toString())
             else -> revealPathWithFileManagerPortal(target) ||
                 target.parent?.let { openPath(it.toString()) } == true
@@ -72,7 +74,7 @@ internal actual object ChimahonPlatformIntegration {
         if (!Files.isRegularFile(target)) return false
 
         val shared = when {
-            isWindows -> launchCommandAndWait(
+            isWindows -> launchCommand(
                 "powershell.exe",
                 "-NoProfile",
                 "-NonInteractive",
@@ -125,8 +127,7 @@ private val isMacOs = osName.contains("mac")
 private val allowedExternalSchemes = setOf("http", "https", "mailto")
 
 private fun String.externalUriOrNull(): URI? {
-    val candidate = trim()
-    if (candidate.isBlank() || candidate.any(Char::isWhitespace)) return null
+    val candidate = normalizedExternalUrlString() ?: return null
     val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
     return uri.takeIf { it.scheme?.lowercase() in allowedExternalSchemes }
 }
@@ -135,14 +136,64 @@ private fun String.localPathOrNull(): Path? {
     val candidate = trim()
     if (candidate.isBlank()) return null
 
-    return runCatching {
-        val path = if (candidate.startsWith("file:", ignoreCase = true)) {
-            Path.of(URI(candidate))
-        } else {
-            Path.of(candidate.expandUserHome())
+    return candidate.localPathCandidates()
+        .firstOrNull(Files::exists)
+}
+
+private fun String.normalizedExternalUrlString(): String? {
+    val candidate = trim()
+    if (candidate.isBlank() || candidate.any(Char::isWhitespace)) return null
+    return when {
+        candidate.hasUrlScheme() -> candidate
+        candidate.contains("@") -> null
+        candidate.looksLikeHost() -> "https://$candidate"
+        else -> null
+    }
+}
+
+private fun String.localPathCandidates(): List<Path> {
+    if (startsWith("file:", ignoreCase = true)) {
+        return runCatching {
+            listOf(Path.of(URI(this)).toAbsolutePath().normalize())
+        }.getOrDefault(emptyList())
+    }
+
+    val path = runCatching { Path.of(expandUserHome()) }.getOrNull() ?: return emptyList()
+    val normalized = path.normalize()
+    if (normalized.isAbsolute) return listOf(normalized)
+
+    return buildList {
+        add(normalized.toAbsolutePath().normalize())
+        storageDirectories.storageRootPaths().forEach { root ->
+            add(root.resolve(normalized).normalize())
         }
-        path.toAbsolutePath().normalize()
-    }.getOrNull()
+    }.distinct()
+}
+
+private fun String.hasUrlScheme(): Boolean {
+    val colon = indexOf(':')
+    if (colon <= 0) return false
+    val scheme = take(colon)
+    return scheme.first().isLetter() &&
+        scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }
+}
+
+private fun String.looksLikeHost(): Boolean {
+    if (startsWith("/") || startsWith("#")) return false
+    val host = substringBefore('/').substringBefore('?')
+    return host.startsWith("www.", ignoreCase = true) ||
+        (host.contains('.') && host.any(Char::isLetter))
+}
+
+private fun PlatformStorageDirectories.storageRootPaths(): List<Path> {
+    return listOf(
+        filesDir,
+        defaultDownloadsDir(APP_NAME),
+        cacheDir,
+        temporaryDir,
+    ).mapNotNull { path ->
+        runCatching { Path.of(path.toString()).toAbsolutePath().normalize() }.getOrNull()
+    }
 }
 
 private inline fun performDesktopAction(
@@ -183,7 +234,15 @@ private fun copyTextWithToolkit(text: String): Boolean {
 
 private fun copyTextWithCommand(text: String): Boolean {
     return when {
-        isWindows -> launchCommandWithInput(text, "clip.exe")
+        isWindows -> launchCommandWithInput(text, "clip.exe") ||
+            launchCommand(
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Set-Clipboard -Value \$args[0]",
+                text,
+            )
         isMacOs -> launchCommandWithInput(text, "pbcopy")
         else -> launchCommandWithInput(text, "wl-copy") ||
             launchCommandWithInput(text, "xclip", "-selection", "clipboard") ||
@@ -195,7 +254,8 @@ private fun launchUrlCommand(target: String): Boolean {
     return when {
         isWindows -> launchCommand("rundll32.exe", "url.dll,FileProtocolHandler", target)
         isMacOs -> launchCommand("open", target)
-        else -> launchCommand("xdg-open", target)
+        else -> launchCommand("xdg-open", target) ||
+            launchCommand("gio", "open", target)
     }
 }
 
@@ -203,7 +263,8 @@ private fun launchPathCommand(target: String): Boolean {
     return when {
         isWindows -> launchCommand("explorer.exe", target)
         isMacOs -> launchCommand("open", target)
-        else -> launchCommand("xdg-open", target)
+        else -> launchCommand("xdg-open", target) ||
+            launchCommand("gio", "open", target)
     }
 }
 
@@ -240,10 +301,16 @@ private fun String.expandUserHome(): String {
 
 private fun launchCommand(vararg command: String): Boolean {
     return runCatching {
-        ProcessBuilder(*command)
-            .redirectErrorStream(true)
+        val process = ProcessBuilder(*command)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
-        true
+        process.outputStream.close()
+        if (process.waitFor(3, TimeUnit.SECONDS)) {
+            process.exitValue() == 0
+        } else {
+            true
+        }
     }.getOrDefault(false)
 }
 
@@ -253,24 +320,17 @@ private fun launchCommandWithInput(
 ): Boolean {
     return runCatching {
         val process = ProcessBuilder(*command)
-            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
         process.outputStream.use { output ->
             output.write(input.toByteArray(StandardCharsets.UTF_8))
         }
-        process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0
-    }.getOrDefault(false)
-}
-
-private fun launchCommandAndWait(vararg command: String): Boolean {
-    return runCatching {
-        val process = ProcessBuilder(*command)
-            .redirectErrorStream(true)
-            .start()
         if (process.waitFor(3, TimeUnit.SECONDS)) {
             process.exitValue() == 0
         } else {
-            true
+            process.destroyForcibly()
+            false
         }
     }.getOrDefault(false)
 }

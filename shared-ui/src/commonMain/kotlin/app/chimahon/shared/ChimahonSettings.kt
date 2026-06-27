@@ -1179,11 +1179,7 @@ internal class ChimahonSettingsRepository(
             showNsfwSources = settingsStore.readBoolean(BROWSE_SHOW_NSFW_KEY, defaultValue = true),
             hideLibraryEntries = settingsStore.readBoolean(BROWSE_HIDE_LIBRARY_ENTRIES_KEY),
             autoLoadMore = settingsStore.readBoolean(BROWSE_AUTO_LOAD_MORE_KEY, defaultValue = true),
-            enabledLanguages = settingsStore.readString(BROWSE_ENABLED_LANGUAGES_KEY)
-                ?.split(',')
-                ?.map { it.trim() }
-                ?.filter { it.isNotEmpty() }
-                .orEmpty(),
+            enabledLanguages = readStringList(BROWSE_ENABLED_LANGUAGES_KEY),
             sourceDisplayMode = readEnum(
                 BROWSE_SOURCE_DISPLAY_MODE_KEY,
                 ChimahonBrowseSourceDisplayMode.List,
@@ -1231,10 +1227,7 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(BROWSE_SHOW_NSFW_KEY, settings.showNsfwSources)
         settingsStore.writeBoolean(BROWSE_HIDE_LIBRARY_ENTRIES_KEY, settings.hideLibraryEntries)
         settingsStore.writeBoolean(BROWSE_AUTO_LOAD_MORE_KEY, settings.autoLoadMore)
-        settingsStore.writeString(
-            BROWSE_ENABLED_LANGUAGES_KEY,
-            settings.enabledLanguages.joinToString(","),
-        )
+        writeStringList(BROWSE_ENABLED_LANGUAGES_KEY, settings.enabledLanguages)
         settingsStore.writeString(BROWSE_SOURCE_DISPLAY_MODE_KEY, settings.sourceDisplayMode.name)
         settingsStore.writeBoolean(
             BROWSE_GROUP_SOURCES_BY_LANGUAGE_KEY,
