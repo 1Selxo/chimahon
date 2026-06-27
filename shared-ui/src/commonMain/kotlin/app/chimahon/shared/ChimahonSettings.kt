@@ -608,6 +608,7 @@ data class ChimahonPlayerSettings(
     val decoder: ChimahonPlayerDecoderSettings = ChimahonPlayerDecoderSettings(),
     val subtitles: ChimahonPlayerSubtitleSettings = ChimahonPlayerSubtitleSettings(),
     val audio: ChimahonPlayerAudioSettings = ChimahonPlayerAudioSettings(),
+    val selections: ChimahonPlayerSelectionSettings = ChimahonPlayerSelectionSettings(),
     val advanced: ChimahonPlayerAdvancedSettings = ChimahonPlayerAdvancedSettings(),
 )
 
@@ -646,6 +647,7 @@ data class ChimahonPlayerSubtitleSettings(
     val jimakuApiKey: String = "",
     val jimakuTitle: String = "",
     val screenshotSubtitles: Boolean = false,
+    val listMode: ChimahonSubtitleListMode = ChimahonSubtitleListMode.SideList,
     val font: String = "Sans Serif",
     val fontSize: Int = 55,
     val fontScale: Double = 1.0,
@@ -671,6 +673,17 @@ data class ChimahonPlayerAudioSettings(
     val channels: ChimahonAudioChannels = ChimahonAudioChannels.AutoSafe,
     val volumeBoostCap: Int = 30,
     val delayMillis: Int = 0,
+)
+
+data class ChimahonPlayerSelectionSettings(
+    val rememberQuality: Boolean = true,
+    val rememberSubtitleTracks: Boolean = true,
+    val restoreAddedSubtitleTracks: Boolean = true,
+    val preferredHosterKey: String = "",
+    val preferredVideoKey: String = "",
+    val primarySubtitleKey: String = "",
+    val secondarySubtitleKey: String = "",
+    val addedSubtitleKeys: List<String> = emptyList(),
 )
 
 data class ChimahonPlayerAdvancedSettings(
@@ -711,10 +724,14 @@ enum class ChimahonPlayerDebanding(val title: String) {
 }
 
 enum class ChimahonSubtitleBorderStyle(val title: String) {
-    None("None"),
-    Outline("Outline"),
-    Shadow("Shadow"),
     OutlineAndShadow("Outline and shadow"),
+    OpaqueBox("Opaque box"),
+    BackgroundBox("Background box"),
+}
+
+enum class ChimahonSubtitleListMode(val title: String) {
+    SideList("Side list"),
+    Overlay("Overlay"),
 }
 
 enum class ChimahonSubtitleJustification(val title: String) {
@@ -1759,6 +1776,7 @@ internal class ChimahonSettingsRepository(
             decoder = loadPlayerDecoderSettings(),
             subtitles = loadPlayerSubtitleSettings(),
             audio = loadPlayerAudioSettings(),
+            selections = loadPlayerSelectionSettings(),
             advanced = loadPlayerAdvancedSettings(),
         )
     }
@@ -1808,6 +1826,7 @@ internal class ChimahonSettingsRepository(
         savePlayerDecoderSettings(settings.decoder)
         savePlayerSubtitleSettings(settings.subtitles)
         savePlayerAudioSettings(settings.audio)
+        savePlayerSelectionSettings(settings.selections)
         savePlayerAdvancedSettings(settings.advanced)
         return settings
     }
@@ -1910,6 +1929,7 @@ internal class ChimahonSettingsRepository(
             jimakuApiKey = settingsStore.readString(PLAYER_SUBTITLE_JIMAKU_API_KEY) ?: "",
             jimakuTitle = settingsStore.readString(PLAYER_SUBTITLE_JIMAKU_TITLE_KEY) ?: "",
             screenshotSubtitles = settingsStore.readBoolean(PLAYER_SUBTITLE_SCREENSHOT_KEY),
+            listMode = readEnum(PLAYER_SUBTITLE_LIST_MODE_KEY, ChimahonSubtitleListMode.SideList),
             font = settingsStore.readString(PLAYER_SUBTITLE_FONT_KEY) ?: "Sans Serif",
             fontSize = settingsStore.readInt(PLAYER_SUBTITLE_FONT_SIZE_KEY, defaultValue = 55),
             fontScale = readDouble(PLAYER_SUBTITLE_FONT_SCALE_KEY, defaultValue = 1.0),
@@ -1946,6 +1966,7 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(PLAYER_SUBTITLE_JIMAKU_API_KEY, settings.jimakuApiKey)
         settingsStore.writeString(PLAYER_SUBTITLE_JIMAKU_TITLE_KEY, settings.jimakuTitle)
         settingsStore.writeBoolean(PLAYER_SUBTITLE_SCREENSHOT_KEY, settings.screenshotSubtitles)
+        settingsStore.writeString(PLAYER_SUBTITLE_LIST_MODE_KEY, settings.listMode.name)
         settingsStore.writeString(PLAYER_SUBTITLE_FONT_KEY, settings.font)
         settingsStore.writeInt(PLAYER_SUBTITLE_FONT_SIZE_KEY, settings.fontSize)
         writeDouble(PLAYER_SUBTITLE_FONT_SCALE_KEY, settings.fontScale)
@@ -1984,6 +2005,42 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(PLAYER_AUDIO_CHANNELS_KEY, settings.channels.name)
         settingsStore.writeInt(PLAYER_AUDIO_VOLUME_BOOST_CAP_KEY, settings.volumeBoostCap)
         settingsStore.writeInt(PLAYER_AUDIO_DELAY_KEY, settings.delayMillis)
+    }
+
+    private suspend fun loadPlayerSelectionSettings(): ChimahonPlayerSelectionSettings {
+        return ChimahonPlayerSelectionSettings(
+            rememberQuality = settingsStore.readBoolean(
+                PLAYER_SELECTION_REMEMBER_QUALITY_KEY,
+                defaultValue = true,
+            ),
+            rememberSubtitleTracks = settingsStore.readBoolean(
+                PLAYER_SELECTION_REMEMBER_SUBTITLES_KEY,
+                defaultValue = true,
+            ),
+            restoreAddedSubtitleTracks = settingsStore.readBoolean(
+                PLAYER_SELECTION_RESTORE_ADDED_SUBTITLES_KEY,
+                defaultValue = true,
+            ),
+            preferredHosterKey = settingsStore.readString(PLAYER_SELECTION_HOSTER_KEY) ?: "",
+            preferredVideoKey = settingsStore.readString(PLAYER_SELECTION_VIDEO_KEY) ?: "",
+            primarySubtitleKey = settingsStore.readString(PLAYER_SELECTION_PRIMARY_SUBTITLE_KEY) ?: "",
+            secondarySubtitleKey = settingsStore.readString(PLAYER_SELECTION_SECONDARY_SUBTITLE_KEY) ?: "",
+            addedSubtitleKeys = readStringList(PLAYER_SELECTION_ADDED_SUBTITLE_KEYS),
+        )
+    }
+
+    private suspend fun savePlayerSelectionSettings(settings: ChimahonPlayerSelectionSettings) {
+        settingsStore.writeBoolean(PLAYER_SELECTION_REMEMBER_QUALITY_KEY, settings.rememberQuality)
+        settingsStore.writeBoolean(PLAYER_SELECTION_REMEMBER_SUBTITLES_KEY, settings.rememberSubtitleTracks)
+        settingsStore.writeBoolean(
+            PLAYER_SELECTION_RESTORE_ADDED_SUBTITLES_KEY,
+            settings.restoreAddedSubtitleTracks,
+        )
+        settingsStore.writeString(PLAYER_SELECTION_HOSTER_KEY, settings.preferredHosterKey)
+        settingsStore.writeString(PLAYER_SELECTION_VIDEO_KEY, settings.preferredVideoKey)
+        settingsStore.writeString(PLAYER_SELECTION_PRIMARY_SUBTITLE_KEY, settings.primarySubtitleKey)
+        settingsStore.writeString(PLAYER_SELECTION_SECONDARY_SUBTITLE_KEY, settings.secondarySubtitleKey)
+        writeStringList(PLAYER_SELECTION_ADDED_SUBTITLE_KEYS, settings.addedSubtitleKeys)
     }
 
     private suspend fun loadPlayerAdvancedSettings(): ChimahonPlayerAdvancedSettings {
@@ -2826,6 +2883,8 @@ internal class ChimahonSettingsRepository(
             "__APP_STATE_chimahon_player_subtitle_jimaku_title"
         const val PLAYER_SUBTITLE_SCREENSHOT_KEY =
             "__APP_STATE_chimahon_player_subtitle_screenshot"
+        const val PLAYER_SUBTITLE_LIST_MODE_KEY =
+            "__APP_STATE_chimahon_player_subtitle_list_mode"
         const val PLAYER_SUBTITLE_FONT_KEY = "__APP_STATE_chimahon_player_subtitle_font"
         const val PLAYER_SUBTITLE_FONT_SIZE_KEY =
             "__APP_STATE_chimahon_player_subtitle_font_size"
@@ -2862,6 +2921,22 @@ internal class ChimahonSettingsRepository(
         const val PLAYER_AUDIO_VOLUME_BOOST_CAP_KEY =
             "__APP_STATE_chimahon_player_audio_volume_boost_cap"
         const val PLAYER_AUDIO_DELAY_KEY = "__APP_STATE_chimahon_player_audio_delay"
+        const val PLAYER_SELECTION_REMEMBER_QUALITY_KEY =
+            "__APP_STATE_chimahon_player_selection_remember_quality"
+        const val PLAYER_SELECTION_REMEMBER_SUBTITLES_KEY =
+            "__APP_STATE_chimahon_player_selection_remember_subtitles"
+        const val PLAYER_SELECTION_RESTORE_ADDED_SUBTITLES_KEY =
+            "__APP_STATE_chimahon_player_selection_restore_added_subtitles"
+        const val PLAYER_SELECTION_HOSTER_KEY =
+            "__APP_STATE_chimahon_player_selection_hoster"
+        const val PLAYER_SELECTION_VIDEO_KEY =
+            "__APP_STATE_chimahon_player_selection_video"
+        const val PLAYER_SELECTION_PRIMARY_SUBTITLE_KEY =
+            "__APP_STATE_chimahon_player_selection_primary_subtitle"
+        const val PLAYER_SELECTION_SECONDARY_SUBTITLE_KEY =
+            "__APP_STATE_chimahon_player_selection_secondary_subtitle"
+        const val PLAYER_SELECTION_ADDED_SUBTITLE_KEYS =
+            "__APP_STATE_chimahon_player_selection_added_subtitles"
         const val PLAYER_ADVANCED_MPV_SCRIPTS_KEY =
             "__APP_STATE_chimahon_player_advanced_mpv_scripts"
         const val PLAYER_ADVANCED_MPV_CONFIG_KEY =

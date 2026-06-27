@@ -157,6 +157,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -11730,6 +11731,43 @@ private fun String.toPercentFraction(): Double? {
 
 private fun Double.toSpeedTitle(): String = toString()
 
+private fun ChimahonPlayerSelectionSettings.selectionSummary(): String {
+    val quality = if (rememberQuality) "quality" else null
+    val subtitles = if (rememberSubtitleTracks) "subtitle tracks" else null
+    val added = if (restoreAddedSubtitleTracks) "added subtitles" else null
+    return listOfNotNull(quality, subtitles, added)
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(prefix = "Restores ", separator = ", ")
+        ?: "Selection restore disabled"
+}
+
+private fun ChimahonPlayerSelectionSettings.qualitySelectionLabel(): String {
+    val hoster = preferredHosterKey.selectionKeyDisplay()
+    val video = preferredVideoKey.selectionKeyDisplay()
+    return when {
+        hoster == null && video == null -> "None"
+        hoster == null -> video.orEmpty()
+        video == null -> hoster
+        else -> "$hoster / $video"
+    }
+}
+
+private fun ChimahonPlayerSelectionSettings.subtitleSelectionLabel(): String {
+    val primary = primarySubtitleKey.selectionKeyDisplay()
+    val secondary = secondarySubtitleKey.selectionKeyDisplay()
+    val added = addedSubtitleKeys.size.takeIf { it > 0 }?.let { "$it added" }
+    return listOfNotNull(primary, secondary?.let { "Secondary: $it" }, added)
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString()
+        ?: "None"
+}
+
+private fun String.selectionKeyDisplay(): String? {
+    return split('\u001f')
+        .firstOrNull { it.isNotBlank() }
+        ?.take(48)
+}
+
 private fun Int.toOffCountTitle(): String = if (this <= 0) "Off" else toString()
 
 private fun String.toOffCount(): Int = if (this == "Off") 0 else toIntOrNull()?.coerceAtLeast(0) ?: 0
@@ -15071,6 +15109,84 @@ private fun SettingsInfoPanel(
                 maxLines = 3,
                 modifier = Modifier.padding(top = 4.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun PlayerSubtitleStylePreview(
+    settings: ChimahonPlayerSubtitleSettings,
+) {
+    val previewText = "Subtitle preview\n字幕スタイル"
+    val fontSize = (settings.fontSize * settings.fontScale * 0.42).coerceIn(16.0, 36.0).sp
+    val textStyle = TextStyle(
+        color = Color(settings.textColorArgb),
+        fontSize = fontSize,
+        lineHeight = (fontSize.value * 1.18f).sp,
+        fontWeight = if (settings.bold) FontWeight.Bold else FontWeight.Normal,
+        fontStyle = if (settings.italic) FontStyle.Italic else FontStyle.Normal,
+    )
+    val boxBackground = Color(settings.backgroundColorArgb).let { color ->
+        if (color.alpha == 0f && settings.borderStyle != ChimahonSubtitleBorderStyle.OutlineAndShadow) {
+            Color.Black.copy(alpha = 0.78f)
+        } else {
+            color
+        }
+    }
+    val subtitleBoxModifier = when (settings.borderStyle) {
+        ChimahonSubtitleBorderStyle.OpaqueBox -> Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .background(boxBackground)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+        ChimahonSubtitleBorderStyle.BackgroundBox -> Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(boxBackground)
+            .padding(horizontal = 10.dp, vertical = 7.dp)
+        ChimahonSubtitleBorderStyle.OutlineAndShadow -> Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .height(156.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black)
+            .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .widthIn(max = 420.dp),
+        ) {
+            Label("Subtitle preview", Color.White.copy(alpha = 0.86f), 12, weight = FontWeight.SemiBold, maxLines = 1)
+            Label(
+                "${settings.borderStyle.title} - ${settings.listMode.title}",
+                Color.White.copy(alpha = 0.62f),
+                10,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(0.86f)
+                .then(subtitleBoxModifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (settings.borderStyle == ChimahonSubtitleBorderStyle.OutlineAndShadow && settings.borderSize > 0) {
+                BasicText(
+                    text = previewText,
+                    style = textStyle.copy(
+                        color = Color(settings.borderColorArgb),
+                        drawStyle = Stroke(width = (settings.borderSize * 1.8f).coerceAtLeast(1f)),
+                    ),
+                )
+            }
+            BasicText(text = previewText, style = textStyle)
         }
     }
 }
@@ -21680,6 +21796,98 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item { ListGroupHeader("Quality and tracks") }
+                    item {
+                        SettingsInfoPanel(
+                            title = "Remembered selections",
+                            detail = settings.player.selections.selectionSummary(),
+                            icon = UiIcon.PlayCircle,
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Remember selected quality",
+                            "Restore the last chosen hoster and stream when the episode reopens",
+                            UiIcon.PlayCircle,
+                            checked = settings.player.selections.rememberQuality,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        selections = settings.player.selections.copy(rememberQuality = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceValueRow(
+                            title = "Remembered quality",
+                            subtitle = "Tap to clear the saved hoster and stream keys",
+                            icon = UiIcon.PlayCircle,
+                            value = settings.player.selections.qualitySelectionLabel(),
+                            onClick = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        selections = settings.player.selections.copy(
+                                            preferredHosterKey = "",
+                                            preferredVideoKey = "",
+                                        ),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Remember subtitles",
+                            "Keep selected primary and secondary subtitle tracks for the episode",
+                            UiIcon.Edit,
+                            checked = settings.player.selections.rememberSubtitleTracks,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        selections = settings.player.selections.copy(rememberSubtitleTracks = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Restore added subtitles",
+                            "Reattach external or Jimaku subtitle files when returning to an episode",
+                            UiIcon.Add,
+                            checked = settings.player.selections.restoreAddedSubtitleTracks,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        selections = settings.player.selections.copy(
+                                            restoreAddedSubtitleTracks = it,
+                                        ),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceValueRow(
+                            title = "Remembered subtitles",
+                            subtitle = "Tap to clear primary, secondary, and added subtitle keys",
+                            icon = UiIcon.Edit,
+                            value = settings.player.selections.subtitleSelectionLabel(),
+                            onClick = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        selections = settings.player.selections.copy(
+                                            primarySubtitleKey = "",
+                                            secondarySubtitleKey = "",
+                                            addedSubtitleKeys = emptyList(),
+                                        ),
+                                    ),
+                                )
+                            },
+                        )
+                    }
                     item { ListGroupHeader("Controls") }
                     item {
                         PreferenceSwitchRow(
@@ -21864,6 +22072,54 @@ private fun MoreDetailPage(
                             },
                         )
                     }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Media previous",
+                            options = ChimahonPlayerGestureAction.entries.map { it.title },
+                            selected = settings.player.gestures.mediaPrevious.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerGestureAction.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            gestures = settings.player.gestures.copy(mediaPrevious = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Media play/pause",
+                            options = ChimahonPlayerGestureAction.entries.map { it.title },
+                            selected = settings.player.gestures.mediaPlayPause.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerGestureAction.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            gestures = settings.player.gestures.copy(mediaPlayPause = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Media next",
+                            options = ChimahonPlayerGestureAction.entries.map { it.title },
+                            selected = settings.player.gestures.mediaNext.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerGestureAction.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            gestures = settings.player.gestures.copy(mediaNext = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
                     item { ListGroupHeader("Skip intro and PiP") }
                     item {
                         PreferenceSwitchRow(
@@ -21903,6 +22159,25 @@ private fun MoreDetailPage(
                     }
                     item { ListGroupHeader("Subtitles and audio") }
                     item {
+                        PlayerSubtitleStylePreview(settings.player.subtitles)
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Subtitle list",
+                            options = ChimahonSubtitleListMode.entries.map { it.title },
+                            selected = settings.player.subtitles.listMode.title,
+                            onSelect = { selected ->
+                                ChimahonSubtitleListMode.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(listMode = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
                         SettingsChoiceRow(
                             title = "Subtitle font size",
                             options = listOf("35", "45", "55", "65", "75", "90"),
@@ -21912,6 +22187,22 @@ private fun MoreDetailPage(
                                     onPlayerSettingsChange(
                                         settings.player.copy(
                                             subtitles = settings.player.subtitles.copy(fontSize = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Subtitle font scale",
+                            options = listOf("0.75", "0.9", "1.0", "1.1", "1.25", "1.5", "2.0"),
+                            selected = settings.player.subtitles.fontScale.toString(),
+                            onSelect = { selected ->
+                                selected.toDoubleOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(fontScale = it),
                                         ),
                                     )
                                 }
@@ -21935,6 +22226,70 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        SettingsChoiceRow(
+                            title = "Subtitle border size",
+                            options = listOf("0", "1", "2", "3", "4", "5", "7", "10"),
+                            selected = settings.player.subtitles.borderSize.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(borderSize = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Shadow offset",
+                            options = listOf("0", "1", "2", "3", "4", "6", "8", "10"),
+                            selected = settings.player.subtitles.shadowOffset.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(shadowOffset = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Subtitle position",
+                            options = listOf("20%", "35%", "50%", "65%", "80%", "90%", "100%"),
+                            selected = settings.player.subtitles.positionPercent.toPercentTitle(),
+                            onSelect = { selected ->
+                                selected.removeSuffix("%").toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(positionPercent = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Subtitle alignment",
+                            options = ChimahonSubtitleJustification.entries.map { it.title },
+                            selected = settings.player.subtitles.justification.title,
+                            onSelect = { selected ->
+                                ChimahonSubtitleJustification.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(justification = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             "Override ASS subtitles",
                             "Apply Chimahon subtitle styling over embedded ASS styles",
@@ -21944,6 +22299,133 @@ private fun MoreDetailPage(
                                 onPlayerSettingsChange(
                                     settings.player.copy(
                                         subtitles = settings.player.subtitles.copy(overrideAss = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Screenshot subtitles",
+                            "Include subtitle overlay text when saving or sharing player screenshots",
+                            UiIcon.Edit,
+                            checked = settings.player.subtitles.screenshotSubtitles,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(screenshotSubtitles = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Subtitle delay",
+                            options = listOf("-2000", "-1000", "-500", "-250", "0", "250", "500", "1000", "2000"),
+                            selected = settings.player.subtitles.delayMillis.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(delayMillis = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Secondary subtitle delay",
+                            options = listOf("-2000", "-1000", "-500", "-250", "0", "250", "500", "1000", "2000"),
+                            selected = settings.player.subtitles.secondaryDelayMillis.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(secondaryDelayMillis = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceTextInputRow(
+                            title = "Preferred subtitle languages",
+                            subtitle = "Comma-separated language codes",
+                            icon = UiIcon.Edit,
+                            value = settings.player.subtitles.preferredLanguages,
+                            placeholder = "en, ja",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(preferredLanguages = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceTextInputRow(
+                            title = "Subtitle whitelist",
+                            subtitle = "Track names that should be preferred",
+                            icon = UiIcon.Search,
+                            value = settings.player.subtitles.whitelist,
+                            placeholder = "Signs, Dialogue",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(whitelist = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceTextInputRow(
+                            title = "Subtitle blacklist",
+                            subtitle = "Track names that should be avoided",
+                            icon = UiIcon.VisibilityOff,
+                            value = settings.player.subtitles.blacklist,
+                            placeholder = "Commentary, forced",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(blacklist = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceTextInputRow(
+                            title = "Jimaku title",
+                            subtitle = "Default search title, with per-anime overrides on Android",
+                            icon = UiIcon.Search,
+                            value = settings.player.subtitles.jimakuTitle,
+                            placeholder = "Series title",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(jimakuTitle = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceTextInputRow(
+                            title = "Jimaku API key",
+                            subtitle = "Used by the shared player subtitle search surface",
+                            icon = UiIcon.Security,
+                            value = settings.player.subtitles.jimakuApiKey,
+                            placeholder = "API key",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(jimakuApiKey = it),
                                     ),
                                 )
                             },
@@ -21966,6 +22448,22 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        PreferenceTextInputRow(
+                            title = "Preferred audio languages",
+                            subtitle = "Comma-separated language codes",
+                            icon = UiIcon.Volume,
+                            value = settings.player.audio.preferredLanguages,
+                            placeholder = "ja, en",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        audio = settings.player.audio.copy(preferredLanguages = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
                         PreferenceSwitchRow(
                             "Pitch correction",
                             "Preserve pitch while changing playback speed",
@@ -21977,6 +22475,38 @@ private fun MoreDetailPage(
                                         audio = settings.player.audio.copy(pitchCorrection = it),
                                     ),
                                 )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Audio delay",
+                            options = listOf("-2000", "-1000", "-500", "-250", "0", "250", "500", "1000", "2000"),
+                            selected = settings.player.audio.delayMillis.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            audio = settings.player.audio.copy(delayMillis = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Volume boost cap",
+                            options = listOf("0", "10", "20", "30", "50", "75", "100"),
+                            selected = settings.player.audio.volumeBoostCap.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            audio = settings.player.audio.copy(volumeBoostCap = it),
+                                        ),
+                                    )
+                                }
                             },
                         )
                     }
@@ -21997,6 +22527,36 @@ private fun MoreDetailPage(
                         )
                     }
                     item {
+                        PreferenceSwitchRow(
+                            "gpu-next",
+                            "Enable the newer mpv GPU renderer where available",
+                            UiIcon.Settings,
+                            checked = settings.player.decoder.gpuNext,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        decoder = settings.player.decoder.copy(gpuNext = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "YUV420P fallback",
+                            "Prefer broadly compatible output format when the decoder needs it",
+                            UiIcon.Settings,
+                            checked = settings.player.decoder.useYuv420p,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        decoder = settings.player.decoder.copy(useYuv420p = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
                         SettingsChoiceRow(
                             title = "Debanding",
                             options = ChimahonPlayerDebanding.entries.map { it.title },
@@ -22006,6 +22566,118 @@ private fun MoreDetailPage(
                                     onPlayerSettingsChange(
                                         settings.player.copy(
                                             decoder = settings.player.decoder.copy(debanding = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Brightness filter",
+                            options = listOf("-100", "-50", "-25", "0", "25", "50", "100"),
+                            selected = settings.player.decoder.brightnessFilter.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            decoder = settings.player.decoder.copy(brightnessFilter = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Saturation filter",
+                            options = listOf("-100", "-50", "-25", "0", "25", "50", "100"),
+                            selected = settings.player.decoder.saturationFilter.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            decoder = settings.player.decoder.copy(saturationFilter = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Contrast filter",
+                            options = listOf("-100", "-50", "-25", "0", "25", "50", "100"),
+                            selected = settings.player.decoder.contrastFilter.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            decoder = settings.player.decoder.copy(contrastFilter = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Advanced") }
+                    item {
+                        PreferenceSwitchRow(
+                            "mpv scripts",
+                            "Load user mpv scripts from the platform configuration path",
+                            UiIcon.Settings,
+                            checked = settings.player.advanced.mpvScriptsEnabled,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        advanced = settings.player.advanced.copy(mpvScriptsEnabled = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceTextInputRow(
+                            title = "mpv config",
+                            subtitle = "Inline mpv config arguments",
+                            icon = UiIcon.Edit,
+                            value = settings.player.advanced.mpvConfig,
+                            placeholder = "profile=gpu-hq",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        advanced = settings.player.advanced.copy(mpvConfig = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceTextInputRow(
+                            title = "mpv input",
+                            subtitle = "Inline mpv input bindings",
+                            icon = UiIcon.Edit,
+                            value = settings.player.advanced.mpvInput,
+                            placeholder = "cycle pause",
+                            onValueChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        advanced = settings.player.advanced.copy(mpvInput = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Statistics page",
+                            options = listOf("0", "1", "2", "3", "4"),
+                            selected = settings.player.advanced.statisticsPage.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            advanced = settings.player.advanced.copy(statisticsPage = it),
                                         ),
                                     )
                                 }
@@ -25705,6 +26377,60 @@ private fun PreferenceValueRow(
                     .padding(start = 6.dp)
                     .size(18.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun PreferenceTextInputRow(
+    title: String,
+    subtitle: String,
+    icon: UiIcon,
+    value: String,
+    placeholder: String,
+    onValueChange: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 68.dp)
+            .background(ChimahonPalette.surface)
+            .padding(start = 20.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PreferenceIconBox(icon = icon, active = value.isNotBlank())
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 16.dp, end = 12.dp),
+        ) {
+            SettingsRowTitleBlock(title = title, subtitle = subtitle)
+            Box(
+                modifier = Modifier
+                    .padding(top = 8.dp)
+                    .fillMaxWidth()
+                    .heightIn(min = 34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(ChimahonPalette.surfaceVariant.copy(alpha = 0.72f))
+                    .border(1.dp, ChimahonPalette.divider.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (value.isBlank()) {
+                    Label(placeholder, ChimahonPalette.secondaryText.copy(alpha = 0.72f), 12, maxLines = 1)
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        color = ChimahonPalette.onSurface,
+                        fontSize = 13.sp,
+                        lineHeight = 17.sp,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }
