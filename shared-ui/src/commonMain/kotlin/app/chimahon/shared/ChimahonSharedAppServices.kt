@@ -2324,10 +2324,12 @@ internal fun parseRepoMetadata(
     val root = json.parseToJsonElement(payload) as? JsonObject ?: return null
     val meta = root.objectValue("meta", "repo", "repository") ?: root
     val contact = meta.objectValue("contact") ?: root.objectValue("contact")
-    val name = meta.stringValue("name", "title")
-        ?: root.stringValue("name", "title")
-        ?: repoBaseUrl.repoHost()
-    val signingKeyFingerprint = meta.stringValue(
+    val metadataName = meta.stringValue("name", "title") ?: root.stringValue("name", "title")
+    val metadataWebsite = meta.stringValue("website", "homepage", "homeUrl", "url")
+        ?: contact?.stringValue("website", "homepage", "homeUrl", "url")
+    val metadataShortName = meta.stringValue("shortName", "short_name", "badgeLabel", "badge_label")
+        ?: root.stringValue("shortName", "short_name", "badgeLabel", "badge_label")
+    val metadataSigningKey = meta.stringValue(
         "signingKeyFingerprint",
         "signing_key_fingerprint",
         "signingKey",
@@ -2341,18 +2343,24 @@ internal fun parseRepoMetadata(
             "signing_key",
             "fingerprint",
         )
-        ?: return null
+    if (
+        meta === root &&
+        metadataName == null &&
+        metadataWebsite == null &&
+        metadataShortName == null &&
+        metadataSigningKey == null &&
+        contact == null
+    ) {
+        return null
+    }
+    val name = metadataName ?: repoBaseUrl.repoHost()
 
     return ChimahonExtensionRepoEntry(
         baseUrl = repoBaseUrl,
         name = name,
-        shortName = meta.stringValue("shortName", "short_name", "badgeLabel", "badge_label")
-            ?: root.stringValue("shortName", "short_name", "badgeLabel", "badge_label")
-            ?: name.take(16),
-        website = meta.stringValue("website", "homepage", "homeUrl", "url")
-            ?: contact?.stringValue("website", "homepage", "homeUrl", "url")
-            ?: repoBaseUrl,
-        signingKeyFingerprint = signingKeyFingerprint,
+        shortName = metadataShortName ?: name.take(16),
+        website = metadataWebsite ?: repoBaseUrl,
+        signingKeyFingerprint = metadataSigningKey ?: "shared-${repoBaseUrl.stableRepoHash()}",
     )
 }
 
