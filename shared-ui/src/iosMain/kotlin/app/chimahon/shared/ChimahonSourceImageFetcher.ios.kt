@@ -52,6 +52,10 @@ internal actual suspend fun loadSourcePageImage(
             pageIndex = page.index,
             detail = "source returned a blank image URL",
         )
+    val resolvedImageUrl = imageUrl.resolveAgainstBaseUrl(scriptSource.baseUrl)
+    if (resolvedImageUrl != imageUrl) {
+        page.imageUrl = resolvedImageUrl
+    }
 
     page.status = Page.State.DownloadImage
     return try {
@@ -59,13 +63,16 @@ internal actual suspend fun loadSourcePageImage(
             scriptSource.getImageBytes(page)
         } else {
             val requestHeaders = options.effectiveHeaders()
-            val response = sourceImageHttpClient.request(imageUrl) {
+            val response = sourceImageHttpClient.request(resolvedImageUrl) {
                 headers {
                     requestHeaders.forEach { (name, value) ->
                         append(name, value)
                     }
                     if (requestHeaders.keys.none { it.equals(HttpHeaders.UserAgent, ignoreCase = true) }) {
-                        append(HttpHeaders.UserAgent, "Chimahon iOS")
+                        append(HttpHeaders.UserAgent, IOS_IMAGE_USER_AGENT)
+                    }
+                    if (requestHeaders.keys.none { it.equals(HttpHeaders.Accept, ignoreCase = true) }) {
+                        append(HttpHeaders.Accept, IOS_IMAGE_ACCEPT)
                     }
                 }
             }
@@ -99,4 +106,36 @@ internal actual suspend fun loadSourcePageImage(
 private val sourceImageHttpClient = HttpClient(CIO) {
     expectSuccess = false
     followRedirects = true
+}
+
+private const val IOS_IMAGE_USER_AGENT = "Chimahon iOS"
+private const val IOS_IMAGE_ACCEPT = "image/avif,image/webp,image/*,*/*;q=0.8"
+
+private fun String.resolveAgainstBaseUrl(baseUrl: String): String {
+    val candidate = trim()
+    if (candidate.startsWith("//")) return "https:$candidate"
+    if (candidate.hasUrlScheme()) return candidate
+
+    val root = baseUrl.trimEnd('/')
+    if (root.isBlank()) return candidate
+    return if (candidate.startsWith("/")) {
+        val schemeSplit = root.indexOf("://")
+        if (schemeSplit == -1) {
+            "$root$candidate"
+        } else {
+            val hostStart = schemeSplit + 3
+            val hostEnd = root.indexOf('/', startIndex = hostStart).takeIf { it >= 0 } ?: root.length
+            root.take(hostEnd) + candidate
+        }
+    } else {
+        "$root/${candidate.trimStart('/')}"
+    }
+}
+
+private fun String.hasUrlScheme(): Boolean {
+    val colon = indexOf(':')
+    if (colon <= 0) return false
+    val scheme = take(colon)
+    return scheme.first().isLetter() &&
+        scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }
 }
