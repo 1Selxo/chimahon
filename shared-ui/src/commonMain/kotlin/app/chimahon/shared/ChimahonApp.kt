@@ -10490,9 +10490,14 @@ private fun ReaderChapterEdgeHint(
         else -> readerChapterGap(destination.chapterNumber, currentChapter.chapterNumber)
     }
     val clickModifier = if (onClick != null) {
-        Modifier.clickable(onClick = onClick)
+        Modifier.clickable(role = Role.Button, onClick = onClick)
     } else {
         Modifier
+    }
+    val transitionDescription = when {
+        destination == null -> if (atStart) "No previous chapter" else "No next chapter"
+        atStart -> destination.readerChapterActionDescription("Previous")
+        else -> destination.readerChapterActionDescription("Next")
     }
     Column(
         modifier = modifier
@@ -10500,6 +10505,10 @@ private fun ReaderChapterEdgeHint(
             .fillMaxWidth(0.92f)
             .clip(RoundedCornerShape(18.dp))
             .background(readerHudBackground(canvas).copy(alpha = 0.92f))
+            .semantics(mergeDescendants = true) {
+                contentDescription = transitionDescription
+                stateDescription = if (destination == null) "Unavailable" else "Available"
+            }
             .then(clickModifier)
             .border(1.dp, readerHudContent(canvas).copy(alpha = 0.10f), RoundedCornerShape(18.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -27114,8 +27123,8 @@ private fun SettingsChoiceRow(
     title: String,
     options: List<String>,
     selected: String,
-    enabled: Boolean = true,
     onSelect: (String) -> Unit,
+    enabled: Boolean = true,
 ) {
     val rowAlpha = if (enabled) 1f else 0.54f
     Column(
@@ -28318,8 +28327,8 @@ private fun PreferenceSwitchRow(
     title: String,
     subtitle: String,
     icon: UiIcon,
-    enabled: Boolean = true,
     checked: Boolean? = null,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit = {},
 ) {
     var localEnabled by remember(title) { mutableStateOf(false) }
