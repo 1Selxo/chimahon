@@ -24,6 +24,29 @@ class SubtitlePreferences(
         ?.takeIf { it > 0 }
         ?.let { preferenceStore.getString("pref_jimaku_title_anime_$it", "") }
         ?: jimakuTitle()
+    fun subtitleRegexRemoveSpeakerNames() = preferenceStore.getBoolean(
+        "pref_subtitle_regex_remove_speaker_names",
+        false,
+    )
+    fun subtitleRegexMergeMultiline() = preferenceStore.getBoolean("pref_subtitle_regex_merge_multiline", false)
+    fun subtitleRegexRemoveBracketedText() = preferenceStore.getBoolean(
+        "pref_subtitle_regex_remove_bracketed_text",
+        false,
+    )
+    fun subtitleRegexRemoveUppercaseLines() = preferenceStore.getBoolean(
+        "pref_subtitle_regex_remove_uppercase_lines",
+        false,
+    )
+    fun subtitleRegexRemoveMusicSymbols() = preferenceStore.getBoolean(
+        "pref_subtitle_regex_remove_music_symbols",
+        false,
+    )
+    fun subtitleRegexRemoveCurlyBracedText() = preferenceStore.getBoolean(
+        "pref_subtitle_regex_remove_curly_braced_text",
+        false,
+    )
+    fun subtitleRegexCustomEnabled() = preferenceStore.getBoolean("pref_subtitle_regex_custom_enabled", false)
+    fun subtitleRegexCustomPattern() = preferenceStore.getString("pref_subtitle_regex_custom_pattern", "")
 
     // Non-preferences
 
