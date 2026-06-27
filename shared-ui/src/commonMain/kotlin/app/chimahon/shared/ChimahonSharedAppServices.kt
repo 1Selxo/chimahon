@@ -2046,6 +2046,7 @@ private fun Mangas.toSharedMangaEntry(): ChimahonMangaEntry {
         thumbnailUrl = thumbnail_url,
         favorite = favorite,
         initialized = initialized,
+        chapterFlags = chapter_flags,
         dateAdded = date_added,
         lastUpdate = last_update,
         notes = notes,

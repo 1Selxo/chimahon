@@ -185,6 +185,7 @@ class ChimahonReaderRequestQueueTest {
         thumbnailUrl = null,
         favorite = true,
         initialized = true,
+        chapterFlags = 0L,
         dateAdded = 1L,
         lastUpdate = null,
         notes = "",

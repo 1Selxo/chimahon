@@ -216,6 +216,7 @@ data class ChimahonMangaEntry(
     val thumbnailUrl: String?,
     val favorite: Boolean,
     val initialized: Boolean,
+    val chapterFlags: Long,
     val dateAdded: Long,
     val lastUpdate: Long?,
     val notes: String,
@@ -355,6 +356,13 @@ private enum class ChapterSort(val title: String) {
     Name("Name"),
     Scanlator("Scanlator"),
 }
+
+private const val CHIMAHON_CHAPTER_SORT_DESC = 0x00000000L
+private const val CHIMAHON_CHAPTER_SORT_DIR_MASK = 0x00000001L
+private const val CHIMAHON_CHAPTER_SORTING_NUMBER = 0x00000100L
+private const val CHIMAHON_CHAPTER_SORTING_UPLOAD_DATE = 0x00000200L
+private const val CHIMAHON_CHAPTER_SORTING_ALPHABET = 0x00000300L
+private const val CHIMAHON_CHAPTER_SORTING_MASK = 0x00000300L
 
 private data class ChapterListSummary(
     val readCount: Int,
@@ -2798,8 +2806,8 @@ private fun LibraryHome(
                 }
                 items(selectedLibrary, key = { it.id }) { entry ->
                     val facts = factsByMangaId.getValue(entry.id)
-                    val chapters = facts.chapters
-                    val continueChapter = chapters.nextReadableChapter()
+                    val chapters = facts.chapters.androidReadingOrder(entry)
+                    val continueChapter = chapters.nextReadableChapter(entry)
                     LibraryMangaListItem(
                         entry = entry,
                         chapterCount = chapters.size,
@@ -2898,8 +2906,8 @@ private fun LibraryHome(
                 }
                 items(selectedLibrary, key = { it.id }) { entry ->
                     val facts = factsByMangaId.getValue(entry.id)
-                    val chapters = facts.chapters
-                    val continueChapter = chapters.nextReadableChapter()
+                    val chapters = facts.chapters.androidReadingOrder(entry)
+                    val continueChapter = chapters.nextReadableChapter(entry)
                     LibraryMangaCard(
                         entry = entry,
                         chapterCount = chapters.size,
@@ -7878,7 +7886,7 @@ private fun RemoteMangaActionRow(
                 modifier = Modifier.weight(1f),
                 onClick = {
                     val startQueue = detail.chapters.remoteStartReadingOrder()
-                    startQueue.firstOrNull()?.let { chapter ->
+                    startQueue.lastOrNull()?.let { chapter ->
                         onOpenReader(chapter.toReaderRequest(detail, startQueue))
                     }
                 },
@@ -16771,8 +16779,12 @@ private fun MangaDetailHome(
 
     val chapters = snapshot.chaptersByMangaId[mangaId].orEmpty()
     var selectedChapterFilter by remember(mangaId) { mutableStateOf(ChapterFilter.All) }
-    var selectedChapterSort by remember(mangaId) { mutableStateOf(ChapterSort.SourceOrder) }
-    var chapterDescending by remember(mangaId) { mutableStateOf(false) }
+    var selectedChapterSort by remember(mangaId, manga.chapterFlags) {
+        mutableStateOf(manga.defaultChapterSort())
+    }
+    var chapterDescending by remember(mangaId, manga.chapterFlags) {
+        mutableStateOf(manga.chapterSortDescending())
+    }
     var chapterFiltersVisible by remember(mangaId) { mutableStateOf(false) }
     var chapterQuery by remember(mangaId) { mutableStateOf("") }
     val selectedChapterIds = remember(mangaId) { mutableStateMapOf<Long, Boolean>() }
@@ -16785,16 +16797,13 @@ private fun MangaDetailHome(
         downloadSnapshot = runCatching { onLoadDownloadSnapshot() }.getOrNull() ?: downloadSnapshot
     }
     val chapterDownloadStatuses = downloadSnapshot?.chaptersById.orEmpty()
-    val chapterSourceOrder = remember(chapters) {
-        chapters.mapIndexed { index, chapter -> chapter.id to index }.toMap()
-    }
     val chapterListSummary = remember(chapters, chapterDownloadStatuses) {
         chapters.toChapterListSummary(chapterDownloadStatuses)
     }
     val clearChapterFilters: () -> Unit = {
         selectedChapterFilter = ChapterFilter.All
-        selectedChapterSort = ChapterSort.SourceOrder
-        chapterDescending = false
+        selectedChapterSort = manga.defaultChapterSort()
+        chapterDescending = manga.chapterSortDescending()
         chapterQuery = ""
     }
     val visibleChapters = chapters
@@ -16813,7 +16822,6 @@ private fun MangaDetailHome(
             entries.sortedForDetail(
                 sort = selectedChapterSort,
                 descending = chapterDescending,
-                sourceOrder = chapterSourceOrder,
             )
         }
     LaunchedEffect(visibleChapters.map { it.id }.joinToString()) {
@@ -17803,13 +17811,10 @@ private fun MangaActionRow(
             enabled = hasChapters,
             modifier = Modifier.weight(1f),
             onClick = {
-                (
-                    chapters.firstOrNull { it.lastPageRead > 0L }
-                        ?: chapters.lastOrNull { !it.read }
-                        ?: chapters.lastOrNull()
-                    )?.let { chapter ->
-                        onOpenReader(chapter.toReaderRequest(manga, chapters))
-                    }
+                val readingOrder = chapters.androidReadingOrder(manga)
+                readingOrder.nextReadableChapter(manga)?.let { chapter ->
+                    onOpenReader(chapter.toReaderRequest(manga, readingOrder))
+                }
             },
         )
         MangaActionButton(
@@ -27909,10 +27914,25 @@ private fun ChimahonLibraryCategory.displayName(): String {
     }
 }
 
-private fun List<ChimahonChapterEntry>.nextReadableChapter(): ChimahonChapterEntry? {
-    return firstOrNull { it.lastPageRead > 0L && !it.read }
-        ?: lastOrNull { !it.read }
-        ?: lastOrNull()
+private fun List<ChimahonChapterEntry>.androidReadingOrder(
+    manga: ChimahonMangaEntry,
+): List<ChimahonChapterEntry> {
+    return sortedForDetail(
+        sort = manga.defaultChapterSort(),
+        descending = manga.chapterSortDescending(),
+    )
+}
+
+private fun List<ChimahonChapterEntry>.nextReadableChapter(
+    manga: ChimahonMangaEntry,
+): ChimahonChapterEntry? {
+    if (isEmpty()) return null
+    firstOrNull { it.lastPageRead > 0L && !it.read }?.let { return it }
+    return if (manga.chapterSortDescending()) {
+        lastOrNull { !it.read } ?: lastOrNull()
+    } else {
+        firstOrNull { !it.read } ?: firstOrNull()
+    }
 }
 
 private fun List<ChimahonChapterEntry>.toChapterListSummary(
@@ -27975,10 +27995,9 @@ private fun ChimahonRemoteChapterEntry.matchesRemoteChapterQuery(query: String):
 private fun List<ChimahonChapterEntry>.sortedForDetail(
     sort: ChapterSort,
     descending: Boolean,
-    sourceOrder: Map<Long, Int>,
 ): List<ChimahonChapterEntry> {
     val comparator = when (sort) {
-        ChapterSort.SourceOrder -> compareBy<ChimahonChapterEntry> { sourceOrder[it.id] ?: Int.MAX_VALUE }
+        ChapterSort.SourceOrder -> compareBy<ChimahonChapterEntry> { it.sourceOrder }
         ChapterSort.ChapterNumber -> compareBy<ChimahonChapterEntry> { it.chapterNumber }
             .thenBy { it.name.lowercase() }
         ChapterSort.UploadDate -> compareBy<ChimahonChapterEntry> { it.dateUpload }
@@ -27991,7 +28010,7 @@ private fun List<ChimahonChapterEntry>.sortedForDetail(
             .thenBy { it.name.lowercase() }
     }
     val sorted = sortedWith(comparator)
-    return if (descending) sorted.asReversed() else sorted
+    return sorted.withAndroidChapterDirection(sort = sort, descending = descending)
 }
 
 private fun List<ChimahonRemoteChapterEntry>.sortedForRemoteDetail(
@@ -28014,12 +28033,35 @@ private fun List<ChimahonRemoteChapterEntry>.sortedForRemoteDetail(
             .thenBy { it.name.lowercase() }
     }
     val sorted = sortedWith(comparator)
-    return if (descending) sorted.asReversed() else sorted
+    return sorted.withAndroidChapterDirection(sort = sort, descending = descending)
+}
+
+private fun <T> List<T>.withAndroidChapterDirection(
+    sort: ChapterSort,
+    descending: Boolean,
+): List<T> {
+    return when (sort) {
+        ChapterSort.SourceOrder -> if (descending) this else asReversed()
+        else -> if (descending) asReversed() else this
+    }
+}
+
+private fun ChimahonMangaEntry.defaultChapterSort(): ChapterSort {
+    return when (chapterFlags and CHIMAHON_CHAPTER_SORTING_MASK) {
+        CHIMAHON_CHAPTER_SORTING_NUMBER -> ChapterSort.ChapterNumber
+        CHIMAHON_CHAPTER_SORTING_UPLOAD_DATE -> ChapterSort.UploadDate
+        CHIMAHON_CHAPTER_SORTING_ALPHABET -> ChapterSort.Name
+        else -> ChapterSort.SourceOrder
+    }
+}
+
+private fun ChimahonMangaEntry.chapterSortDescending(): Boolean {
+    return chapterFlags and CHIMAHON_CHAPTER_SORT_DIR_MASK == CHIMAHON_CHAPTER_SORT_DESC
 }
 
 private fun chapterSortDirectionTitle(sort: ChapterSort, descending: Boolean): String {
     return when (sort) {
-        ChapterSort.SourceOrder -> if (descending) "Reverse source order" else "Source order"
+        ChapterSort.SourceOrder -> if (descending) "Source order" else "Reverse source order"
         ChapterSort.ChapterNumber -> if (descending) "Highest first" else "Lowest first"
         ChapterSort.UploadDate -> if (descending) "Newest first" else "Oldest first"
         ChapterSort.Name -> if (descending) "Z-A" else "A-Z"
@@ -28028,7 +28070,7 @@ private fun chapterSortDirectionTitle(sort: ChapterSort, descending: Boolean): S
 }
 
 private fun List<ChimahonRemoteChapterEntry>.remoteStartReadingOrder(): List<ChimahonRemoteChapterEntry> {
-    return sortedForRemoteDetail(sort = ChapterSort.SourceOrder, descending = false)
+    return sortedForRemoteDetail(sort = ChapterSort.SourceOrder, descending = true)
 }
 
 private fun ChimahonChapterEntry.chapterMarker(): String {
