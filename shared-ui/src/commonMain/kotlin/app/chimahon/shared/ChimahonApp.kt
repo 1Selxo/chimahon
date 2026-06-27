@@ -9713,15 +9713,27 @@ private fun ReaderScaffold(
                     )
                 }
                 if (readerWidth >= 720.dp) {
-                    ReaderDesktopShortcutHintBar(
+                    ReaderDesktopActionStrip(
                         mode = mode,
-                        dualPageMode = readerSettings.dualPageMode,
+                        scale = scale,
                         canvas = canvas,
-                        bookmarkAvailable = onToggleBookmark != null,
-                        downloadAvailable = onDownloadChapter != null,
-                        markReadAvailable = onMarkChapterRead != null,
-                        openChapterAvailable = onOpenChapterUrl != null,
-                        shareAvailable = onShareChapter != null,
+                        settingsVisible = settingsVisible,
+                        chaptersVisible = chaptersVisible,
+                        statsVisible = statsVisible,
+                        cropActive = readerSettings.cropBorders,
+                        onCycleMode = {
+                            val nextIndex = (ReaderMode.entries.indexOf(mode) + 1) % ReaderMode.entries.size
+                            onModeChange(ReaderMode.entries[nextIndex])
+                        },
+                        onToggleSettings = onToggleSettings,
+                        onToggleChapters = onToggleChapters,
+                        onToggleStats = onToggleStats,
+                        onToggleCrop = onToggleCrop,
+                        onToggleBookmark = onToggleBookmark,
+                        onDownloadChapter = onDownloadChapter,
+                        onMarkChapterRead = onMarkChapterRead,
+                        onOpenChapterUrl = onOpenChapterUrl,
+                        onShareChapter = onShareChapter,
                         modifier = Modifier
                             .fillMaxWidth(0.96f)
                             .widthIn(max = 760.dp)
@@ -10282,69 +10294,169 @@ private fun ReaderModeIndicator(
 }
 
 @Composable
-private fun ReaderDesktopShortcutHintBar(
+private fun ReaderDesktopActionStrip(
     mode: ReaderMode,
-    dualPageMode: ChimahonDualPageMode,
+    scale: ReaderScale,
     canvas: ReaderCanvas,
-    bookmarkAvailable: Boolean,
-    downloadAvailable: Boolean,
-    markReadAvailable: Boolean,
-    openChapterAvailable: Boolean,
-    shareAvailable: Boolean,
+    settingsVisible: Boolean,
+    chaptersVisible: Boolean,
+    statsVisible: Boolean,
+    cropActive: Boolean,
+    onCycleMode: () -> Unit,
+    onToggleSettings: () -> Unit,
+    onToggleChapters: () -> Unit,
+    onToggleStats: () -> Unit,
+    onToggleCrop: () -> Unit,
+    onToggleBookmark: (() -> Unit)?,
+    onDownloadChapter: (() -> Unit)?,
+    onMarkChapterRead: (() -> Unit)?,
+    onOpenChapterUrl: (() -> Unit)?,
+    onShareChapter: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    val hints = buildList {
-        add("\u2190/\u2192 Page")
-        add("Shift+Space Prev")
-        if (mode.paged) add("Wheel Page")
-        add("Enter HUD")
-        add("M Mode")
-        add("C Chapters")
-        add("S Settings")
-        add("T Rotate")
-        if (mode.paged) add("L Layout")
-        if (mode.paged && dualPageMode != ChimahonDualPageMode.Off) add("P Shift")
-        if (openChapterAvailable) add("O Source")
-        if (shareAvailable) add("Ctrl+S Share")
-        if (bookmarkAvailable) add("B Bookmark")
-        if (downloadAvailable) add("D Download")
-        if (markReadAvailable) add("R Read")
-        add("Esc Back")
-    }
     LazyRow(
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(readerHudBackground(canvas).copy(alpha = 0.68f))
             .border(1.dp, readerHudContent(canvas).copy(alpha = 0.08f), RoundedCornerShape(50))
             .padding(horizontal = 8.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        items(hints) { hint ->
-            ReaderShortcutHintChip(
-                text = hint,
+        item("mode") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Swap,
+                contentDescription = "Change reader mode",
                 canvas = canvas,
+                active = mode != ReaderMode.Webtoon || scale != ReaderScale.FitWidth,
+                onClick = onCycleMode,
+            )
+        }
+        item("settings") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Settings,
+                contentDescription = "Reader settings",
+                canvas = canvas,
+                active = settingsVisible,
+                onClick = onToggleSettings,
+            )
+        }
+        item("chapters") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Chapters,
+                contentDescription = "Chapters",
+                canvas = canvas,
+                active = chaptersVisible,
+                onClick = onToggleChapters,
+            )
+        }
+        item("stats") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Statistics,
+                contentDescription = "Reader statistics",
+                canvas = canvas,
+                active = statsVisible,
+                onClick = onToggleStats,
+            )
+        }
+        item("crop") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Crop,
+                contentDescription = "Crop borders",
+                canvas = canvas,
+                active = cropActive,
+                onClick = onToggleCrop,
+            )
+        }
+        item("bookmark") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Bookmark,
+                contentDescription = "Bookmark chapter",
+                canvas = canvas,
+                enabled = onToggleBookmark != null,
+                onClick = { onToggleBookmark?.invoke() },
+            )
+        }
+        item("download") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Download,
+                contentDescription = "Download chapter",
+                canvas = canvas,
+                enabled = onDownloadChapter != null,
+                onClick = { onDownloadChapter?.invoke() },
+            )
+        }
+        item("read") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.DoneAll,
+                contentDescription = "Mark chapter read",
+                canvas = canvas,
+                enabled = onMarkChapterRead != null,
+                onClick = { onMarkChapterRead?.invoke() },
+            )
+        }
+        item("open") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Web,
+                contentDescription = "Open chapter source",
+                canvas = canvas,
+                enabled = onOpenChapterUrl != null,
+                onClick = { onOpenChapterUrl?.invoke() },
+            )
+        }
+        item("share") {
+            ReaderDesktopActionChip(
+                icon = UiIcon.Share,
+                contentDescription = "Share chapter",
+                canvas = canvas,
+                enabled = onShareChapter != null,
+                onClick = { onShareChapter?.invoke() },
             )
         }
     }
 }
 
 @Composable
-private fun ReaderShortcutHintChip(
-    text: String,
+private fun ReaderDesktopActionChip(
+    icon: UiIcon,
+    contentDescription: String,
     canvas: ReaderCanvas,
+    active: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
 ) {
-    Label(
-        text = text,
-        color = readerHudContent(canvas).copy(alpha = 0.74f),
-        size = 9,
-        weight = FontWeight.SemiBold,
-        maxLines = 1,
+    val content = readerHudContent(canvas)
+    Box(
         modifier = Modifier
+            .size(34.dp)
             .clip(RoundedCornerShape(50))
-            .background(readerHudContent(canvas).copy(alpha = 0.08f))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-    )
+            .background(
+                when {
+                    active -> ReaderPalette.selectedControl.copy(alpha = 0.86f)
+                    enabled -> content.copy(alpha = 0.08f)
+                    else -> content.copy(alpha = 0.04f)
+                },
+            )
+            .border(
+                1.dp,
+                if (active) ReaderPalette.selectedControl.copy(alpha = 0.32f) else content.copy(alpha = 0.08f),
+                RoundedCornerShape(50),
+            )
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconGlyph(
+            icon = icon,
+            contentDescription = contentDescription,
+            tint = when {
+                active -> Color.White
+                enabled -> content.copy(alpha = 0.78f)
+                else -> content.copy(alpha = 0.26f)
+            },
+            modifier = Modifier.size(18.dp),
+        )
+    }
 }
 
 @Composable
