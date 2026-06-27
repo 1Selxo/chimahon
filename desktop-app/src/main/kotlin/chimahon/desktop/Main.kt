@@ -228,13 +228,13 @@ private fun createDesktopMenuBar(
         })
         add(menu("Anime", AwtKeyEvent.VK_A) {
             add(item("Anime Library", appShortcut(AwtKeyEvent.VK_A, InputEvent.ALT_DOWN_MASK)) {
-                onCommand(ChimahonDesktopCommand.Library)
+                onCommand(ChimahonDesktopCommand.AnimeLibrary)
             })
             add(item("Anime Updates", appShortcut(AwtKeyEvent.VK_U, InputEvent.ALT_DOWN_MASK)) {
-                onCommand(ChimahonDesktopCommand.Updates)
+                onCommand(ChimahonDesktopCommand.AnimeUpdates)
             })
             add(item("Anime History", appShortcut(AwtKeyEvent.VK_H, InputEvent.ALT_DOWN_MASK)) {
-                onCommand(ChimahonDesktopCommand.History)
+                onCommand(ChimahonDesktopCommand.AnimeHistory)
             })
             addSeparator()
             add(
@@ -242,7 +242,7 @@ private fun createDesktopMenuBar(
                     "Browse Anime Sources",
                     appShortcut(AwtKeyEvent.VK_A, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
                 ) {
-                    onCommand(ChimahonDesktopCommand.BrowseSources)
+                    onCommand(ChimahonDesktopCommand.BrowseAnimeSources)
                 },
             )
             add(
@@ -250,7 +250,7 @@ private fun createDesktopMenuBar(
                     "Browse Anime Extensions",
                     appShortcut(AwtKeyEvent.VK_E, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
                 ) {
-                    onCommand(ChimahonDesktopCommand.BrowseExtensions)
+                    onCommand(ChimahonDesktopCommand.BrowseAnimeExtensions)
                 },
             )
             add(
@@ -258,7 +258,7 @@ private fun createDesktopMenuBar(
                     "Anime Download Queue",
                     appShortcut(AwtKeyEvent.VK_Q, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
                 ) {
-                    onCommand(ChimahonDesktopCommand.DownloadQueue)
+                    onCommand(ChimahonDesktopCommand.AnimeDownloadQueue)
                 },
             )
             addSeparator()
@@ -564,6 +564,18 @@ private fun AwtKeyEvent.desktopCommandOrNull(): ChimahonDesktopCommand? {
             ChimahonDesktopCommand.Settings
         keyCode == AwtKeyEvent.VK_D && menuShortcutDown && !altDown && !shiftDown ->
             ChimahonDesktopCommand.DownloadQueue
+        keyCode == AwtKeyEvent.VK_A && menuShortcutDown && altDown && !shiftDown ->
+            ChimahonDesktopCommand.AnimeLibrary
+        keyCode == AwtKeyEvent.VK_U && menuShortcutDown && altDown && !shiftDown ->
+            ChimahonDesktopCommand.AnimeUpdates
+        keyCode == AwtKeyEvent.VK_H && menuShortcutDown && altDown && !shiftDown ->
+            ChimahonDesktopCommand.AnimeHistory
+        keyCode == AwtKeyEvent.VK_A && menuShortcutDown && altDown && shiftDown ->
+            ChimahonDesktopCommand.BrowseAnimeSources
+        keyCode == AwtKeyEvent.VK_E && menuShortcutDown && altDown && shiftDown ->
+            ChimahonDesktopCommand.BrowseAnimeExtensions
+        keyCode == AwtKeyEvent.VK_Q && menuShortcutDown && altDown && shiftDown ->
+            ChimahonDesktopCommand.AnimeDownloadQueue
 
         keyCode == AwtKeyEvent.VK_LEFT && menuShortcutDown && altDown && shiftDown ->
             ChimahonDesktopCommand.ReaderPreviousChapter

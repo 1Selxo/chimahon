@@ -164,7 +164,7 @@ private fun String.localPathCandidates(): List<Path> {
 
     return buildList {
         add(normalized.toAbsolutePath().normalize())
-        storageDirectories.storageRootPaths().forEach { root ->
+        createChimahonDesktopStorageDirectories().storageRootPaths().forEach { root ->
             add(root.resolve(normalized).normalize())
         }
     }.distinct()

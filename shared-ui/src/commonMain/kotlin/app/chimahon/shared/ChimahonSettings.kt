@@ -186,7 +186,11 @@ data class ChimahonReaderSettings(
     val orientation: ChimahonReaderOrientation = ChimahonReaderOrientation.Free,
     val dualPageMode: ChimahonDualPageMode = ChimahonDualPageMode.Off,
     val splitWidePages: Boolean = false,
+    val customBrightnessEnabled: Boolean = false,
+    val customBrightnessValue: Int = 0,
     val colorFilterEnabled: Boolean = false,
+    val colorFilterValue: Int = 0,
+    val colorFilterMode: ChimahonReaderColorFilterMode = ChimahonReaderColorFilterMode.Default,
     val grayscale: Boolean = false,
     val invertColors: Boolean = false,
     val brightness: Int = 0,
@@ -299,6 +303,15 @@ enum class ChimahonReaderFlashColor {
     Black,
     White,
     WhiteBlack,
+}
+
+enum class ChimahonReaderColorFilterMode(val title: String) {
+    Default("Default"),
+    Multiply("Multiply"),
+    Screen("Screen"),
+    Overlay("Overlay"),
+    Lighten("Lighten"),
+    Darken("Darken"),
 }
 
 enum class ChimahonReaderZoomStart(val title: String) {
@@ -1000,7 +1013,14 @@ internal class ChimahonSettingsRepository(
             orientation = readEnum(READER_ORIENTATION_KEY, ChimahonReaderOrientation.Free),
             dualPageMode = readEnum(READER_DUAL_PAGE_MODE_KEY, ChimahonDualPageMode.Off),
             splitWidePages = settingsStore.readBoolean(READER_SPLIT_WIDE_PAGES_KEY),
+            customBrightnessEnabled = settingsStore.readBoolean(READER_CUSTOM_BRIGHTNESS_ENABLED_KEY),
+            customBrightnessValue = settingsStore.readInt(READER_CUSTOM_BRIGHTNESS_VALUE_KEY),
             colorFilterEnabled = settingsStore.readBoolean(READER_COLOR_FILTER_ENABLED_KEY),
+            colorFilterValue = settingsStore.readInt(READER_COLOR_FILTER_VALUE_KEY),
+            colorFilterMode = readEnum(
+                READER_COLOR_FILTER_MODE_KEY,
+                ChimahonReaderColorFilterMode.Default,
+            ),
             grayscale = settingsStore.readBoolean(READER_GRAYSCALE_KEY),
             invertColors = settingsStore.readBoolean(READER_INVERT_COLORS_KEY),
             brightness = settingsStore.readInt(READER_BRIGHTNESS_KEY),
@@ -1141,7 +1161,11 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeString(READER_ORIENTATION_KEY, settings.orientation.name)
         settingsStore.writeString(READER_DUAL_PAGE_MODE_KEY, settings.dualPageMode.name)
         settingsStore.writeBoolean(READER_SPLIT_WIDE_PAGES_KEY, settings.splitWidePages)
+        settingsStore.writeBoolean(READER_CUSTOM_BRIGHTNESS_ENABLED_KEY, settings.customBrightnessEnabled)
+        settingsStore.writeInt(READER_CUSTOM_BRIGHTNESS_VALUE_KEY, settings.customBrightnessValue)
         settingsStore.writeBoolean(READER_COLOR_FILTER_ENABLED_KEY, settings.colorFilterEnabled)
+        settingsStore.writeInt(READER_COLOR_FILTER_VALUE_KEY, settings.colorFilterValue)
+        settingsStore.writeString(READER_COLOR_FILTER_MODE_KEY, settings.colorFilterMode.name)
         settingsStore.writeBoolean(READER_GRAYSCALE_KEY, settings.grayscale)
         settingsStore.writeBoolean(READER_INVERT_COLORS_KEY, settings.invertColors)
         settingsStore.writeInt(READER_BRIGHTNESS_KEY, settings.brightness)
@@ -2411,8 +2435,16 @@ internal class ChimahonSettingsRepository(
         const val READER_ORIENTATION_KEY = "__APP_STATE_chimahon_reader_orientation"
         const val READER_DUAL_PAGE_MODE_KEY = "__APP_STATE_chimahon_reader_dual_page_mode"
         const val READER_SPLIT_WIDE_PAGES_KEY = "__APP_STATE_chimahon_reader_split_wide_pages"
+        const val READER_CUSTOM_BRIGHTNESS_ENABLED_KEY =
+            "__APP_STATE_chimahon_reader_custom_brightness_enabled"
+        const val READER_CUSTOM_BRIGHTNESS_VALUE_KEY =
+            "__APP_STATE_chimahon_reader_custom_brightness_value"
         const val READER_COLOR_FILTER_ENABLED_KEY =
             "__APP_STATE_chimahon_reader_color_filter_enabled"
+        const val READER_COLOR_FILTER_VALUE_KEY =
+            "__APP_STATE_chimahon_reader_color_filter_value"
+        const val READER_COLOR_FILTER_MODE_KEY =
+            "__APP_STATE_chimahon_reader_color_filter_mode"
         const val READER_GRAYSCALE_KEY = "__APP_STATE_chimahon_reader_grayscale"
         const val READER_INVERT_COLORS_KEY = "__APP_STATE_chimahon_reader_invert_colors"
         const val READER_BRIGHTNESS_KEY = "__APP_STATE_chimahon_reader_brightness"

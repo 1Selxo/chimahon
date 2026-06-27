@@ -23,6 +23,7 @@ kotlin {
             dependencies {
                 api(projects.core.database)
                 api(projects.domain)
+                api(projects.sourceApi)
                 api(project.dependencies.platform(kotlinx.coroutines.bom))
                 api(kotlinx.coroutines.core)
                 api(libs.sqldelight.runtime)
@@ -32,7 +33,6 @@ kotlin {
         val androidMain by getting {
             kotlin.srcDir("src/main/java")
             dependencies {
-                implementation(projects.sourceApi)
                 implementation(projects.core.common)
 
                 api(libs.bundles.sqldelight)

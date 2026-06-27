@@ -179,10 +179,7 @@ class ChimahonSharedAppServices private constructor(
                 .map(Chapters::toSharedChapterEntry)
                 .groupBy(ChimahonChapterEntry::mangaId)
                 .mapValues { (_, entries) ->
-                    entries.sortedWith(
-                        compareBy<ChimahonChapterEntry> { it.sourceOrder }
-                            .thenBy { it.chapterNumber },
-                    )
+                    entries.sortedBy { it.sourceOrder }
                 },
             updates = recentUpdates.map(UpdatesView::toSharedUpdateEntry),
             history = history.map(History::toSharedHistoryEntry),
@@ -1828,10 +1825,7 @@ class ChimahonSharedAppServices private constructor(
         state: ServiceDatabaseState,
     ): ChimahonLibraryMangaData {
         val mangaChapters = state.chaptersByMangaId[_id].orEmpty()
-            .sortedWith(
-                compareBy<Chapters> { it.source_order }
-                    .thenBy { it.chapter_number },
-            )
+            .sortedBy { it.source_order }
         return ChimahonLibraryMangaData(
             manga = toSharedMangaEntry(),
             chapters = mangaChapters.map(Chapters::toSharedChapterEntry),

@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.animesource.model
 
-import android.net.Uri
+import eu.kanade.tachiyomi.source.model.PlatformUri
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -97,7 +97,7 @@ open class Video(
         url: String,
         quality: String,
         videoUrl: String?,
-        uri: Uri? = null,
+        uri: PlatformUri? = null,
         headers: Headers? = null,
     ) : this(url, quality, videoUrl, headers)
 

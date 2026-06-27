@@ -3,15 +3,13 @@ package eu.kanade.tachiyomi.animesource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.source.sourceApiLogError
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
-import logcat.LogPriority
 import rx.Observable
-import tachiyomi.core.common.util.QuerySanitizer.sanitize
 import tachiyomi.core.common.util.lang.awaitSingle
-import tachiyomi.core.common.util.system.logcat
 
 interface AnimeCatalogueSource : AnimeSource {
 
@@ -72,7 +70,7 @@ interface AnimeCatalogueSource : AnimeSource {
         runCatching { fetchRelatedAnimeList(anime) }
             .onSuccess { if (it.isNotEmpty()) pushResults(Pair("", it), false) }
             .onFailure { e ->
-                logcat(LogPriority.ERROR, e) { "## getRelatedAnimeListByExtension: $e" }
+                sourceApiLogError("getRelatedAnimeListByExtension failed", e)
             }
     }
 
@@ -107,11 +105,11 @@ interface AnimeCatalogueSource : AnimeSource {
             words.map { keyword ->
                 launch {
                     runCatching {
-                        getSearchAnime(1, keyword.sanitize(), filterList).animes
+                        getSearchAnime(1, keyword.sanitizeRelatedQuery(), filterList).animes
                     }
                         .onSuccess { if (it.isNotEmpty()) pushResults(Pair(keyword, it), false) }
                         .onFailure { e ->
-                            logcat(LogPriority.ERROR, e) { "## getRelatedAnimeListBySearch: $e" }
+                            sourceApiLogError("getRelatedAnimeListBySearch failed", e)
                         }
                 }
             }
@@ -135,4 +133,16 @@ interface AnimeCatalogueSource : AnimeSource {
         ReplaceWith("getLatestUpdates"),
     )
     fun fetchLatestUpdates(page: Int): Observable<AnimesPage>
+}
+
+private fun String.sanitizeRelatedQuery(): String {
+    return trim()
+        .trim(' ', '-', '_', ',', ':')
+        .replace('\u2018', '\'')
+        .replace('\u2019', '\'')
+        .replace('\u201C', '"')
+        .replace('\u201D', '"')
+        .replace('\u2013', '-')
+        .replace('\u2014', '-')
+        .replace("\u2026", "...")
 }

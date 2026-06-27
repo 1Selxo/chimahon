@@ -128,6 +128,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
@@ -743,13 +744,19 @@ enum class ChimahonDesktopCommand {
     Library,
     Updates,
     History,
+    AnimeLibrary,
+    AnimeUpdates,
+    AnimeHistory,
     BrowseSources,
     BrowseExtensions,
+    BrowseAnimeSources,
+    BrowseAnimeExtensions,
     BrowseFeed,
     BrowseMigrate,
     More,
     Settings,
     DownloadQueue,
+    AnimeDownloadQueue,
     ReaderPreviousPage,
     ReaderNextPage,
     ReaderFirstPage,
@@ -1199,8 +1206,14 @@ internal fun ChimahonApp(
             ChimahonDesktopCommand.Library -> selectHomeTab(HomeTab.Library)
             ChimahonDesktopCommand.Updates -> selectHomeTab(HomeTab.Updates)
             ChimahonDesktopCommand.History -> selectHomeTab(HomeTab.History)
+            ChimahonDesktopCommand.AnimeLibrary,
+            ChimahonDesktopCommand.AnimeUpdates,
+            ChimahonDesktopCommand.AnimeHistory,
+            -> selectHomeTab(HomeTab.Anime)
             ChimahonDesktopCommand.BrowseSources -> openBrowseSection(BrowseSection.Sources)
             ChimahonDesktopCommand.BrowseExtensions -> openBrowseSection(BrowseSection.Extensions)
+            ChimahonDesktopCommand.BrowseAnimeSources -> openBrowseSection(BrowseSection.Sources)
+            ChimahonDesktopCommand.BrowseAnimeExtensions -> openBrowseSection(BrowseSection.Extensions)
             ChimahonDesktopCommand.BrowseFeed -> openBrowseSection(BrowseSection.Feed)
             ChimahonDesktopCommand.BrowseMigrate -> openBrowseSection(BrowseSection.Migrate)
             ChimahonDesktopCommand.More -> selectHomeTab(HomeTab.More)
@@ -1208,7 +1221,9 @@ internal fun ChimahonApp(
                 selectHomeTab(HomeTab.More)
                 requestedMorePage = MorePage.Settings
             }
-            ChimahonDesktopCommand.DownloadQueue -> {
+            ChimahonDesktopCommand.DownloadQueue,
+            ChimahonDesktopCommand.AnimeDownloadQueue,
+            -> {
                 selectHomeTab(HomeTab.More)
                 requestedMorePage = MorePage.Downloads
             }
@@ -2448,11 +2463,16 @@ private fun HomeContent(
             onRefresh = onRepoSaved,
         )
         HomeTab.Anime -> AnimeHome(
+            snapshot = snapshot,
             query = homeSearchQuery,
             filtersVisible = homeFiltersVisible,
             settings = settings.animeLibrary,
             onSettingsChange = onAnimeLibrarySettingsChange,
-            onOpenBrowseAnime = {
+            onOpenBrowseSources = {
+                onBrowseSectionChange(BrowseSection.Sources)
+                onSelectTab(HomeTab.Browse)
+            },
+            onOpenBrowseExtensions = {
                 onBrowseSectionChange(BrowseSection.Extensions)
                 onSelectTab(HomeTab.Browse)
             },
@@ -5674,11 +5694,13 @@ private fun HistoryListItem(
 
 @Composable
 private fun AnimeHome(
+    snapshot: ChimahonSnapshot,
     query: String,
     filtersVisible: Boolean,
     settings: ChimahonAnimeLibrarySettings,
     onSettingsChange: (ChimahonAnimeLibrarySettings) -> Unit,
-    onOpenBrowseAnime: () -> Unit,
+    onOpenBrowseSources: () -> Unit,
+    onOpenBrowseExtensions: () -> Unit,
 ) {
     var selectedCategory by remember { mutableStateOf("Default") }
     val categories = when (settings.groupBy) {
@@ -5687,6 +5709,24 @@ private fun AnimeHome(
         ChimahonLibraryGroup.Status -> listOf("Ongoing", "Completed", "Licensed", "On hiatus", "Cancelled")
         ChimahonLibraryGroup.TrackingStatus -> listOf("Tracked", "Untracked", "Pending sync")
     }
+    val sourceLanguages = snapshot.sources
+        .map { it.language.sourceLanguageCode() }
+        .distinct()
+        .sorted()
+    val enabledFilterCount = listOf(
+        settings.downloadedFilter,
+        settings.unseenFilter,
+        settings.startedFilter,
+        settings.bookmarkedFilter,
+        settings.completedFilter,
+        settings.fillerFilter,
+        settings.trackedFilter,
+    ).count { it != ChimahonFilterMode.Any }
+    LaunchedEffect(categories) {
+        if (selectedCategory !in categories) {
+            selectedCategory = categories.firstOrNull() ?: "Default"
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -5694,101 +5734,58 @@ private fun AnimeHome(
             .background(ChimahonPalette.background),
         contentPadding = PaddingValues(bottom = 20.dp),
     ) {
+        if (settings.showCategoryTabs) {
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(categories, key = { it }) { category ->
+                        AndroidFilterChip(
+                            text = if (settings.showCategoryItemCount) "$category 0" else category,
+                            selected = category == selectedCategory,
+                            onClick = { selectedCategory = category },
+                        )
+                    }
+                }
+            }
+        }
         item {
             LazyRow(
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = if (settings.showCategoryTabs) 0.dp else 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(categories, key = { it }) { category ->
-                    AndroidFilterChip(
-                        text = category,
-                        selected = category == selectedCategory,
-                        onClick = { selectedCategory = category },
-                    )
+                item { LibraryInlineBadge("${snapshot.summary.sourceCount} sources", UiIcon.Web) }
+                item { LibraryInlineBadge("${snapshot.installedExtensions.size} extensions", UiIcon.Extensions) }
+                item { LibraryInlineBadge("${snapshot.extensionRepos.size} repos", UiIcon.Download) }
+                if (enabledFilterCount > 0) {
+                    item { LibraryInlineBadge("$enabledFilterCount filters", UiIcon.Filter) }
                 }
+                item { LibraryInlineBadge(settings.displayMode.animeDisplayTitle(), UiIcon.Library) }
             }
         }
         if (filtersVisible) {
             item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(ChimahonPalette.surface)
-                        .bottomDivider()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                ) {
-                    FilterPanelLabel("Show", modifier = Modifier.padding(bottom = 5.dp))
-                    ScrollableFilterChips(
-                        chips = ChimahonFilterMode.entries.map { it.animeFilterTitle("Unseen") },
-                        selected = settings.unseenFilter.animeFilterTitle("Unseen"),
-                        onSelect = { selected ->
-                            ChimahonFilterMode.entries.firstOrNull {
-                                it.animeFilterTitle("Unseen") == selected
-                            }?.let { onSettingsChange(settings.copy(unseenFilter = it)) }
-                        },
-                    )
-                    ScrollableFilterChips(
-                        chips = ChimahonFilterMode.entries.map { it.animeFilterTitle("Downloaded") },
-                        selected = settings.downloadedFilter.animeFilterTitle("Downloaded"),
-                        onSelect = { selected ->
-                            ChimahonFilterMode.entries.firstOrNull {
-                                it.animeFilterTitle("Downloaded") == selected
-                            }?.let { onSettingsChange(settings.copy(downloadedFilter = it)) }
-                        },
-                    )
-                    FilterPanelLabel(
-                        "Sort",
-                        modifier = Modifier.padding(top = 10.dp, bottom = 5.dp),
-                    )
-                    ScrollableFilterChips(
-                        chips = ChimahonLibrarySort.entries.map { it.libraryTitle() },
-                        selected = settings.sort.libraryTitle(),
-                        onSelect = { selected ->
-                            ChimahonLibrarySort.entries.firstOrNull { it.libraryTitle() == selected }?.let {
-                                onSettingsChange(settings.copy(sort = it))
-                            }
-                        },
-                    )
-                    SettingsSwitchLine(
-                        label = "Ascending",
-                        checked = settings.sortAscending,
-                        onCheckedChange = { onSettingsChange(settings.copy(sortAscending = it)) },
-                    )
-                    FilterPanelLabel(
-                        "Display",
-                        modifier = Modifier.padding(top = 10.dp, bottom = 5.dp),
-                    )
-                    ScrollableFilterChips(
-                        chips = animeLibraryDisplayModes().map { it.animeDisplayTitle() },
-                        selected = settings.displayMode.animeDisplayTitle(),
-                        onSelect = { selected ->
-                            animeLibraryDisplayModes().firstOrNull { it.animeDisplayTitle() == selected }?.let {
-                                onSettingsChange(settings.copy(displayMode = it))
-                            }
-                        },
-                    )
-                    SettingsSwitchLine(
-                        label = "Show category tabs",
-                        checked = settings.showCategoryTabs,
-                        onCheckedChange = { onSettingsChange(settings.copy(showCategoryTabs = it)) },
-                    )
-                    SettingsSwitchLine(
-                        label = "Continue watching",
-                        checked = settings.showContinueWatchingButtons,
-                        onCheckedChange = {
-                            onSettingsChange(settings.copy(showContinueWatchingButtons = it))
-                        },
-                    )
-                }
+                AnimeLibraryFilterPanel(
+                    settings = settings,
+                    sourceLanguages = sourceLanguages,
+                    onSettingsChange = onSettingsChange,
+                )
             }
         }
         item {
-            MobileBanner(
-                title = "Anime library",
-                detail = "Browse anime sources and install anime extensions, then keep episodes, downloads, and tracking together here.",
-                action = "Browse",
-                onAction = onOpenBrowseAnime,
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                MobileBanner(
+                    title = "Anime library",
+                    detail = "${snapshot.summary.sourceCount} catalogue sources, ${snapshot.installedExtensions.size} installed extensions, ${snapshot.extensionRepos.size} repositories.",
+                    action = "Browse",
+                    onAction = onOpenBrowseSources,
+                )
+            }
         }
         item {
             Row(
@@ -5801,27 +5798,204 @@ private fun AnimeHome(
                     icon = UiIcon.PlayCircle,
                     title = "Sources",
                     modifier = Modifier.weight(1f),
-                    onClick = onOpenBrowseAnime,
+                    onClick = onOpenBrowseSources,
                 )
                 MangaActionButton(
-                    icon = UiIcon.Download,
-                    title = "Queue",
+                    icon = UiIcon.Extensions,
+                    title = "Extensions",
+                    active = snapshot.installedExtensions.isNotEmpty(),
                     modifier = Modifier.weight(1f),
-                    onClick = {},
+                    onClick = onOpenBrowseExtensions,
                 )
                 MangaActionButton(
-                    icon = UiIcon.Statistics,
-                    title = "Tracking",
+                    icon = UiIcon.Library,
+                    title = "Display",
+                    active = settings.displayMode != ChimahonLibraryDisplayMode.CompactGrid,
                     modifier = Modifier.weight(1f),
-                    onClick = {},
+                    onClick = {
+                        onSettingsChange(settings.copy(displayMode = settings.displayMode.nextAnimeDisplayMode()))
+                    },
                 )
             }
         }
         item {
-            EmptyListPanel(
-                marker = "A",
-                title = if (query.isBlank()) "No anime in library" else "No anime matches \"$query\"",
-                detail = "Browse anime sources or install anime extensions to add titles here.",
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MobileListItem(
+                    marker = "SRC",
+                    title = "Catalogue sources",
+                    subtitle = sourceLanguages.ifEmpty { listOf("No languages") }.joinToString("  -  "),
+                    trailing = "Browse",
+                    markerColor = ChimahonPalette.primaryContainer,
+                    markerTextColor = ChimahonPalette.primary,
+                    onClick = onOpenBrowseSources,
+                )
+                MobileListItem(
+                    marker = "EXT",
+                    title = "Extension manager",
+                    subtitle = "${snapshot.installedExtensions.size} installed  -  ${snapshot.extensionRepos.size} repos",
+                    trailing = "Open",
+                    markerColor = ChimahonPalette.surfaceVariant,
+                    markerTextColor = ChimahonPalette.primary,
+                    onClick = onOpenBrowseExtensions,
+                )
+                MobileListItem(
+                    marker = "LIB",
+                    title = selectedCategory,
+                    subtitle = "${settings.sort.libraryTitle()}  -  ${if (settings.sortAscending) "Ascending" else "Descending"}",
+                    trailing = settings.displayMode.animeDisplayTitle(),
+                    markerColor = ChimahonPalette.surfaceVariant,
+                    markerTextColor = ChimahonPalette.secondaryText,
+                )
+            }
+        }
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                EmptyListPanel(
+                    marker = "A",
+                    title = if (query.isBlank()) "No anime in library" else "No anime matches \"$query\"",
+                    detail = "Browse anime catalogue sources or install extensions to add titles here.",
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnimeLibraryFilterPanel(
+    settings: ChimahonAnimeLibrarySettings,
+    sourceLanguages: List<String>,
+    onSettingsChange: (ChimahonAnimeLibrarySettings) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChimahonPalette.background)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(ChimahonPalette.surface)
+                .border(1.dp, ChimahonPalette.divider, RoundedCornerShape(14.dp))
+                .padding(vertical = 10.dp),
+        ) {
+            FilterPanelLabel("Filter")
+            ScrollableFilterChips(
+                chips = ChimahonFilterMode.entries.map { it.animeFilterTitle("Unseen") },
+                selected = settings.unseenFilter.animeFilterTitle("Unseen"),
+                onSelect = { selected ->
+                    ChimahonFilterMode.entries.firstOrNull {
+                        it.animeFilterTitle("Unseen") == selected
+                    }?.let { onSettingsChange(settings.copy(unseenFilter = it)) }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+            ScrollableFilterChips(
+                chips = ChimahonFilterMode.entries.map { it.animeFilterTitle("Downloaded") },
+                selected = settings.downloadedFilter.animeFilterTitle("Downloaded"),
+                onSelect = { selected ->
+                    ChimahonFilterMode.entries.firstOrNull {
+                        it.animeFilterTitle("Downloaded") == selected
+                    }?.let { onSettingsChange(settings.copy(downloadedFilter = it)) }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+            ScrollableFilterChips(
+                chips = ChimahonFilterMode.entries.map { it.animeFilterTitle("Started") },
+                selected = settings.startedFilter.animeFilterTitle("Started"),
+                onSelect = { selected ->
+                    ChimahonFilterMode.entries.firstOrNull {
+                        it.animeFilterTitle("Started") == selected
+                    }?.let { onSettingsChange(settings.copy(startedFilter = it)) }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+            FilterPanelLabel("Library grouping", modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp))
+            ScrollableFilterChips(
+                chips = ChimahonLibraryGroup.entries.map { it.title },
+                selected = settings.groupBy.title,
+                onSelect = { selected ->
+                    ChimahonLibraryGroup.entries.firstOrNull { it.title == selected }?.let {
+                        onSettingsChange(settings.copy(groupBy = it))
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, top = 10.dp, end = 12.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilterPanelLabel("Sort", modifier = Modifier.weight(1f))
+                TextButtonLike(
+                    if (settings.sortAscending) "Ascending" else "Descending",
+                    onClick = { onSettingsChange(settings.copy(sortAscending = !settings.sortAscending)) },
+                )
+            }
+            ScrollableFilterChips(
+                chips = ChimahonLibrarySort.entries.map { it.libraryTitle() },
+                selected = settings.sort.libraryTitle(),
+                onSelect = { selected ->
+                    ChimahonLibrarySort.entries.firstOrNull { it.libraryTitle() == selected }?.let {
+                        onSettingsChange(settings.copy(sort = it))
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+            FilterPanelLabel("Display", modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp))
+            ScrollableFilterChips(
+                chips = animeLibraryDisplayModes().map { it.animeDisplayTitle() },
+                selected = settings.displayMode.animeDisplayTitle(),
+                onSelect = { selected ->
+                    animeLibraryDisplayModes().firstOrNull { it.animeDisplayTitle() == selected }?.let {
+                        onSettingsChange(settings.copy(displayMode = it))
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            )
+            if (sourceLanguages.isNotEmpty()) {
+                FilterPanelLabel("Source languages", modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp))
+                ScrollableFilterChips(
+                    chips = sourceLanguages,
+                    selected = sourceLanguages.first(),
+                    onSelect = {},
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+            }
+            FilterPanelLabel("Badges and actions", modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp))
+            SettingsSwitchLine(
+                label = "Show category tabs",
+                checked = settings.showCategoryTabs,
+                onCheckedChange = { onSettingsChange(settings.copy(showCategoryTabs = it)) },
+            )
+            SettingsSwitchLine(
+                label = "Show category count",
+                checked = settings.showCategoryItemCount,
+                onCheckedChange = { onSettingsChange(settings.copy(showCategoryItemCount = it)) },
+            )
+            SettingsSwitchLine(
+                label = "Unseen badges",
+                checked = settings.showUnseenBadges,
+                onCheckedChange = { onSettingsChange(settings.copy(showUnseenBadges = it)) },
+            )
+            SettingsSwitchLine(
+                label = "Downloaded badges",
+                checked = settings.showDownloadedBadges,
+                onCheckedChange = { onSettingsChange(settings.copy(showDownloadedBadges = it)) },
+            )
+            SettingsSwitchLine(
+                label = "Continue watching",
+                checked = settings.showContinueWatchingButtons,
+                onCheckedChange = { onSettingsChange(settings.copy(showContinueWatchingButtons = it)) },
             )
         }
     }
@@ -7638,7 +7812,7 @@ private fun RemoteChapterHeader(
         }
         val summaryItems = listOfNotNull(
             "${chapters.size} visible" to false,
-            selectedSort.title to selectedSort != ChapterSort.SourceOrder,
+            selectedSort.title to (selectedSort != ChapterSort.SourceOrder),
             chapterSortDirectionTitle(selectedSort, descending) to descending,
             query.takeIf { it.isNotBlank() }?.let { "Search" to true },
         )
@@ -10443,11 +10617,9 @@ private fun ReaderNavigatorChapterAction(
 }
 
 private enum class ReaderSettingsTab(val title: String) {
-    Display("Display"),
-    Image("Image"),
-    Controls("Controls"),
-    Text("Text"),
-    Advanced("Advanced"),
+    ReadingMode("Reading mode"),
+    General("General"),
+    ColorFilter("Color filter"),
 }
 
 @Composable
@@ -10462,7 +10634,7 @@ private fun ReaderSettingsPanel(
     onSettingsChange: (ChimahonReaderSettings) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selectedTab by remember { mutableStateOf(ReaderSettingsTab.Display) }
+    var selectedTab by remember { mutableStateOf(ReaderSettingsTab.ReadingMode) }
     Column(
         modifier = modifier
             .heightIn(max = 600.dp)
@@ -10484,572 +10656,650 @@ private fun ReaderSettingsPanel(
             onSelect = { selectedTab = it },
         )
         when (selectedTab) {
-            ReaderSettingsTab.Display -> {
-                ReaderSheetSectionTitle("Theme")
-                ReaderThemeSwatchRow(
-                    selected = canvas,
-                    onSelect = onCanvasChange,
-                )
-                ReaderToggleRow(
-                    label = "Pure black background",
-                    checked = settings.pureBlackBackground,
-                    onCheckedChange = { onSettingsChange(settings.copy(pureBlackBackground = it)) },
-                )
-                ReaderSheetSectionTitle("Mode")
-                ReaderOptionRow(
-                    label = "Reading mode",
-                    options = ReaderMode.entries.map { it.title },
-                    selected = mode.title,
-                    onSelect = { title ->
-                        ReaderMode.entries.firstOrNull { it.title == title }?.let(onModeChange)
-                    },
-                )
-                ReaderOptionRow(
-                    label = "Orientation",
-                    options = ChimahonReaderOrientation.entries.map { it.readerTitle() },
-                    selected = settings.orientation.readerTitle(),
-                    onSelect = { title ->
-                        ChimahonReaderOrientation.entries
-                            .firstOrNull { it.readerTitle() == title }
-                            ?.let { onSettingsChange(settings.copy(orientation = it)) }
-                    },
-                )
-                ReaderOptionRow(
-                    label = "Dual page",
-                    options = ChimahonDualPageMode.entries.map { it.readerTitle() },
-                    selected = settings.dualPageMode.readerTitle(),
-                    onSelect = { title ->
-                        ChimahonDualPageMode.entries
-                            .firstOrNull { it.readerTitle() == title }
-                            ?.let { onSettingsChange(settings.copy(dualPageMode = it)) }
-                    },
-                )
-                ReaderToggleRow(
-                    label = "Invert double pages",
-                    checked = settings.invertDoublePages,
-                    onCheckedChange = { onSettingsChange(settings.copy(invertDoublePages = it)) },
-                )
-                ReaderValueStepperRow(
-                    label = "Center margin",
-                    value = "${settings.centerMarginDp} dp",
-                    onDecrease = {
-                        onSettingsChange(settings.copy(centerMarginDp = (settings.centerMarginDp - 2).coerceIn(0, 64)))
-                    },
-                    onIncrease = {
-                        onSettingsChange(settings.copy(centerMarginDp = (settings.centerMarginDp + 2).coerceIn(0, 64)))
-                    },
-                )
-                ReaderSheetSectionTitle("Reader HUD")
-                ReaderToggleRow(
-                    label = "Page scrubber",
-                    checked = settings.showPageStrip,
-                    onCheckedChange = { onSettingsChange(settings.copy(showPageStrip = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Force horizontal seekbar",
-                    checked = settings.forceHorizontalSeekbar,
-                    onCheckedChange = { onSettingsChange(settings.copy(forceHorizontalSeekbar = it)) },
-                )
-                if (!settings.forceHorizontalSeekbar) {
-                    ReaderToggleRow(
-                        label = "Vertical seekbar in landscape",
-                        checked = settings.landscapeVerticalSeekbar,
-                        onCheckedChange = { onSettingsChange(settings.copy(landscapeVerticalSeekbar = it)) },
-                    )
-                    ReaderToggleRow(
-                        label = "Left-handed vertical seekbar",
-                        checked = settings.leftVerticalSeekbar,
-                        onCheckedChange = { onSettingsChange(settings.copy(leftVerticalSeekbar = it)) },
-                    )
-                }
-                ReaderToggleRow(
-                    label = "Show page number",
-                    checked = settings.showPageNumber,
-                    onCheckedChange = { onSettingsChange(settings.copy(showPageNumber = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Show title",
-                    checked = settings.showTitle,
-                    onCheckedChange = { onSettingsChange(settings.copy(showTitle = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Show percentage",
-                    checked = settings.showPercentage,
-                    onCheckedChange = { onSettingsChange(settings.copy(showPercentage = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Progress on top",
-                    checked = settings.showProgressTop,
-                    onCheckedChange = { onSettingsChange(settings.copy(showProgressTop = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Show reading mode",
-                    checked = settings.showReadingMode,
-                    onCheckedChange = { onSettingsChange(settings.copy(showReadingMode = it)) },
-                )
-            }
-
-            ReaderSettingsTab.Image -> {
-                ReaderSheetSectionTitle("Image")
-                ReaderOptionRow(
-                    label = "Scale",
-                    options = ReaderScale.entries.map { it.title },
-                    selected = scale.title,
-                    onSelect = { title ->
-                        ReaderScale.entries.firstOrNull { it.title == title }?.let(onScaleChange)
-                    },
-                )
-                ReaderToggleRow(
-                    label = "Crop borders",
-                    checked = settings.cropBorders,
-                    onCheckedChange = { onSettingsChange(settings.copy(cropBorders = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Split wide pages",
-                    checked = settings.splitWidePages,
-                    onCheckedChange = { onSettingsChange(settings.copy(splitWidePages = it)) },
-                )
-                ReaderSheetSectionTitle("Margins")
-                ReaderValueStepperRow(
-                    label = "Horizontal padding",
-                    value = "${settings.horizontalPadding.toCleanDecimal()}%",
-                    onDecrease = {
-                        onSettingsChange(
-                            settings.copy(horizontalPadding = (settings.horizontalPadding - 0.5).coerceIn(0.0, 50.0)),
-                        )
-                    },
-                    onIncrease = {
-                        onSettingsChange(
-                            settings.copy(horizontalPadding = (settings.horizontalPadding + 0.5).coerceIn(0.0, 50.0)),
-                        )
-                    },
-                )
-                ReaderValueStepperRow(
-                    label = "Vertical padding",
-                    value = "${settings.verticalPadding.toCleanDecimal()}%",
-                    onDecrease = {
-                        onSettingsChange(
-                            settings.copy(verticalPadding = (settings.verticalPadding - 0.5).coerceIn(0.0, 50.0)),
-                        )
-                    },
-                    onIncrease = {
-                        onSettingsChange(
-                            settings.copy(verticalPadding = (settings.verticalPadding + 0.5).coerceIn(0.0, 50.0)),
-                        )
-                    },
-                )
-                ReaderSheetSectionTitle("Color filter")
-                ReaderToggleRow(
-                    label = "Color filter",
-                    checked = settings.colorFilterEnabled,
-                    onCheckedChange = { onSettingsChange(settings.copy(colorFilterEnabled = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Grayscale",
-                    checked = settings.grayscale,
-                    onCheckedChange = { onSettingsChange(settings.copy(grayscale = it, colorFilterEnabled = true)) },
-                )
-                ReaderToggleRow(
-                    label = "Invert colors",
-                    checked = settings.invertColors,
-                    onCheckedChange = { onSettingsChange(settings.copy(invertColors = it, colorFilterEnabled = true)) },
-                )
-                ReaderValueStepperRow(
-                    label = "Brightness",
-                    value = settings.brightness.toString(),
-                    onDecrease = {
-                        onSettingsChange(
-                            settings.copy(
-                                brightness = (settings.brightness - 5).coerceIn(-100, 100),
-                                colorFilterEnabled = true,
-                            ),
-                        )
-                    },
-                    onIncrease = {
-                        onSettingsChange(
-                            settings.copy(
-                                brightness = (settings.brightness + 5).coerceIn(-100, 100),
-                                colorFilterEnabled = true,
-                            ),
-                        )
-                    },
-                )
-                ReaderSheetSectionTitle("Page loading")
-                ReaderValueStepperRow(
-                    label = "Preload pages",
-                    value = settings.preloadSize.toString(),
-                    onDecrease = {
-                        onSettingsChange(settings.copy(preloadSize = (settings.preloadSize - 1).coerceIn(1, 20)))
-                    },
-                    onIncrease = {
-                        onSettingsChange(settings.copy(preloadSize = (settings.preloadSize + 1).coerceIn(1, 20)))
-                    },
-                )
-                ReaderValueStepperRow(
-                    label = "Reader threads",
-                    value = settings.readerThreads.toString(),
-                    onDecrease = {
-                        onSettingsChange(settings.copy(readerThreads = (settings.readerThreads - 1).coerceIn(1, 5)))
-                    },
-                    onIncrease = {
-                        onSettingsChange(settings.copy(readerThreads = (settings.readerThreads + 1).coerceIn(1, 5)))
-                    },
-                )
-                ReaderValueStepperRow(
-                    label = "Cache size",
-                    value = "${settings.readerCacheSizeMb} MB",
-                    onDecrease = {
-                        onSettingsChange(
-                            settings.copy(readerCacheSizeMb = (settings.readerCacheSizeMb - 50).coerceIn(50, 2_000)),
-                        )
-                    },
-                    onIncrease = {
-                        onSettingsChange(
-                            settings.copy(readerCacheSizeMb = (settings.readerCacheSizeMb + 50).coerceIn(50, 2_000)),
-                        )
-                    },
-                )
-                ReaderToggleRow(
-                    label = "Aggressive loading",
-                    checked = settings.aggressivePageLoading,
-                    onCheckedChange = { onSettingsChange(settings.copy(aggressivePageLoading = it)) },
-                )
-            }
-
-            ReaderSettingsTab.Controls -> {
-                ReaderSheetSectionTitle("Navigation")
-                ReaderOptionRow(
-                    label = "Navigation",
-                    options = ChimahonReaderNavigationMode.entries.map { it.readerTitle() },
-                    selected = settings.navigationMode.readerTitle(),
-                    onSelect = { title ->
-                        ChimahonReaderNavigationMode.entries
-                            .firstOrNull { it.readerTitle() == title }
-                            ?.let { onSettingsChange(settings.copy(navigationMode = it)) }
-                    },
-                )
-                ReaderToggleRow(
-                    label = "Tap zones",
-                    checked = settings.tapZonesEnabled,
-                    onCheckedChange = { onSettingsChange(settings.copy(tapZonesEnabled = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Smaller tap zones",
-                    checked = settings.smallerTapZones,
-                    onCheckedChange = { onSettingsChange(settings.copy(smallerTapZones = it)) },
-                )
-                ReaderOptionRow(
-                    label = "Invert tap zones",
-                    options = ChimahonTapZoneInvert.entries.map { it.readerTitle() },
-                    selected = settings.invertTapZones.readerTitle(),
-                    onSelect = { title ->
-                        ChimahonTapZoneInvert.entries
-                            .firstOrNull { it.readerTitle() == title }
-                            ?.let { onSettingsChange(settings.copy(invertTapZones = it)) }
-                    },
-                )
-                ReaderToggleRow(
-                    label = "Swipe navigation",
-                    checked = settings.swipeNavigationEnabled,
-                    onCheckedChange = { onSettingsChange(settings.copy(swipeNavigationEnabled = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Navigate to pan",
-                    checked = settings.navigateToPan,
-                    onCheckedChange = { onSettingsChange(settings.copy(navigateToPan = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Double tap zoom",
-                    checked = settings.doubleTapToZoom,
-                    onCheckedChange = { onSettingsChange(settings.copy(doubleTapToZoom = it)) },
-                )
-                ReaderValueStepperRow(
-                    label = "Tap zone size",
-                    value = "${settings.tapZonePercent}%",
-                    onDecrease = {
-                        onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent - 1).coerceIn(0, 40)))
-                    },
-                    onIncrease = {
-                        onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent + 1).coerceIn(0, 40)))
-                    },
-                )
-                ReaderValueStepperRow(
-                    label = "Chapter swipe",
-                    value = "${settings.chapterSwipeDistance}px",
-                    onDecrease = {
-                        onSettingsChange(
-                            settings.copy(chapterSwipeDistance = (settings.chapterSwipeDistance - 8).coerceIn(32, 256)),
-                        )
-                    },
-                    onIncrease = {
-                        onSettingsChange(
-                            settings.copy(chapterSwipeDistance = (settings.chapterSwipeDistance + 8).coerceIn(32, 256)),
-                        )
-                    },
-                )
-                ReaderSheetSectionTitle("Hardware")
-                ReaderToggleRow(
-                    label = "Volume keys",
-                    checked = settings.volumeKeysEnabled,
-                    onCheckedChange = { onSettingsChange(settings.copy(volumeKeysEnabled = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Invert volume keys",
-                    checked = settings.volumeKeysInverted,
-                    onCheckedChange = { onSettingsChange(settings.copy(volumeKeysInverted = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Long tap controls",
-                    checked = settings.longTapEnabled,
-                    onCheckedChange = { onSettingsChange(settings.copy(longTapEnabled = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Read with long tap",
-                    checked = settings.readWithLongTap,
-                    onCheckedChange = { onSettingsChange(settings.copy(readWithLongTap = it)) },
-                )
-            }
-
-            ReaderSettingsTab.Text -> {
-                ReaderSheetSectionTitle("Typography")
-                ReaderValueStepperRow(
-                    label = "Font size",
-                    value = "${settings.fontSize.toCleanDecimal()}px",
-                    onDecrease = {
-                        onSettingsChange(settings.copy(fontSize = (settings.fontSize - 0.5).coerceIn(12.0, 72.0)))
-                    },
-                    onIncrease = {
-                        onSettingsChange(settings.copy(fontSize = (settings.fontSize + 0.5).coerceIn(12.0, 72.0)))
-                    },
-                )
-                ReaderValueStepperRow(
-                    label = "Line height",
-                    value = settings.lineHeight.toCleanDecimal(),
-                    onDecrease = {
-                        onSettingsChange(settings.copy(lineHeight = (settings.lineHeight - 0.05).coerceIn(1.0, 2.5)))
-                    },
-                    onIncrease = {
-                        onSettingsChange(settings.copy(lineHeight = (settings.lineHeight + 0.05).coerceIn(1.0, 2.5)))
-                    },
-                )
-                ReaderValueStepperRow(
-                    label = "Character spacing",
-                    value = settings.characterSpacing.toCleanDecimal(),
-                    onDecrease = {
-                        onSettingsChange(
-                            settings.copy(characterSpacing = (settings.characterSpacing - 0.05).coerceIn(0.0, 0.5)),
-                        )
-                    },
-                    onIncrease = {
-                        onSettingsChange(
-                            settings.copy(characterSpacing = (settings.characterSpacing + 0.05).coerceIn(0.0, 0.5)),
-                        )
-                    },
-                )
-                ReaderValueStepperRow(
-                    label = "Paragraph spacing",
-                    value = "${settings.paragraphSpacing.toCleanDecimal()} em",
-                    onDecrease = {
-                        onSettingsChange(
-                            settings.copy(paragraphSpacing = (settings.paragraphSpacing - 0.05).coerceIn(0.0, 2.0)),
-                        )
-                    },
-                    onIncrease = {
-                        onSettingsChange(
-                            settings.copy(paragraphSpacing = (settings.paragraphSpacing + 0.05).coerceIn(0.0, 2.0)),
-                        )
-                    },
-                )
-                ReaderSheetSectionTitle("Layout")
-                ReaderToggleRow(
-                    label = "Vertical writing",
-                    checked = settings.verticalWriting,
-                    onCheckedChange = { onSettingsChange(settings.copy(verticalWriting = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Continuous mode",
-                    checked = settings.continuousMode,
-                    onCheckedChange = { onSettingsChange(settings.copy(continuousMode = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Avoid page break",
-                    checked = settings.avoidPageBreak,
-                    onCheckedChange = { onSettingsChange(settings.copy(avoidPageBreak = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Justify text",
-                    checked = settings.justifyText,
-                    onCheckedChange = { onSettingsChange(settings.copy(justifyText = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Hide furigana",
-                    checked = settings.hideFurigana,
-                    onCheckedChange = { onSettingsChange(settings.copy(hideFurigana = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Show characters",
-                    checked = settings.showCharacters,
-                    onCheckedChange = { onSettingsChange(settings.copy(showCharacters = it)) },
-                )
-            }
-
-            ReaderSettingsTab.Advanced -> {
-                ReaderSheetSectionTitle("Reader behavior")
-                ReaderToggleRow(
-                    label = "Show controls on start",
-                    checked = settings.keepControlsVisible,
-                    onCheckedChange = { onSettingsChange(settings.copy(keepControlsVisible = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Show navigation overlay",
-                    checked = settings.showNavigationOverlayOnStart,
-                    onCheckedChange = { onSettingsChange(settings.copy(showNavigationOverlayOnStart = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Startup delay",
-                    checked = settings.readerStartupDelay,
-                    onCheckedChange = { onSettingsChange(settings.copy(readerStartupDelay = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Page transitions",
-                    checked = settings.pageTransitions,
-                    onCheckedChange = { onSettingsChange(settings.copy(pageTransitions = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Keep screen on",
-                    checked = settings.keepScreenOn,
-                    onCheckedChange = { onSettingsChange(settings.copy(keepScreenOn = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Fullscreen",
-                    checked = settings.fullscreen,
-                    onCheckedChange = { onSettingsChange(settings.copy(fullscreen = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Draw under cutout",
-                    checked = settings.drawUnderCutout,
-                    onCheckedChange = { onSettingsChange(settings.copy(drawUnderCutout = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Show OCR outlines",
-                    checked = settings.ocrOutlineVisible,
-                    onCheckedChange = { onSettingsChange(settings.copy(ocrOutlineVisible = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Reading speed",
-                    checked = settings.showReadingSpeed,
-                    onCheckedChange = { onSettingsChange(settings.copy(showReadingSpeed = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Reading time",
-                    checked = settings.showReadingTime,
-                    onCheckedChange = { onSettingsChange(settings.copy(showReadingTime = it)) },
-                )
-                ReaderSheetSectionTitle("Page flash")
-                ReaderToggleRow(
-                    label = "Flash on page change",
-                    checked = settings.flashOnPageChange,
-                    onCheckedChange = { onSettingsChange(settings.copy(flashOnPageChange = it)) },
-                )
-                if (settings.flashOnPageChange) {
-                    ReaderValueStepperRow(
-                        label = "Flash duration",
-                        value = "${settings.flashDurationMillis} ms",
-                        onDecrease = {
-                            onSettingsChange(
-                                settings.copy(
-                                    flashDurationMillis = (settings.flashDurationMillis - 100).coerceIn(100, 1_500),
-                                ),
-                            )
-                        },
-                        onIncrease = {
-                            onSettingsChange(
-                                settings.copy(
-                                    flashDurationMillis = (settings.flashDurationMillis + 100).coerceIn(100, 1_500),
-                                ),
-                            )
-                        },
-                    )
-                    ReaderValueStepperRow(
-                        label = "Flash interval",
-                        value = "${settings.flashPageInterval} page(s)",
-                        onDecrease = {
-                            onSettingsChange(
-                                settings.copy(flashPageInterval = (settings.flashPageInterval - 1).coerceIn(1, 10)),
-                            )
-                        },
-                        onIncrease = {
-                            onSettingsChange(
-                                settings.copy(flashPageInterval = (settings.flashPageInterval + 1).coerceIn(1, 10)),
-                            )
-                        },
-                    )
-                    ReaderOptionRow(
-                        label = "Flash color",
-                        options = ChimahonReaderFlashColor.entries.map { it.readerTitle() },
-                        selected = settings.flashColor.readerTitle(),
-                        onSelect = { title ->
-                            ChimahonReaderFlashColor.entries
-                                .firstOrNull { it.readerTitle() == title }
-                                ?.let { onSettingsChange(settings.copy(flashColor = it)) }
-                        },
-                    )
-                }
-                ReaderSheetSectionTitle("Chapter transitions")
-                ReaderToggleRow(
-                    label = "Always show chapter transition",
-                    checked = settings.alwaysShowChapterTransition,
-                    onCheckedChange = { onSettingsChange(settings.copy(alwaysShowChapterTransition = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Preserve reading position",
-                    checked = settings.preserveReadingPosition,
-                    onCheckedChange = { onSettingsChange(settings.copy(preserveReadingPosition = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Use auto webtoon",
-                    checked = settings.useAutoWebtoon,
-                    onCheckedChange = { onSettingsChange(settings.copy(useAutoWebtoon = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Skip read chapters",
-                    checked = settings.skipReadChapters,
-                    onCheckedChange = { onSettingsChange(settings.copy(skipReadChapters = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Skip filtered chapters",
-                    checked = settings.skipFilteredChapters,
-                    onCheckedChange = { onSettingsChange(settings.copy(skipFilteredChapters = it)) },
-                )
-                ReaderToggleRow(
-                    label = "Skip duplicate chapters",
-                    checked = settings.skipDuplicateChapters,
-                    onCheckedChange = { onSettingsChange(settings.copy(skipDuplicateChapters = it)) },
-                )
-                ReaderSheetSectionTitle("Bottom buttons")
-                readerBottomButtonOptions().forEach { option ->
-                    ReaderToggleRow(
-                        label = option.title,
-                        checked = option.isEnabledIn(settings.bottomButtons),
-                        onCheckedChange = { checked ->
-                            val updatedButtons = if (checked) {
-                                (option.removeFrom(settings.bottomButtons) + option.key).distinct()
-                            } else {
-                                option.removeFrom(settings.bottomButtons)
-                            }
-                            onSettingsChange(settings.copy(bottomButtons = updatedButtons))
-                        },
-                    )
-                }
-                ReaderSheetSectionTitle("Storage")
-                ReaderToggleRow(
-                    label = "Folder per manga",
-                    checked = settings.folderPerManga,
-                    onCheckedChange = { onSettingsChange(settings.copy(folderPerManga = it)) },
-                )
-            }
+            ReaderSettingsTab.ReadingMode -> ReaderReadingModeSettingsPage(
+                mode = mode,
+                scale = scale,
+                settings = settings,
+                onModeChange = onModeChange,
+                onScaleChange = onScaleChange,
+                onSettingsChange = onSettingsChange,
+            )
+            ReaderSettingsTab.General -> ReaderGeneralSettingsPage(
+                canvas = canvas,
+                settings = settings,
+                onCanvasChange = onCanvasChange,
+                onSettingsChange = onSettingsChange,
+            )
+            ReaderSettingsTab.ColorFilter -> ReaderColorFilterSettingsPage(
+                settings = settings,
+                onSettingsChange = onSettingsChange,
+            )
         }
     }
+}
+
+@Composable
+private fun ReaderReadingModeSettingsPage(
+    mode: ReaderMode,
+    scale: ReaderScale,
+    settings: ChimahonReaderSettings,
+    onModeChange: (ReaderMode) -> Unit,
+    onScaleChange: (ReaderScale) -> Unit,
+    onSettingsChange: (ChimahonReaderSettings) -> Unit,
+) {
+    ReaderSheetSectionTitle("For this series")
+    ReaderOptionRow(
+        label = "Reading mode",
+        options = ReaderMode.entries.map { it.title },
+        selected = mode.title,
+        onSelect = { title ->
+            ReaderMode.entries.firstOrNull { it.title == title }?.let(onModeChange)
+        },
+    )
+    ReaderOptionRow(
+        label = "Orientation",
+        options = ChimahonReaderOrientation.entries.map { it.readerTitle() },
+        selected = settings.orientation.readerTitle(),
+        onSelect = { title ->
+            ChimahonReaderOrientation.entries
+                .firstOrNull { it.readerTitle() == title }
+                ?.let { onSettingsChange(settings.copy(orientation = it)) }
+        },
+    )
+
+    if (mode.paged) {
+        ReaderSheetSectionTitle("Pager viewer")
+        ReaderOptionRow(
+            label = "Navigation",
+            options = ChimahonReaderNavigationMode.entries.map { it.readerTitle() },
+            selected = settings.navigationMode.readerTitle(),
+            onSelect = { title ->
+                ChimahonReaderNavigationMode.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(navigationMode = it)) }
+            },
+        )
+        ReaderOptionRow(
+            label = "Invert taps",
+            options = ChimahonTapZoneInvert.entries.map { it.readerTitle() },
+            selected = settings.invertTapZones.readerTitle(),
+            onSelect = { title ->
+                ChimahonTapZoneInvert.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(invertTapZones = it)) }
+            },
+        )
+        ReaderOptionRow(
+            label = "Image scale",
+            options = ReaderScale.entries.map { it.title },
+            selected = scale.title,
+            onSelect = { title ->
+                ReaderScale.entries.firstOrNull { it.title == title }?.let(onScaleChange)
+            },
+        )
+        ReaderOptionRow(
+            label = "Zoom start",
+            options = ChimahonReaderZoomStart.entries.map { it.title },
+            selected = settings.pagedZoomStart.title,
+            onSelect = { title ->
+                ChimahonReaderZoomStart.entries
+                    .firstOrNull { it.title == title }
+                    ?.let { onSettingsChange(settings.copy(pagedZoomStart = it)) }
+            },
+        )
+        ReaderOptionRow(
+            label = "Page layout",
+            options = ChimahonDualPageMode.entries.map { it.readerTitle() },
+            selected = settings.dualPageMode.readerTitle(),
+            onSelect = { title ->
+                ChimahonDualPageMode.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(dualPageMode = it)) }
+            },
+        )
+        ReaderToggleRow(
+            label = "Smaller tap zones",
+            checked = settings.smallerTapZones,
+            onCheckedChange = { onSettingsChange(settings.copy(smallerTapZones = it)) },
+        )
+        ReaderToggleRow(
+            label = "Crop borders",
+            checked = settings.cropBorders,
+            onCheckedChange = { onSettingsChange(settings.copy(cropBorders = it)) },
+        )
+        ReaderToggleRow(
+            label = "Landscape zoom",
+            checked = settings.landscapeZoom,
+            onCheckedChange = { onSettingsChange(settings.copy(landscapeZoom = it)) },
+        )
+        if (settings.landscapeZoom) {
+            ReaderOptionRow(
+                label = "Wide zoom",
+                options = ChimahonReaderLandscapeZoomType.entries.map { it.title },
+                selected = settings.landscapeZoomType.title,
+                onSelect = { title ->
+                    ChimahonReaderLandscapeZoomType.entries
+                        .firstOrNull { it.title == title }
+                        ?.let { onSettingsChange(settings.copy(landscapeZoomType = it)) }
+                },
+            )
+        }
+        ReaderToggleRow(
+            label = "Navigate to pan",
+            checked = settings.navigateToPan,
+            onCheckedChange = { onSettingsChange(settings.copy(navigateToPan = it)) },
+        )
+        ReaderToggleRow(
+            label = "Dual page split",
+            checked = settings.splitWidePages,
+            onCheckedChange = { onSettingsChange(settings.copy(splitWidePages = it)) },
+        )
+        ReaderToggleRow(
+            label = "Invert double pages",
+            checked = settings.invertDoublePages,
+            onCheckedChange = { onSettingsChange(settings.copy(invertDoublePages = it)) },
+        )
+        ReaderToggleRow(
+            label = "Page transitions",
+            checked = settings.pageTransitions,
+            onCheckedChange = { onSettingsChange(settings.copy(pageTransitions = it)) },
+        )
+        ReaderToggleRow(
+            label = "Disable zoom in",
+            checked = settings.pagedDisableZoomIn,
+            onCheckedChange = { onSettingsChange(settings.copy(pagedDisableZoomIn = it)) },
+        )
+        if (!settings.pagedDisableZoomIn) {
+            ReaderToggleRow(
+                label = "Double tap zoom",
+                checked = settings.doubleTapToZoom,
+                onCheckedChange = { onSettingsChange(settings.copy(doubleTapToZoom = it)) },
+            )
+        }
+        ReaderValueStepperRow(
+            label = "Center margin",
+            value = "${settings.centerMarginDp} dp",
+            onDecrease = {
+                onSettingsChange(settings.copy(centerMarginDp = (settings.centerMarginDp - 2).coerceIn(0, 64)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(centerMarginDp = (settings.centerMarginDp + 2).coerceIn(0, 64)))
+            },
+        )
+    } else {
+        ReaderSheetSectionTitle("Webtoon viewer")
+        ReaderOptionRow(
+            label = "Navigation",
+            options = ChimahonReaderNavigationMode.entries.map { it.readerTitle() },
+            selected = settings.navigationMode.readerTitle(),
+            onSelect = { title ->
+                ChimahonReaderNavigationMode.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(navigationMode = it)) }
+            },
+        )
+        ReaderOptionRow(
+            label = "Invert taps",
+            options = ChimahonTapZoneInvert.entries.map { it.readerTitle() },
+            selected = settings.invertTapZones.readerTitle(),
+            onSelect = { title ->
+                ChimahonTapZoneInvert.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(invertTapZones = it)) }
+            },
+        )
+        ReaderOptionRow(
+            label = "Scale type",
+            options = ChimahonWebtoonScaleType.entries.map { it.title },
+            selected = settings.webtoonScaleType.title,
+            onSelect = { title ->
+                ChimahonWebtoonScaleType.entries
+                    .firstOrNull { it.title == title }
+                    ?.let { onSettingsChange(settings.copy(webtoonScaleType = it)) }
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Side padding",
+            value = "${settings.webtoonSidePaddingPercent}%",
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(
+                        webtoonSidePaddingPercent = (settings.webtoonSidePaddingPercent - 1).coerceIn(0, 25),
+                    ),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(
+                        webtoonSidePaddingPercent = (settings.webtoonSidePaddingPercent + 1).coerceIn(0, 25),
+                    ),
+                )
+            },
+        )
+        ReaderToggleRow(
+            label = "Smaller tap zones",
+            checked = settings.smallerTapZones,
+            onCheckedChange = { onSettingsChange(settings.copy(smallerTapZones = it)) },
+        )
+        ReaderToggleRow(
+            label = "Crop borders",
+            checked = settings.cropBorders,
+            onCheckedChange = { onSettingsChange(settings.copy(cropBorders = it)) },
+        )
+        ReaderToggleRow(
+            label = "Smooth scroll",
+            checked = settings.pageTransitions,
+            onCheckedChange = { onSettingsChange(settings.copy(pageTransitions = it)) },
+        )
+        ReaderToggleRow(
+            label = "Dual page split",
+            checked = settings.dualPageMode != ChimahonDualPageMode.Off,
+            onCheckedChange = {
+                onSettingsChange(
+                    settings.copy(
+                        dualPageMode = if (it) ChimahonDualPageMode.Automatic else ChimahonDualPageMode.Off,
+                    ),
+                )
+            },
+        )
+        if (settings.dualPageMode != ChimahonDualPageMode.Off) {
+            ReaderToggleRow(
+                label = "Dual page invert",
+                checked = settings.invertDoublePages,
+                onCheckedChange = { onSettingsChange(settings.copy(invertDoublePages = it)) },
+            )
+        }
+        ReaderToggleRow(
+            label = "Double tap zoom",
+            checked = settings.doubleTapToZoom,
+            onCheckedChange = { onSettingsChange(settings.copy(doubleTapToZoom = it)) },
+        )
+        ReaderToggleRow(
+            label = "Pinch to zoom",
+            checked = settings.webtoonPinchToZoom,
+            onCheckedChange = { onSettingsChange(settings.copy(webtoonPinchToZoom = it)) },
+        )
+        ReaderToggleRow(
+            label = "Disable zoom out",
+            checked = settings.webtoonDisableZoomOut,
+            onCheckedChange = { onSettingsChange(settings.copy(webtoonDisableZoomOut = it)) },
+        )
+        ReaderToggleRow(
+            label = "Long strip smart scale",
+            checked = settings.smartLongStripGapScale,
+            onCheckedChange = { onSettingsChange(settings.copy(smartLongStripGapScale = it)) },
+        )
+    }
+
+    ReaderSheetSectionTitle("Vertical+ viewer")
+    ReaderToggleRow(
+        label = "Tap scrolls by page",
+        checked = settings.continuousVerticalTappingByPage,
+        onCheckedChange = { onSettingsChange(settings.copy(continuousVerticalTappingByPage = it)) },
+    )
+}
+
+@Composable
+private fun ReaderGeneralSettingsPage(
+    canvas: ReaderCanvas,
+    settings: ChimahonReaderSettings,
+    onCanvasChange: (ReaderCanvas) -> Unit,
+    onSettingsChange: (ChimahonReaderSettings) -> Unit,
+) {
+    ReaderSheetSectionTitle("Reader theme")
+    ReaderThemeSwatchRow(
+        selected = canvas,
+        onSelect = onCanvasChange,
+    )
+    ReaderToggleRow(
+        label = "Pure black background",
+        checked = settings.pureBlackBackground,
+        onCheckedChange = { onSettingsChange(settings.copy(pureBlackBackground = it)) },
+    )
+    ReaderToggleRow(
+        label = "Show page number",
+        checked = settings.showPageNumber,
+        onCheckedChange = { onSettingsChange(settings.copy(showPageNumber = it)) },
+    )
+    ReaderToggleRow(
+        label = "Force horizontal seekbar",
+        checked = settings.forceHorizontalSeekbar,
+        onCheckedChange = { onSettingsChange(settings.copy(forceHorizontalSeekbar = it)) },
+    )
+    if (!settings.forceHorizontalSeekbar) {
+        ReaderToggleRow(
+            label = "Vertical seekbar in landscape",
+            checked = settings.landscapeVerticalSeekbar,
+            onCheckedChange = { onSettingsChange(settings.copy(landscapeVerticalSeekbar = it)) },
+        )
+        ReaderToggleRow(
+            label = "Left-handed vertical seekbar",
+            checked = settings.leftVerticalSeekbar,
+            onCheckedChange = { onSettingsChange(settings.copy(leftVerticalSeekbar = it)) },
+        )
+    }
+    ReaderToggleRow(
+        label = "Fullscreen",
+        checked = settings.fullscreen,
+        onCheckedChange = { onSettingsChange(settings.copy(fullscreen = it)) },
+    )
+    ReaderToggleRow(
+        label = "Draw under cutout",
+        checked = settings.drawUnderCutout,
+        onCheckedChange = { onSettingsChange(settings.copy(drawUnderCutout = it)) },
+    )
+    ReaderToggleRow(
+        label = "Keep screen on",
+        checked = settings.keepScreenOn,
+        onCheckedChange = { onSettingsChange(settings.copy(keepScreenOn = it)) },
+    )
+    ReaderToggleRow(
+        label = "Read with long tap",
+        checked = settings.readWithLongTap,
+        onCheckedChange = { onSettingsChange(settings.copy(readWithLongTap = it)) },
+    )
+    ReaderToggleRow(
+        label = "Show OCR outlines",
+        checked = settings.ocrOutlineVisible,
+        onCheckedChange = { onSettingsChange(settings.copy(ocrOutlineVisible = it)) },
+    )
+    ReaderToggleRow(
+        label = "Always show transition",
+        checked = settings.alwaysShowChapterTransition,
+        onCheckedChange = { onSettingsChange(settings.copy(alwaysShowChapterTransition = it)) },
+    )
+
+    ReaderSheetSectionTitle("Page flash")
+    ReaderToggleRow(
+        label = "Flash on page change",
+        checked = settings.flashOnPageChange,
+        onCheckedChange = { onSettingsChange(settings.copy(flashOnPageChange = it)) },
+    )
+    if (settings.flashOnPageChange) {
+        ReaderValueStepperRow(
+            label = "Flash duration",
+            value = "${settings.flashDurationMillis} ms",
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(flashDurationMillis = (settings.flashDurationMillis - 100).coerceIn(100, 1_500)),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(flashDurationMillis = (settings.flashDurationMillis + 100).coerceIn(100, 1_500)),
+                )
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Flash interval",
+            value = "${settings.flashPageInterval} page(s)",
+            onDecrease = {
+                onSettingsChange(settings.copy(flashPageInterval = (settings.flashPageInterval - 1).coerceIn(1, 10)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(flashPageInterval = (settings.flashPageInterval + 1).coerceIn(1, 10)))
+            },
+        )
+        ReaderOptionRow(
+            label = "Flash color",
+            options = ChimahonReaderFlashColor.entries.map { it.readerTitle() },
+            selected = settings.flashColor.readerTitle(),
+            onSelect = { title ->
+                ChimahonReaderFlashColor.entries
+                    .firstOrNull { it.readerTitle() == title }
+                    ?.let { onSettingsChange(settings.copy(flashColor = it)) }
+            },
+        )
+    }
+
+    ReaderSheetSectionTitle("Reader behavior")
+    ReaderToggleRow(
+        label = "Auto webtoon mode",
+        checked = settings.useAutoWebtoon,
+        onCheckedChange = { onSettingsChange(settings.copy(useAutoWebtoon = it)) },
+    )
+    ReaderToggleRow(
+        label = "Show controls on start",
+        checked = settings.keepControlsVisible,
+        onCheckedChange = { onSettingsChange(settings.copy(keepControlsVisible = it)) },
+    )
+    ReaderToggleRow(
+        label = "Show navigation overlay",
+        checked = settings.showNavigationOverlayOnStart,
+        onCheckedChange = { onSettingsChange(settings.copy(showNavigationOverlayOnStart = it)) },
+    )
+    ReaderToggleRow(
+        label = "Startup delay",
+        checked = settings.readerStartupDelay,
+        onCheckedChange = { onSettingsChange(settings.copy(readerStartupDelay = it)) },
+    )
+    ReaderToggleRow(
+        label = "Preserve position",
+        checked = settings.preserveReadingPosition,
+        onCheckedChange = { onSettingsChange(settings.copy(preserveReadingPosition = it)) },
+    )
+    ReaderToggleRow(
+        label = "Skip read chapters",
+        checked = settings.skipReadChapters,
+        onCheckedChange = { onSettingsChange(settings.copy(skipReadChapters = it)) },
+    )
+    ReaderToggleRow(
+        label = "Skip filtered chapters",
+        checked = settings.skipFilteredChapters,
+        onCheckedChange = { onSettingsChange(settings.copy(skipFilteredChapters = it)) },
+    )
+    ReaderToggleRow(
+        label = "Skip duplicate chapters",
+        checked = settings.skipDuplicateChapters,
+        onCheckedChange = { onSettingsChange(settings.copy(skipDuplicateChapters = it)) },
+    )
+
+    ReaderSheetSectionTitle("Desktop and hardware")
+    ReaderToggleRow(
+        label = "Tap zones",
+        checked = settings.tapZonesEnabled,
+        onCheckedChange = { onSettingsChange(settings.copy(tapZonesEnabled = it)) },
+    )
+    ReaderValueStepperRow(
+        label = "Tap zone size",
+        value = "${settings.tapZonePercent}%",
+        onDecrease = {
+            onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent - 1).coerceIn(0, 40)))
+        },
+        onIncrease = {
+            onSettingsChange(settings.copy(tapZonePercent = (settings.tapZonePercent + 1).coerceIn(0, 40)))
+        },
+    )
+    ReaderToggleRow(
+        label = "Swipe and wheel nav",
+        checked = settings.swipeNavigationEnabled,
+        onCheckedChange = { onSettingsChange(settings.copy(swipeNavigationEnabled = it)) },
+    )
+    ReaderToggleRow(
+        label = "Volume keys",
+        checked = settings.volumeKeysEnabled,
+        onCheckedChange = { onSettingsChange(settings.copy(volumeKeysEnabled = it)) },
+    )
+    ReaderToggleRow(
+        label = "Invert volume keys",
+        checked = settings.volumeKeysInverted,
+        onCheckedChange = { onSettingsChange(settings.copy(volumeKeysInverted = it)) },
+    )
+    ReaderToggleRow(
+        label = "Long tap controls",
+        checked = settings.longTapEnabled,
+        onCheckedChange = { onSettingsChange(settings.copy(longTapEnabled = it)) },
+    )
+
+    ReaderSheetSectionTitle("Bottom buttons")
+    readerBottomButtonOptions().forEach { option ->
+        ReaderToggleRow(
+            label = option.title,
+            checked = option.isEnabledIn(settings.bottomButtons),
+            onCheckedChange = { checked ->
+                val updatedButtons = if (checked) {
+                    (option.removeFrom(settings.bottomButtons) + option.key).distinct()
+                } else {
+                    option.removeFrom(settings.bottomButtons)
+                }
+                onSettingsChange(settings.copy(bottomButtons = updatedButtons))
+            },
+        )
+    }
+
+    ReaderSheetSectionTitle("Page loading")
+    ReaderValueStepperRow(
+        label = "Preload pages",
+        value = settings.preloadSize.toString(),
+        onDecrease = {
+            onSettingsChange(settings.copy(preloadSize = (settings.preloadSize - 1).coerceIn(1, 20)))
+        },
+        onIncrease = {
+            onSettingsChange(settings.copy(preloadSize = (settings.preloadSize + 1).coerceIn(1, 20)))
+        },
+    )
+    ReaderValueStepperRow(
+        label = "Reader threads",
+        value = settings.readerThreads.toString(),
+        onDecrease = {
+            onSettingsChange(settings.copy(readerThreads = (settings.readerThreads - 1).coerceIn(1, 5)))
+        },
+        onIncrease = {
+            onSettingsChange(settings.copy(readerThreads = (settings.readerThreads + 1).coerceIn(1, 5)))
+        },
+    )
+    ReaderValueStepperRow(
+        label = "Cache size",
+        value = "${settings.readerCacheSizeMb} MB",
+        onDecrease = {
+            onSettingsChange(settings.copy(readerCacheSizeMb = (settings.readerCacheSizeMb - 50).coerceIn(50, 2_000)))
+        },
+        onIncrease = {
+            onSettingsChange(settings.copy(readerCacheSizeMb = (settings.readerCacheSizeMb + 50).coerceIn(50, 2_000)))
+        },
+    )
+    ReaderToggleRow(
+        label = "Aggressive loading",
+        checked = settings.aggressivePageLoading,
+        onCheckedChange = { onSettingsChange(settings.copy(aggressivePageLoading = it)) },
+    )
+    ReaderToggleRow(
+        label = "Folder per manga",
+        checked = settings.folderPerManga,
+        onCheckedChange = { onSettingsChange(settings.copy(folderPerManga = it)) },
+    )
+}
+
+@Composable
+private fun ReaderColorFilterSettingsPage(
+    settings: ChimahonReaderSettings,
+    onSettingsChange: (ChimahonReaderSettings) -> Unit,
+) {
+    ReaderSheetSectionTitle("Custom brightness")
+    ReaderToggleRow(
+        label = "Custom brightness",
+        checked = settings.customBrightnessEnabled,
+        onCheckedChange = { onSettingsChange(settings.copy(customBrightnessEnabled = it)) },
+    )
+    if (settings.customBrightnessEnabled) {
+        ReaderValueStepperRow(
+            label = "Brightness",
+            value = settings.customBrightnessValue.toString(),
+            onDecrease = {
+                onSettingsChange(
+                    settings.copy(customBrightnessValue = (settings.customBrightnessValue - 5).coerceIn(-75, 100)),
+                )
+            },
+            onIncrease = {
+                onSettingsChange(
+                    settings.copy(customBrightnessValue = (settings.customBrightnessValue + 5).coerceIn(-75, 100)),
+                )
+            },
+        )
+    }
+
+    ReaderSheetSectionTitle("Custom color filter")
+    ReaderToggleRow(
+        label = "Color filter",
+        checked = settings.colorFilterEnabled,
+        onCheckedChange = { enabled ->
+            onSettingsChange(
+                settings.copy(
+                    colorFilterEnabled = enabled,
+                    colorFilterValue = if (enabled && settings.colorFilterValue == 0) {
+                        0x66000000
+                    } else {
+                        settings.colorFilterValue
+                    },
+                ),
+            )
+        },
+    )
+    if (settings.colorFilterEnabled) {
+        ReaderColorPreview(settings)
+        ReaderValueStepperRow(
+            label = "Red",
+            value = settings.colorFilterValue.colorComponent(16).toString(),
+            onDecrease = {
+                onSettingsChange(settings.copy(colorFilterValue = settings.colorFilterValue.withColorComponent(16, -8)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(colorFilterValue = settings.colorFilterValue.withColorComponent(16, 8)))
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Green",
+            value = settings.colorFilterValue.colorComponent(8).toString(),
+            onDecrease = {
+                onSettingsChange(settings.copy(colorFilterValue = settings.colorFilterValue.withColorComponent(8, -8)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(colorFilterValue = settings.colorFilterValue.withColorComponent(8, 8)))
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Blue",
+            value = settings.colorFilterValue.colorComponent(0).toString(),
+            onDecrease = {
+                onSettingsChange(settings.copy(colorFilterValue = settings.colorFilterValue.withColorComponent(0, -8)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(colorFilterValue = settings.colorFilterValue.withColorComponent(0, 8)))
+            },
+        )
+        ReaderValueStepperRow(
+            label = "Alpha",
+            value = settings.colorFilterValue.colorComponent(24).toString(),
+            onDecrease = {
+                onSettingsChange(settings.copy(colorFilterValue = settings.colorFilterValue.withColorComponent(24, -8)))
+            },
+            onIncrease = {
+                onSettingsChange(settings.copy(colorFilterValue = settings.colorFilterValue.withColorComponent(24, 8)))
+            },
+        )
+        ReaderOptionRow(
+            label = "Blend mode",
+            options = ChimahonReaderColorFilterMode.entries.map { it.title },
+            selected = settings.colorFilterMode.title,
+            onSelect = { title ->
+                ChimahonReaderColorFilterMode.entries
+                    .firstOrNull { it.title == title }
+                    ?.let { onSettingsChange(settings.copy(colorFilterMode = it)) }
+            },
+        )
+    }
+
+    ReaderSheetSectionTitle("Display effects")
+    ReaderToggleRow(
+        label = "Grayscale",
+        checked = settings.grayscale,
+        onCheckedChange = { onSettingsChange(settings.copy(grayscale = it)) },
+    )
+    ReaderToggleRow(
+        label = "Invert colors",
+        checked = settings.invertColors,
+        onCheckedChange = { onSettingsChange(settings.copy(invertColors = it)) },
+    )
 }
 
 @Composable
@@ -11086,6 +11336,63 @@ private fun ReaderSettingsTabRow(
             }
         }
     }
+}
+
+@Composable
+private fun ReaderColorPreview(settings: ChimahonReaderSettings) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(ReaderPalette.control.copy(alpha = 0.36f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(settings.colorFilterValue)),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Label(
+                text = settings.colorFilterMode.title,
+                color = Color.White.copy(alpha = 0.88f),
+                size = 12,
+                weight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Label(
+                text = "R ${settings.colorFilterValue.colorComponent(16)}  " +
+                    "G ${settings.colorFilterValue.colorComponent(8)}  " +
+                    "B ${settings.colorFilterValue.colorComponent(0)}  " +
+                    "A ${settings.colorFilterValue.colorComponent(24)}",
+                color = ReaderPalette.secondaryText,
+                size = 10,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+private fun Int.colorComponent(shift: Int): Int = (this ushr shift) and 0xFF
+
+private fun Int.withColorComponent(shift: Int, delta: Int): Int {
+    val next = (colorComponent(shift) + delta).coerceIn(0, 255)
+    return withColorComponentValue(shift, next)
+}
+
+private fun Int.withColorComponentValue(shift: Int, value: Int): Int {
+    val next = value.coerceIn(0, 255)
+    val mask = 0xFF shl shift
+    return (this and mask.inv()) or (next shl shift)
+}
+
+private fun readerColorChannelOptions(): List<String> {
+    return listOf("0", "32", "64", "96", "128", "160", "192", "224", "255")
 }
 
 private fun ChimahonTapZoneInvert.readerTitle(): String = when (this) {
@@ -11381,6 +11688,12 @@ private fun ChimahonLibraryDisplayMode.animeDisplayTitle(): String = when (this)
     ChimahonLibraryDisplayMode.CompactGrid -> "Compact grid"
     ChimahonLibraryDisplayMode.CoverOnlyGrid -> "Cover-only grid"
     ChimahonLibraryDisplayMode.List -> "List"
+}
+
+private fun ChimahonLibraryDisplayMode.nextAnimeDisplayMode(): ChimahonLibraryDisplayMode {
+    val modes = animeLibraryDisplayModes()
+    val index = modes.indexOf(this).takeIf { it >= 0 } ?: 0
+    return modes[(index + 1) % modes.size]
 }
 
 private fun Int.toColumnTitle(): String = if (this <= 0) "Automatic" else toString()
@@ -13039,6 +13352,14 @@ private fun ReaderPageImage(
                             .background(overlay),
                     )
                 }
+                if (readerSettings.colorFilterEnabled) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        drawRect(
+                            color = Color(readerSettings.colorFilterValue),
+                            blendMode = readerSettings.colorFilterMode.toBlendMode(),
+                        )
+                    }
+                }
             }
         }
     }
@@ -13140,7 +13461,6 @@ private fun ReaderSplitWidePageImage(
 }
 
 private fun ChimahonReaderSettings.readerColorFilter(): ColorFilter? {
-    if (!colorFilterEnabled) return null
     return when {
         invertColors -> ColorFilter.colorMatrix(
             ColorMatrix(
@@ -13158,13 +13478,28 @@ private fun ChimahonReaderSettings.readerColorFilter(): ColorFilter? {
 }
 
 private fun ChimahonReaderSettings.readerBrightnessOverlay(): Color? {
-    if (!colorFilterEnabled || brightness == 0) return null
-    val alpha = (kotlin.math.abs(brightness).coerceAtMost(100) / 100f) * 0.42f
-    return if (brightness > 0) {
+    val brightnessValue = when {
+        customBrightnessEnabled -> customBrightnessValue
+        colorFilterEnabled && brightness != 0 -> brightness
+        else -> 0
+    }
+    if (brightnessValue == 0) return null
+    val alpha = (kotlin.math.abs(brightnessValue).coerceAtMost(100) / 100f) *
+        if (brightnessValue < 0) 0.75f else 0.42f
+    return if (brightnessValue > 0) {
         Color.White.copy(alpha = alpha)
     } else {
         Color.Black.copy(alpha = alpha)
     }
+}
+
+private fun ChimahonReaderColorFilterMode.toBlendMode(): BlendMode = when (this) {
+    ChimahonReaderColorFilterMode.Default -> BlendMode.SrcOver
+    ChimahonReaderColorFilterMode.Multiply -> BlendMode.Modulate
+    ChimahonReaderColorFilterMode.Screen -> BlendMode.Screen
+    ChimahonReaderColorFilterMode.Overlay -> BlendMode.Overlay
+    ChimahonReaderColorFilterMode.Lighten -> BlendMode.Lighten
+    ChimahonReaderColorFilterMode.Darken -> BlendMode.Darken
 }
 
 @Composable
@@ -15950,8 +16285,8 @@ private fun MangaDetailHome(
 
     val chapters = snapshot.chaptersByMangaId[mangaId].orEmpty()
     var selectedChapterFilter by remember(mangaId) { mutableStateOf(ChapterFilter.All) }
-    var selectedChapterSort by remember(mangaId) { mutableStateOf(ChapterSort.ChapterNumber) }
-    var chapterDescending by remember(mangaId) { mutableStateOf(true) }
+    var selectedChapterSort by remember(mangaId) { mutableStateOf(ChapterSort.SourceOrder) }
+    var chapterDescending by remember(mangaId) { mutableStateOf(false) }
     var chapterFiltersVisible by remember(mangaId) { mutableStateOf(false) }
     var chapterQuery by remember(mangaId) { mutableStateOf("") }
     val selectedChapterIds = remember(mangaId) { mutableStateMapOf<Long, Boolean>() }
@@ -15972,8 +16307,8 @@ private fun MangaDetailHome(
     }
     val clearChapterFilters: () -> Unit = {
         selectedChapterFilter = ChapterFilter.All
-        selectedChapterSort = ChapterSort.ChapterNumber
-        chapterDescending = true
+        selectedChapterSort = ChapterSort.SourceOrder
+        chapterDescending = false
         chapterQuery = ""
     }
     val visibleChapters = chapters
@@ -17461,7 +17796,7 @@ private fun ChapterFilterPanel(
                     maxLines = 1,
                 )
             }
-            if (selectedFilter != ChapterFilter.All || selectedSort != ChapterSort.ChapterNumber || !descending || query.isNotBlank()) {
+            if (selectedFilter != ChapterFilter.All || selectedSort != ChapterSort.SourceOrder || descending || query.isNotBlank()) {
                 TextButtonLike("Reset", onClick = onClearFilters)
             }
         }
@@ -20482,14 +20817,130 @@ private fun MoreDetailPage(
                     item { ListGroupHeader("Color filter") }
                     item {
                         PreferenceSwitchRow(
-                            "Enable color filter",
-                            "Apply reader-level color adjustments",
-                            UiIcon.Filter,
-                            checked = settings.reader.colorFilterEnabled,
+                            "Custom brightness",
+                            "Apply the Android reader brightness overlay behavior",
+                            UiIcon.VisibilityOff,
+                            checked = settings.reader.customBrightnessEnabled,
                             onCheckedChange = {
-                                onReaderSettingsChange(settings.reader.copy(colorFilterEnabled = it))
+                                onReaderSettingsChange(settings.reader.copy(customBrightnessEnabled = it))
                             },
                         )
+                    }
+                    if (settings.reader.customBrightnessEnabled) {
+                        item {
+                            SettingsChoiceRow(
+                                title = "Brightness value",
+                                options = listOf("-75", "-50", "-25", "0", "25", "50", "75", "100"),
+                                selected = settings.reader.customBrightnessValue.toString(),
+                                onSelect = { selected ->
+                                    selected.toIntOrNull()?.let {
+                                        onReaderSettingsChange(settings.reader.copy(customBrightnessValue = it))
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Custom color filter",
+                            "Apply a reader color overlay with a selectable blend mode",
+                            UiIcon.Filter,
+                            checked = settings.reader.colorFilterEnabled,
+                            onCheckedChange = { enabled ->
+                                onReaderSettingsChange(
+                                    settings.reader.copy(
+                                        colorFilterEnabled = enabled,
+                                        colorFilterValue = if (enabled && settings.reader.colorFilterValue == 0) {
+                                            0x66000000
+                                        } else {
+                                            settings.reader.colorFilterValue
+                                        },
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    if (settings.reader.colorFilterEnabled) {
+                        item {
+                            SettingsChoiceRow(
+                                title = "Blend mode",
+                                options = ChimahonReaderColorFilterMode.entries.map { it.title },
+                                selected = settings.reader.colorFilterMode.title,
+                                onSelect = { selected ->
+                                    ChimahonReaderColorFilterMode.entries.firstOrNull { it.title == selected }?.let {
+                                        onReaderSettingsChange(settings.reader.copy(colorFilterMode = it))
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            SettingsChoiceRow(
+                                title = "Red",
+                                options = readerColorChannelOptions(),
+                                selected = settings.reader.colorFilterValue.colorComponent(16).toString(),
+                                onSelect = { selected ->
+                                    selected.toIntOrNull()?.let {
+                                        onReaderSettingsChange(
+                                            settings.reader.copy(
+                                                colorFilterValue =
+                                                    settings.reader.colorFilterValue.withColorComponentValue(16, it),
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            SettingsChoiceRow(
+                                title = "Green",
+                                options = readerColorChannelOptions(),
+                                selected = settings.reader.colorFilterValue.colorComponent(8).toString(),
+                                onSelect = { selected ->
+                                    selected.toIntOrNull()?.let {
+                                        onReaderSettingsChange(
+                                            settings.reader.copy(
+                                                colorFilterValue =
+                                                    settings.reader.colorFilterValue.withColorComponentValue(8, it),
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            SettingsChoiceRow(
+                                title = "Blue",
+                                options = readerColorChannelOptions(),
+                                selected = settings.reader.colorFilterValue.colorComponent(0).toString(),
+                                onSelect = { selected ->
+                                    selected.toIntOrNull()?.let {
+                                        onReaderSettingsChange(
+                                            settings.reader.copy(
+                                                colorFilterValue =
+                                                    settings.reader.colorFilterValue.withColorComponentValue(0, it),
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        item {
+                            SettingsChoiceRow(
+                                title = "Alpha",
+                                options = readerColorChannelOptions(),
+                                selected = settings.reader.colorFilterValue.colorComponent(24).toString(),
+                                onSelect = { selected ->
+                                    selected.toIntOrNull()?.let {
+                                        onReaderSettingsChange(
+                                            settings.reader.copy(
+                                                colorFilterValue =
+                                                    settings.reader.colorFilterValue.withColorComponentValue(24, it),
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
+                        }
                     }
                     item {
                         PreferenceSwitchRow(
@@ -20510,18 +20961,6 @@ private fun MoreDetailPage(
                             checked = settings.reader.invertColors,
                             onCheckedChange = {
                                 onReaderSettingsChange(settings.reader.copy(invertColors = it))
-                            },
-                        )
-                    }
-                    item {
-                        SettingsChoiceRow(
-                            title = "Brightness",
-                            options = listOf("-50", "-25", "0", "25", "50"),
-                            selected = settings.reader.brightness.toString(),
-                            onSelect = { selected ->
-                                selected.toIntOrNull()?.let {
-                                    onReaderSettingsChange(settings.reader.copy(brightness = it))
-                                }
                             },
                         )
                     }
@@ -26323,11 +26762,7 @@ private fun chapterSortDirectionTitle(sort: ChapterSort, descending: Boolean): S
 }
 
 private fun List<ChimahonRemoteChapterEntry>.remoteStartReadingOrder(): List<ChimahonRemoteChapterEntry> {
-    return if (any { it.chapterNumber > 0.0 }) {
-        sortedForRemoteDetail(sort = ChapterSort.ChapterNumber, descending = false)
-    } else {
-        sortedForRemoteDetail(sort = ChapterSort.SourceOrder, descending = false)
-    }
+    return sortedForRemoteDetail(sort = ChapterSort.SourceOrder, descending = false)
 }
 
 private fun ChimahonChapterEntry.chapterMarker(): String {

@@ -8,18 +8,18 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.ProgressListener
 import eu.kanade.tachiyomi.network.asObservableSuccess
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
+import eu.kanade.tachiyomi.source.online.SourceNetworkContext
+import eu.kanade.tachiyomi.source.online.sourceNetworkContext
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import rx.Observable
 import tachiyomi.core.common.util.lang.awaitSingle
-import uy.kohesive.injekt.injectLazy
 import java.net.URI
 import java.net.URISyntaxException
 import java.security.MessageDigest
@@ -27,7 +27,9 @@ import java.security.MessageDigest
 @Suppress("unused")
 abstract class AnimeHttpSource : AnimeCatalogueSource {
 
-    protected val network: NetworkHelper by injectLazy()
+    protected val network: SourceNetworkContext by lazy {
+        sourceNetworkContext { null }
+    }
 
     abstract val baseUrl: String
 
