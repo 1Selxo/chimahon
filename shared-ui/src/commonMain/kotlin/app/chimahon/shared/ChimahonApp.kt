@@ -360,6 +360,11 @@ private enum class ChapterSort(val title: String) {
     Scanlator("Scanlator"),
 }
 
+private enum class ChapterDisplayMode(val title: String) {
+    SourceTitle("Source title"),
+    ChapterNumber("Chapter number"),
+}
+
 private data class ChapterListSummary(
     val readCount: Int,
     val unreadCount: Int,
@@ -7512,10 +7517,19 @@ private fun RemoteMangaDetailContent(
     onOpenRemoteMangaUrl: (ChimahonRemoteMangaDetail) -> Boolean,
     onAddToLibrary: suspend (ChimahonRemoteMangaDetail) -> Unit,
 ) {
-    var chapterDescending by remember(detail.sourceId, detail.url) { mutableStateOf(false) }
+    var chapterDescending by remember(detail.sourceId, detail.url) { mutableStateOf(true) }
     var chapterSort by remember(detail.sourceId, detail.url) { mutableStateOf(ChapterSort.SourceOrder) }
     var chapterFiltersVisible by remember(detail.sourceId, detail.url) { mutableStateOf(false) }
     var chapterQuery by remember(detail.sourceId, detail.url) { mutableStateOf("") }
+    val updateRemoteChapterSort: (ChapterSort) -> Unit = { sort ->
+        val nextDescending = if (sort == chapterSort) {
+            !chapterDescending
+        } else {
+            sort.defaultPersistedDescending()
+        }
+        chapterSort = sort
+        chapterDescending = nextDescending
+    }
     val searchedChapters = detail.chapters.filter { it.matchesRemoteChapterQuery(chapterQuery) }
     val visibleChapters = searchedChapters.sortedForRemoteDetail(
         sort = chapterSort,
@@ -7564,7 +7578,7 @@ private fun RemoteMangaDetailContent(
                     query = chapterQuery,
                     onToggleFilters = { chapterFiltersVisible = !chapterFiltersVisible },
                     onQueryChange = { chapterQuery = it },
-                    onSortChange = { chapterSort = it },
+                    onSortChange = updateRemoteChapterSort,
                     onSortDirectionChange = { chapterDescending = it },
                     onOpenReader = onOpenReader,
                     modifier = Modifier
@@ -7620,7 +7634,7 @@ private fun RemoteMangaDetailContent(
                             descending = chapterDescending,
                             query = chapterQuery,
                             onQueryChange = { chapterQuery = it },
-                            onSortChange = { chapterSort = it },
+                            onSortChange = updateRemoteChapterSort,
                             onSortDirectionChange = { chapterDescending = it },
                         )
                     }
@@ -16781,6 +16795,9 @@ private fun MangaDetailHome(
     }
 
     val chapters = snapshot.chaptersByMangaId[mangaId].orEmpty()
+    var currentChapterFlags by remember(mangaId, manga.chapterFlags) {
+        mutableStateOf(manga.chapterFlags)
+    }
     var selectedChapterFilter by remember(mangaId, manga.chapterFlags) {
         mutableStateOf(manga.defaultChapterFilter())
     }
@@ -16789,6 +16806,9 @@ private fun MangaDetailHome(
     }
     var chapterDescending by remember(mangaId, manga.chapterFlags) {
         mutableStateOf(manga.chapterSortDescending())
+    }
+    var selectedChapterDisplayMode by remember(mangaId, manga.chapterFlags) {
+        mutableStateOf(manga.defaultChapterDisplayMode())
     }
     var chapterFiltersVisible by remember(mangaId) { mutableStateOf(false) }
     var chapterQuery by remember(mangaId) { mutableStateOf("") }
@@ -16806,13 +16826,14 @@ private fun MangaDetailHome(
         chapters.toChapterListSummary(chapterDownloadStatuses)
     }
     val persistChapterFlags: (Long) -> Unit = { flags ->
+        currentChapterFlags = flags
         scope.launch {
             runCatching { onSetMangaChapterFlags(manga.id, flags) }
         }
     }
     val updateChapterFilter: (ChapterFilter) -> Unit = { filter ->
         selectedChapterFilter = filter
-        filter.toPersistedChapterFlags(manga.chapterFlags)?.let(persistChapterFlags)
+        filter.toPersistedChapterFlags(currentChapterFlags)?.let(persistChapterFlags)
     }
     val updateChapterSort: (ChapterSort) -> Unit = { sort ->
         val nextDescending = if (sort == selectedChapterSort) {
@@ -16824,7 +16845,7 @@ private fun MangaDetailHome(
         chapterDescending = nextDescending
         sort.toChapterSortingFlag()?.let { sortingFlag ->
             persistChapterFlags(
-                manga.chapterFlags
+                currentChapterFlags
                     .withChimahonFlag(sortingFlag, CHIMAHON_CHAPTER_SORTING_MASK)
                     .withChimahonFlag(nextDescending.toChapterSortDirectionFlag(), CHIMAHON_CHAPTER_SORT_DIR_MASK),
             )
@@ -16834,12 +16855,21 @@ private fun MangaDetailHome(
         chapterDescending = descending
         if (selectedChapterSort.toChapterSortingFlag() != null) {
             persistChapterFlags(
-                manga.chapterFlags.withChimahonFlag(
+                currentChapterFlags.withChimahonFlag(
                     descending.toChapterSortDirectionFlag(),
                     CHIMAHON_CHAPTER_SORT_DIR_MASK,
                 ),
             )
         }
+    }
+    val updateChapterDisplayMode: (ChapterDisplayMode) -> Unit = { displayMode ->
+        selectedChapterDisplayMode = displayMode
+        persistChapterFlags(
+            currentChapterFlags.withChimahonFlag(
+                displayMode.toChapterDisplayFlag(),
+                CHIMAHON_CHAPTER_DISPLAY_MASK,
+            ),
+        )
     }
     val clearChapterFilters: () -> Unit = {
         selectedChapterFilter = ChapterFilter.All
@@ -16847,7 +16877,7 @@ private fun MangaDetailHome(
         chapterDescending = manga.chapterSortDescending()
         chapterQuery = ""
         persistChapterFlags(
-            manga.chapterFlags
+            currentChapterFlags
                 .withChimahonFlag(0L, CHIMAHON_CHAPTER_UNREAD_MASK)
                 .withChimahonFlag(0L, CHIMAHON_CHAPTER_BOOKMARKED_MASK)
                 .withChimahonFlag(0L, CHIMAHON_CHAPTER_DOWNLOADED_MASK),
@@ -16955,6 +16985,7 @@ private fun MangaDetailHome(
                     manga = manga,
                     selectedFilter = selectedChapterFilter,
                     selectedSort = selectedChapterSort,
+                    selectedDisplayMode = selectedChapterDisplayMode,
                     descending = chapterDescending,
                     summary = chapterListSummary,
                     filtersVisible = chapterFiltersVisible,
@@ -16963,6 +16994,7 @@ private fun MangaDetailHome(
                     onQueryChange = { chapterQuery = it },
                     onFilterChange = updateChapterFilter,
                     onSortChange = updateChapterSort,
+                    onDisplayModeChange = updateChapterDisplayMode,
                     onSortDirectionChange = updateChapterSortDirection,
                     onDownloadVisible = downloadVisibleChapters,
                     onClearFilters = clearChapterFilters,
@@ -17107,6 +17139,7 @@ private fun MangaDetailHome(
                         summary = chapterListSummary,
                         selectedFilter = selectedChapterFilter,
                         selectedSort = selectedChapterSort,
+                        selectedDisplayMode = selectedChapterDisplayMode,
                         descending = chapterDescending,
                         query = chapterQuery,
                         filtersVisible = chapterFiltersVisible,
@@ -17121,12 +17154,14 @@ private fun MangaDetailHome(
                         ChapterFilterPanel(
                             selectedFilter = selectedChapterFilter,
                             selectedSort = selectedChapterSort,
+                            selectedDisplayMode = selectedChapterDisplayMode,
                             descending = chapterDescending,
                             summary = chapterListSummary,
                             query = chapterQuery,
                             onQueryChange = { chapterQuery = it },
                             onFilterChange = updateChapterFilter,
                             onSortChange = updateChapterSort,
+                            onDisplayModeChange = updateChapterDisplayMode,
                             onSortDirectionChange = updateChapterSortDirection,
                             onClearFilters = clearChapterFilters,
                         )
@@ -17146,6 +17181,7 @@ private fun MangaDetailHome(
                     items(visibleChapters, key = { it.id }) { chapter ->
                         MangaChapterListItem(
                             chapter = chapter,
+                            displayMode = selectedChapterDisplayMode,
                             selected = selectedChapterIds[chapter.id] == true,
                             selectionActive = selectedChapterCount > 0,
                             onToggleSelected = {
@@ -17243,6 +17279,7 @@ private fun MangaChapterPane(
     manga: ChimahonMangaEntry,
     selectedFilter: ChapterFilter,
     selectedSort: ChapterSort,
+    selectedDisplayMode: ChapterDisplayMode,
     descending: Boolean,
     summary: ChapterListSummary,
     filtersVisible: Boolean,
@@ -17251,6 +17288,7 @@ private fun MangaChapterPane(
     onQueryChange: (String) -> Unit,
     onFilterChange: (ChapterFilter) -> Unit,
     onSortChange: (ChapterSort) -> Unit,
+    onDisplayModeChange: (ChapterDisplayMode) -> Unit,
     onSortDirectionChange: (Boolean) -> Unit,
     onDownloadVisible: () -> Unit,
     onClearFilters: () -> Unit,
@@ -17289,6 +17327,7 @@ private fun MangaChapterPane(
                     summary = summary,
                     selectedFilter = selectedFilter,
                     selectedSort = selectedSort,
+                    selectedDisplayMode = selectedDisplayMode,
                     descending = descending,
                     query = query,
                     filtersVisible = filtersVisible,
@@ -17302,12 +17341,14 @@ private fun MangaChapterPane(
                     ChapterFilterPanel(
                         selectedFilter = selectedFilter,
                         selectedSort = selectedSort,
+                        selectedDisplayMode = selectedDisplayMode,
                         descending = descending,
                         summary = summary,
                         query = query,
                         onQueryChange = onQueryChange,
                         onFilterChange = onFilterChange,
                         onSortChange = onSortChange,
+                        onDisplayModeChange = onDisplayModeChange,
                         onSortDirectionChange = onSortDirectionChange,
                         onClearFilters = onClearFilters,
                     )
@@ -17327,6 +17368,7 @@ private fun MangaChapterPane(
                 items(chapters, key = { it.id }) { chapter ->
                     MangaChapterListItem(
                         chapter = chapter,
+                        displayMode = selectedDisplayMode,
                         selected = chapter.id in selectedChapterIds,
                         selectionActive = selectedCount > 0,
                         onToggleSelected = { onToggleChapterSelected(chapter.id) },
@@ -18160,6 +18202,7 @@ private fun ChapterHeader(
     summary: ChapterListSummary,
     selectedFilter: ChapterFilter,
     selectedSort: ChapterSort,
+    selectedDisplayMode: ChapterDisplayMode,
     descending: Boolean,
     query: String,
     filtersVisible: Boolean,
@@ -18230,6 +18273,7 @@ private fun ChapterHeader(
             summary.downloadedCount.takeIf { it > 0 }?.let { "$it downloaded" to false },
             selectedFilter.takeIf { it != ChapterFilter.All }?.title?.let { it to true },
             selectedSort.title.takeIf { selectedSort != ChapterSort.ChapterNumber }?.let { it to true },
+            selectedDisplayMode.takeIf { it != ChapterDisplayMode.SourceTitle }?.title?.let { it to true },
             query.takeIf { it.isNotBlank() }?.let { "Search" to true },
             selectedCount.takeIf { it > 0 }?.let { "$it selected" to true },
         )
@@ -18297,12 +18341,14 @@ private fun ChapterHeaderAction(
 private fun ChapterFilterPanel(
     selectedFilter: ChapterFilter,
     selectedSort: ChapterSort,
+    selectedDisplayMode: ChapterDisplayMode,
     descending: Boolean,
     summary: ChapterListSummary,
     query: String,
     onQueryChange: (String) -> Unit,
     onFilterChange: (ChapterFilter) -> Unit,
     onSortChange: (ChapterSort) -> Unit,
+    onDisplayModeChange: (ChapterDisplayMode) -> Unit,
     onSortDirectionChange: (Boolean) -> Unit,
     onClearFilters: () -> Unit,
 ) {
@@ -18409,6 +18455,18 @@ private fun ChapterFilterPanel(
             modifier = Modifier.padding(vertical = 2.dp),
         )
         FilterPanelLabel(
+            "Display",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp, bottom = 4.dp),
+        )
+        SegmentTabs(
+            values = ChapterDisplayMode.entries.toList(),
+            selected = selectedDisplayMode,
+            label = { it.title },
+            onSelect = onDisplayModeChange,
+        )
+        FilterPanelLabel(
             "Direction",
             modifier = Modifier
                 .fillMaxWidth()
@@ -18427,6 +18485,7 @@ private fun ChapterFilterPanel(
 @Composable
 private fun MangaChapterListItem(
     chapter: ChimahonChapterEntry,
+    displayMode: ChapterDisplayMode,
     selected: Boolean,
     selectionActive: Boolean,
     onToggleSelected: () -> Unit,
@@ -18446,7 +18505,14 @@ private fun MangaChapterListItem(
         chapter.read -> ChimahonPalette.secondaryText
         else -> ChimahonPalette.onSurface
     }
-    val metadata = chapter.chapterDetailMetadata(downloadStatus)
+    val title = chapter.chapterDisplayTitle(displayMode)
+    val metadata = chapter.chapterDetailMetadata(
+        downloadStatus = downloadStatus,
+        showChapterNumber = displayMode == ChapterDisplayMode.SourceTitle,
+        sourceTitle = chapter.name.takeIf {
+            displayMode == ChapterDisplayMode.ChapterNumber && it.isNotBlank() && it != title
+        },
+    )
     val statePills = listOfNotNull(
         "Read".takeIf { chapter.read },
         "Unread".takeIf { !chapter.read && chapter.lastPageRead <= 0L },
@@ -18554,7 +18620,7 @@ private fun MangaChapterListItem(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Label(
-                        chapter.name.ifBlank { "Chapter ${chapter.chapterMarker()}" },
+                        title,
                         titleColor,
                         13,
                         weight = if (chapter.read) FontWeight.Normal else FontWeight.SemiBold,
@@ -28120,6 +28186,13 @@ private fun ChimahonMangaEntry.defaultChapterFilter(): ChapterFilter {
     }
 }
 
+private fun ChimahonMangaEntry.defaultChapterDisplayMode(): ChapterDisplayMode {
+    return when (chapterFlags and CHIMAHON_CHAPTER_DISPLAY_MASK) {
+        CHIMAHON_CHAPTER_DISPLAY_NUMBER -> ChapterDisplayMode.ChapterNumber
+        else -> ChapterDisplayMode.SourceTitle
+    }
+}
+
 private fun ChapterFilter.toPersistedChapterFlags(currentFlags: Long): Long? {
     return when (this) {
         ChapterFilter.All -> currentFlags
@@ -28160,6 +28233,13 @@ private fun ChapterSort.toChapterSortingFlag(): Long? {
     }
 }
 
+private fun ChapterDisplayMode.toChapterDisplayFlag(): Long {
+    return when (this) {
+        ChapterDisplayMode.SourceTitle -> CHIMAHON_CHAPTER_DISPLAY_NAME
+        ChapterDisplayMode.ChapterNumber -> CHIMAHON_CHAPTER_DISPLAY_NUMBER
+    }
+}
+
 private fun ChapterSort.defaultPersistedDescending(): Boolean = false
 
 private fun Boolean.toChapterSortDirectionFlag(): Long {
@@ -28189,6 +28269,14 @@ private fun ChimahonChapterEntry.chapterMarker(): String {
     }
 }
 
+private fun ChimahonChapterEntry.chapterDisplayTitle(displayMode: ChapterDisplayMode): String {
+    return when {
+        displayMode == ChapterDisplayMode.ChapterNumber && chapterNumber > 0.0 ->
+            "Chapter ${chapterNumber.toDisplayChapter()}"
+        else -> name.ifBlank { "Chapter ${chapterMarker()}" }
+    }
+}
+
 private fun ChimahonChapterEntry.chapterStateLabel(): String {
     return when {
         read -> "Read"
@@ -28200,9 +28288,12 @@ private fun ChimahonChapterEntry.chapterStateLabel(): String {
 
 private fun ChimahonChapterEntry.chapterDetailMetadata(
     downloadStatus: ChimahonChapterDownloadStatus?,
+    showChapterNumber: Boolean = true,
+    sourceTitle: String? = null,
 ): String {
     return listOfNotNull(
-        chapterNumber.takeIf { it > 0.0 }?.let { "Ch. ${it.toDisplayChapter()}" },
+        chapterNumber.takeIf { showChapterNumber && it > 0.0 }?.let { "Ch. ${it.toDisplayChapter()}" },
+        sourceTitle,
         chapterStateLabel().takeIf { it != "Unread" },
         scanlator?.takeIf { it.isNotBlank() },
         dateUpload.takeIf { it > 0L }?.toDateBucket("Uploaded"),
