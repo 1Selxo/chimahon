@@ -58,6 +58,25 @@ internal object DesktopPlatformAffordances {
         return copyText(text)
     }
 
+    fun copyDesktopActionPlaceholder(
+        surface: String,
+        action: String,
+        shortcut: String? = null,
+    ): Boolean {
+        return copyText(desktopActionPlaceholder(surface, action, shortcut))
+    }
+
+    fun shareDesktopActionPlaceholder(
+        surface: String,
+        action: String,
+        shortcut: String? = null,
+    ): Boolean {
+        return shareText(
+            text = desktopActionPlaceholder(surface, action, shortcut),
+            title = "$displayName desktop action placeholder",
+        )
+    }
+
     fun shareText(
         text: String,
         title: String = displayName,
@@ -96,6 +115,26 @@ internal object DesktopPlatformAffordances {
             DesktopDirectory.entries.forEach { directory ->
                 appendLine("${directory.title}: ${pathFor(directory)}")
             }
+        }.trimEnd()
+    }
+
+    private fun desktopActionPlaceholder(
+        surface: String,
+        action: String,
+        shortcut: String?,
+    ): String {
+        return buildString {
+            appendLine("$displayName desktop placeholder")
+            appendLine("Surface: $surface")
+            appendLine("Action: $action")
+            shortcut?.takeIf { it.isNotBlank() }?.let { value ->
+                appendLine("Shortcut: $value")
+            }
+            appendLine()
+            appendLine(
+                "This upstream anime/player action is reserved for the desktop app, " +
+                    "but it does not have a shared desktop UI route yet.",
+            )
         }.trimEnd()
     }
 }

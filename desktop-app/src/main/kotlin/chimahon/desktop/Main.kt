@@ -172,6 +172,21 @@ private fun createDesktopMenuBar(
             build()
         }
 
+    fun placeholderItem(
+        surface: String,
+        title: String,
+        shortcut: KeyStroke? = null,
+        shortcutLabel: String? = null,
+    ): JMenuItem = item(title, shortcut) {
+        DesktopPlatformAffordances.copyDesktopActionPlaceholder(
+            surface = surface,
+            action = title,
+            shortcut = shortcutLabel,
+        )
+    }
+
+    val appShortcutLabel = DesktopPlatformAffordances.menuShortcutLabel
+
     return JMenuBar().apply {
         add(menu("File", AwtKeyEvent.VK_F) {
             DesktopDirectory.entries.forEach { directory ->
@@ -210,6 +225,67 @@ private fun createDesktopMenuBar(
             add(item("Download Queue", appShortcut(AwtKeyEvent.VK_D)) {
                 onCommand(ChimahonDesktopCommand.DownloadQueue)
             })
+        })
+        add(menu("Anime", AwtKeyEvent.VK_A) {
+            add(item("Anime Library", appShortcut(AwtKeyEvent.VK_A, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.Library)
+            })
+            add(item("Anime Updates", appShortcut(AwtKeyEvent.VK_U, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.Updates)
+            })
+            add(item("Anime History", appShortcut(AwtKeyEvent.VK_H, InputEvent.ALT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.History)
+            })
+            addSeparator()
+            add(
+                item(
+                    "Browse Anime Sources",
+                    appShortcut(AwtKeyEvent.VK_A, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
+                ) {
+                    onCommand(ChimahonDesktopCommand.BrowseSources)
+                },
+            )
+            add(
+                item(
+                    "Browse Anime Extensions",
+                    appShortcut(AwtKeyEvent.VK_E, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
+                ) {
+                    onCommand(ChimahonDesktopCommand.BrowseExtensions)
+                },
+            )
+            add(
+                item(
+                    "Anime Download Queue",
+                    appShortcut(AwtKeyEvent.VK_Q, InputEvent.ALT_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
+                ) {
+                    onCommand(ChimahonDesktopCommand.DownloadQueue)
+                },
+            )
+            addSeparator()
+            add(
+                placeholderItem(
+                    surface = "Anime",
+                    title = "Open Anime Details",
+                    shortcut = appShortcut(AwtKeyEvent.VK_I, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+I",
+                ),
+            )
+            add(
+                placeholderItem(
+                    surface = "Anime",
+                    title = "Open Episode List",
+                    shortcut = appShortcut(AwtKeyEvent.VK_G, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+G",
+                ),
+            )
+            add(
+                placeholderItem(
+                    surface = "Anime",
+                    title = "Track Anime",
+                    shortcut = appShortcut(AwtKeyEvent.VK_T, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+T",
+                ),
+            )
         })
         add(menu("Edit", AwtKeyEvent.VK_E) {
             add(item("Search", appShortcut(AwtKeyEvent.VK_F)) { onCommand(ChimahonDesktopCommand.Search) })
@@ -319,6 +395,81 @@ private fun createDesktopMenuBar(
                     onCommand(ChimahonDesktopCommand.ReaderShareChapter)
                 },
             )
+        })
+        add(menu("Player", AwtKeyEvent.VK_P) {
+            add(item("Close Player", shortcut(AwtKeyEvent.VK_ESCAPE)) {
+                onCommand(ChimahonDesktopCommand.Back)
+            })
+            addSeparator()
+            add(
+                placeholderItem(
+                    surface = "Player",
+                    title = "Play / Pause",
+                    shortcut = appShortcut(AwtKeyEvent.VK_SPACE, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+Space",
+                ),
+            )
+            add(
+                placeholderItem(
+                    surface = "Player",
+                    title = "Seek Backward",
+                    shortcut = appShortcut(AwtKeyEvent.VK_J, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+J",
+                ),
+            )
+            add(
+                placeholderItem(
+                    surface = "Player",
+                    title = "Seek Forward",
+                    shortcut = appShortcut(AwtKeyEvent.VK_L, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+L",
+                ),
+            )
+            addSeparator()
+            add(
+                placeholderItem(
+                    surface = "Player",
+                    title = "Previous Episode",
+                    shortcut = appShortcut(AwtKeyEvent.VK_OPEN_BRACKET, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+[",
+                ),
+            )
+            add(
+                placeholderItem(
+                    surface = "Player",
+                    title = "Next Episode",
+                    shortcut = appShortcut(AwtKeyEvent.VK_CLOSE_BRACKET, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+]",
+                ),
+            )
+            addSeparator()
+            add(
+                placeholderItem(
+                    surface = "Player",
+                    title = "Subtitle Settings",
+                    shortcut = appShortcut(AwtKeyEvent.VK_S, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+S",
+                ),
+            )
+            add(
+                placeholderItem(
+                    surface = "Player",
+                    title = "Audio Delay",
+                    shortcut = appShortcut(AwtKeyEvent.VK_Y, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+Y",
+                ),
+            )
+            add(
+                placeholderItem(
+                    surface = "Player",
+                    title = "Video Filters",
+                    shortcut = appShortcut(AwtKeyEvent.VK_V, InputEvent.SHIFT_DOWN_MASK),
+                    shortcutLabel = "$appShortcutLabel+Shift+V",
+                ),
+            )
+            add(item("Player Settings", appShortcut(AwtKeyEvent.VK_COMMA, InputEvent.SHIFT_DOWN_MASK)) {
+                onCommand(ChimahonDesktopCommand.Settings)
+            })
         })
         add(menu("Window", AwtKeyEvent.VK_W) {
             add(item("Minimize") { window.minimize() })
@@ -508,6 +659,14 @@ private fun desktopShortcutReference(): String {
         Settings: $shortcut+Comma
         Download queue: $shortcut+D
 
+        Anime
+        Anime library/updates/history: $shortcut+Alt+A/U/H
+        Browse anime sources/extensions: $shortcut+Alt+Shift+A/E
+        Anime download queue: $shortcut+Alt+Shift+Q
+        Open anime details: $shortcut+Shift+I
+        Episode list: $shortcut+Shift+G
+        Track anime: $shortcut+Shift+T
+
         Reader
         Previous/next page: Left/Right, Page Up/Page Down, or $shortcut+Alt+Left/Right
         First/last page: Home/End or $shortcut+Alt+Home/End
@@ -523,6 +682,16 @@ private fun desktopShortcutReference(): String {
         Mark chapter read: R or $shortcut+Alt+R
         Open chapter URL: O or $shortcut+Alt+O
         Share chapter URL: $shortcut+Alt+Shift+S
+
+        Player placeholders
+        Close player: Esc
+        Play/pause: $shortcut+Shift+Space
+        Seek backward/forward: $shortcut+Shift+J/L
+        Previous/next episode: $shortcut+Shift+[/]
+        Subtitle settings: $shortcut+Shift+S
+        Audio delay: $shortcut+Shift+Y
+        Video filters: $shortcut+Shift+V
+        Player settings: $shortcut+Shift+Comma
 
         Mouse
         Back/forward mouse buttons: reader previous/next page

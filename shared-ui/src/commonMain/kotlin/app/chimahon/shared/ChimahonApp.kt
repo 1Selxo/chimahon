@@ -63,10 +63,12 @@ import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CollectionsBookmark
+import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Favorite
@@ -82,7 +84,9 @@ import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.NewReleases
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
@@ -99,6 +103,7 @@ import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -276,7 +281,9 @@ private data class LibraryMangaFacts(
 
 private fun ChimahonLibraryDisplayMode.toUiLibraryDisplayMode(): LibraryDisplayMode = when (this) {
     ChimahonLibraryDisplayMode.ComfortableGrid -> LibraryDisplayMode.ComfortableGrid
+    ChimahonLibraryDisplayMode.ComfortableGridPanorama -> LibraryDisplayMode.ComfortableGrid
     ChimahonLibraryDisplayMode.CompactGrid -> LibraryDisplayMode.CompactGrid
+    ChimahonLibraryDisplayMode.CoverOnlyGrid -> LibraryDisplayMode.CompactGrid
     ChimahonLibraryDisplayMode.List -> LibraryDisplayMode.List
 }
 
@@ -383,8 +390,11 @@ private enum class MorePage(val title: String) {
     Storage("Data and storage"),
     Settings("Settings"),
     AppearanceSettings("Appearance"),
+    NavigationSettings("Navigation"),
     LibrarySettings("Library"),
+    AnimeLibrarySettings("Anime library"),
     ReaderSettings("Reader"),
+    PlayerSettings("Player"),
     DownloadSettings("Downloads"),
     TrackingSettings("Tracking"),
     ConnectionsSettings("Connections"),
@@ -817,13 +827,16 @@ fun ChimahonServiceApp(
         onLoadReaderPageImage = services::loadReaderPageImage,
         onLoadThumbnailImage = services::loadThumbnailImage,
         onLoadSettings = services::loadSettings,
-        onSaveAppearanceSettings = services::saveAppearanceSettings,
-        onSaveReaderSettings = services::saveReaderSettings,
-        onSaveLibrarySettings = services::saveLibrarySettings,
-        onSaveDownloadPreferences = services::saveDownloadPreferences,
-        onSaveBrowseSettings = services::saveBrowseSettings,
-        onSaveTrackingSettings = services::saveTrackingSettings,
-        onSaveConnectionSettings = services::saveConnectionSettings,
+    onSaveAppearanceSettings = services::saveAppearanceSettings,
+    onSaveReaderSettings = services::saveReaderSettings,
+    onSaveLibrarySettings = services::saveLibrarySettings,
+    onSaveAnimeLibrarySettings = services::saveAnimeLibrarySettings,
+    onSaveDownloadPreferences = services::saveDownloadPreferences,
+    onSaveBrowseSettings = services::saveBrowseSettings,
+    onSaveNavigationSettings = services::saveNavigationSettings,
+    onSavePlayerSettings = services::savePlayerSettings,
+    onSaveTrackingSettings = services::saveTrackingSettings,
+    onSaveConnectionSettings = services::saveConnectionSettings,
         onSaveDictionarySettings = services::saveDictionarySettings,
         onSaveSecuritySettings = services::saveSecuritySettings,
         onSetDownloadedOnly = services::setDownloadedOnly,
@@ -928,8 +941,11 @@ internal fun ChimahonApp(
     onSaveAppearanceSettings: suspend (ChimahonAppearanceSettings) -> ChimahonAppearanceSettings = { it },
     onSaveReaderSettings: suspend (ChimahonReaderSettings) -> ChimahonReaderSettings = { it },
     onSaveLibrarySettings: suspend (ChimahonLibrarySettings) -> ChimahonLibrarySettings = { it },
+    onSaveAnimeLibrarySettings: suspend (ChimahonAnimeLibrarySettings) -> ChimahonAnimeLibrarySettings = { it },
     onSaveDownloadPreferences: suspend (ChimahonDownloadPreferences) -> ChimahonDownloadPreferences = { it },
     onSaveBrowseSettings: suspend (ChimahonBrowseSettings) -> ChimahonBrowseSettings = { it },
+    onSaveNavigationSettings: suspend (ChimahonNavigationSettings) -> ChimahonNavigationSettings = { it },
+    onSavePlayerSettings: suspend (ChimahonPlayerSettings) -> ChimahonPlayerSettings = { it },
     onSaveTrackingSettings: suspend (ChimahonTrackingSettings) -> ChimahonTrackingSettings = { it },
     onSaveConnectionSettings: suspend (ChimahonConnectionSettings) -> ChimahonConnectionSettings = { it },
     onSaveDictionarySettings: suspend (ChimahonDictionarySettings) -> ChimahonDictionarySettings = { it },
@@ -1075,7 +1091,11 @@ internal fun ChimahonApp(
         runCatching { onLoadSettings() }
             .onSuccess { settings ->
                 persistedSettings = settings
-                selectedTab = settings.appearance.startScreen.toHomeTab()
+                val visibleTabs = settings.navigation.visibleHomeTabs()
+                selectedTab = settings.navigation.startScreen.toHomeTab()
+                    .takeIf { it in visibleTabs }
+                    ?: visibleTabs.firstOrNull()
+                    ?: HomeTab.Library
                 downloadedOnlyMode = settings.appMode.downloadedOnly
                 incognitoMode = settings.appMode.incognitoMode
             }
@@ -1135,7 +1155,9 @@ internal fun ChimahonApp(
                 when {
                     selectedSourceId != null -> sourceSearchKey++
                     selectedReader != null || selectedRemoteManga != null || selectedMangaId != null -> Unit
-                    selectedTab == HomeTab.Library || selectedTab == HomeTab.History -> homeSearchActive = true
+                    selectedTab == HomeTab.Library ||
+                        selectedTab == HomeTab.History ||
+                        selectedTab == HomeTab.Anime -> homeSearchActive = true
                     selectedTab == HomeTab.Browse -> {
                         if (selectedBrowseSection !in listOf(BrowseSection.Sources, BrowseSection.Extensions)) {
                             selectedBrowseSection = BrowseSection.Sources
@@ -1156,6 +1178,7 @@ internal fun ChimahonApp(
                         HomeTab.Library,
                         HomeTab.Updates,
                         HomeTab.History,
+                        HomeTab.Anime,
                         -> homeFiltersVisible = !homeFiltersVisible
                         HomeTab.Browse -> when (selectedBrowseSection) {
                             BrowseSection.Extensions -> homeFiltersVisible = !homeFiltersVisible
@@ -1209,6 +1232,7 @@ internal fun ChimahonApp(
             }
 
             Row(modifier = Modifier.fillMaxSize()) {
+                val navigationTabs = persistedSettings.navigation.visibleHomeTabs()
                 if (
                     useNavigationRail &&
                     selectedMangaId == null &&
@@ -1219,17 +1243,11 @@ internal fun ChimahonApp(
                     HomeNavigationRail(
                         selected = selectedTab,
                         state = state,
+                        tabs = navigationTabs,
                         compact = persistedSettings.appearance.compactNavigation,
                         appIcon = persistedSettings.appearance.appIcon,
                         showBadges = persistedSettings.appearance.showNavigationBadges,
-                        onSelect = {
-                            selectedTab = it
-                            homeSearchActive = false
-                            homeSearchQuery = ""
-                            homeFiltersVisible = false
-                            feedManageMode = false
-                            migrateHelpVisible = false
-                        },
+                        onSelect = ::selectHomeTab,
                     )
                 }
 
@@ -1275,6 +1293,7 @@ internal fun ChimahonApp(
                             val toolbarActions = buildList {
                                 val searchEnabled = selectedTab == HomeTab.Library ||
                                     selectedTab == HomeTab.History ||
+                                    selectedTab == HomeTab.Anime ||
                                     (
                                         selectedTab == HomeTab.Browse &&
                                             selectedBrowseSection in listOf(
@@ -1295,6 +1314,7 @@ internal fun ChimahonApp(
                                     HomeTab.Library,
                                     HomeTab.Updates,
                                     HomeTab.History,
+                                    HomeTab.Anime,
                                     -> add(
                                         HomeToolbarAction(
                                             icon = UiIcon.Filter,
@@ -1353,6 +1373,7 @@ internal fun ChimahonApp(
                                 if (
                                     selectedTab == HomeTab.Library ||
                                     selectedTab == HomeTab.Updates ||
+                                    selectedTab == HomeTab.Anime ||
                                     selectedTab == HomeTab.Browse
                                 ) {
                                     add(
@@ -1371,6 +1392,7 @@ internal fun ChimahonApp(
                                 searchQuery = homeSearchQuery,
                                 searchPlaceholder = when {
                                     selectedTab == HomeTab.Library -> "Search library"
+                                    selectedTab == HomeTab.Anime -> "Search anime"
                                     selectedTab == HomeTab.History -> "Search history"
                                     selectedBrowseSection == BrowseSection.Extensions -> "Search extensions"
                                     else -> "Search sources"
@@ -1600,6 +1622,12 @@ internal fun ChimahonApp(
                                                 runCatching { onSaveLibrarySettings(settings) }
                                             }
                                         },
+                                        onAnimeLibrarySettingsChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(animeLibrary = settings)
+                                            appScope.launch {
+                                                runCatching { onSaveAnimeLibrarySettings(settings) }
+                                            }
+                                        },
                                         onReaderSettingsChange = { settings ->
                                             persistedSettings = persistedSettings.copy(reader = settings)
                                             appScope.launch {
@@ -1616,6 +1644,21 @@ internal fun ChimahonApp(
                                             persistedSettings = persistedSettings.copy(browse = settings)
                                             appScope.launch {
                                                 runCatching { onSaveBrowseSettings(settings) }
+                                            }
+                                        },
+                                        onNavigationSettingsChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(navigation = settings)
+                                            if (selectedTab !in settings.visibleHomeTabs()) {
+                                                selectedTab = settings.visibleHomeTabs().firstOrNull() ?: HomeTab.Library
+                                            }
+                                            appScope.launch {
+                                                runCatching { onSaveNavigationSettings(settings) }
+                                            }
+                                        },
+                                        onPlayerSettingsChange = { settings ->
+                                            persistedSettings = persistedSettings.copy(player = settings)
+                                            appScope.launch {
+                                                runCatching { onSavePlayerSettings(settings) }
                                             }
                                         },
                                         onTrackingSettingsChange = { settings ->
@@ -1671,17 +1714,11 @@ internal fun ChimahonApp(
                         HomeNavigationBar(
                             selected = selectedTab,
                             state = state,
+                            tabs = navigationTabs,
                             compact = persistedSettings.appearance.compactNavigation,
                             showLabels = persistedSettings.appearance.bottomBarLabels,
                             showBadges = persistedSettings.appearance.showNavigationBadges,
-                            onSelect = {
-                                selectedTab = it
-                                homeSearchActive = false
-                                homeSearchQuery = ""
-                                homeFiltersVisible = false
-                                feedManageMode = false
-                                migrateHelpVisible = false
-                            },
+                            onSelect = ::selectHomeTab,
                         )
                     }
                 }
@@ -2106,6 +2143,7 @@ private fun ReaderTinyHudPill(
 private fun HomeNavigationRail(
     selected: HomeTab,
     state: ChimahonUiState,
+    tabs: List<HomeTab>,
     compact: Boolean,
     appIcon: ChimahonAppIcon,
     showBadges: Boolean,
@@ -2122,7 +2160,7 @@ private fun HomeNavigationRail(
     ) {
         AppMark(appIcon = appIcon)
         Spacer(Modifier.height(if (compact) 12.dp else 20.dp))
-        HomeTab.entries.forEach { tab ->
+        tabs.forEach { tab ->
             RailItem(
                 tab = tab,
                 selected = tab == selected,
@@ -2175,6 +2213,7 @@ private fun RailItem(
 private fun HomeNavigationBar(
     selected: HomeTab,
     state: ChimahonUiState,
+    tabs: List<HomeTab>,
     compact: Boolean,
     showLabels: Boolean,
     showBadges: Boolean,
@@ -2195,7 +2234,7 @@ private fun HomeNavigationBar(
             .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
-        HomeTab.entries.forEach { tab ->
+        tabs.forEach { tab ->
             val selectedTab = tab == selected
             Column(
                 modifier = Modifier
@@ -2354,9 +2393,12 @@ private fun HomeContent(
     settings: ChimahonSettings,
     onAppearanceSettingsChange: (ChimahonAppearanceSettings) -> Unit,
     onLibrarySettingsChange: (ChimahonLibrarySettings) -> Unit,
+    onAnimeLibrarySettingsChange: (ChimahonAnimeLibrarySettings) -> Unit,
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
     onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
     onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onNavigationSettingsChange: (ChimahonNavigationSettings) -> Unit,
+    onPlayerSettingsChange: (ChimahonPlayerSettings) -> Unit,
     onTrackingSettingsChange: (ChimahonTrackingSettings) -> Unit,
     onConnectionSettingsChange: (ChimahonConnectionSettings) -> Unit,
     onDictionarySettingsChange: (ChimahonDictionarySettings) -> Unit,
@@ -2404,6 +2446,16 @@ private fun HomeContent(
             onResetHistoryForManga = onResetHistoryForManga,
             onClearHistory = onClearHistory,
             onRefresh = onRepoSaved,
+        )
+        HomeTab.Anime -> AnimeHome(
+            query = homeSearchQuery,
+            filtersVisible = homeFiltersVisible,
+            settings = settings.animeLibrary,
+            onSettingsChange = onAnimeLibrarySettingsChange,
+            onOpenBrowseAnime = {
+                onBrowseSectionChange(BrowseSection.Extensions)
+                onSelectTab(HomeTab.Browse)
+            },
         )
         HomeTab.Browse -> BrowseHome(
             snapshot = snapshot,
@@ -2459,9 +2511,12 @@ private fun HomeContent(
             settings = settings,
             onAppearanceSettingsChange = onAppearanceSettingsChange,
             onLibrarySettingsChange = onLibrarySettingsChange,
+            onAnimeLibrarySettingsChange = onAnimeLibrarySettingsChange,
             onReaderSettingsChange = onReaderSettingsChange,
             onDownloadPreferencesChange = onDownloadPreferencesChange,
             onBrowseSettingsChange = onBrowseSettingsChange,
+            onNavigationSettingsChange = onNavigationSettingsChange,
+            onPlayerSettingsChange = onPlayerSettingsChange,
             onTrackingSettingsChange = onTrackingSettingsChange,
             onConnectionSettingsChange = onConnectionSettingsChange,
             onDictionarySettingsChange = onDictionarySettingsChange,
@@ -5614,6 +5669,188 @@ private fun HistoryListItem(
                 .height(1.dp)
                 .background(if (selected) Color.Transparent else ChimahonPalette.divider.copy(alpha = 0.55f)),
         )
+    }
+}
+
+@Composable
+private fun AnimeHome(
+    query: String,
+    filtersVisible: Boolean,
+    settings: ChimahonAnimeLibrarySettings,
+    onSettingsChange: (ChimahonAnimeLibrarySettings) -> Unit,
+    onOpenBrowseAnime: () -> Unit,
+) {
+    var selectedCategory by remember { mutableStateOf("Default") }
+    val categories = when (settings.groupBy) {
+        ChimahonLibraryGroup.Default -> listOf("Default", "Watching", "Planned", "Completed")
+        ChimahonLibraryGroup.Source -> listOf("All sources", "Local anime", "Pinned sources")
+        ChimahonLibraryGroup.Status -> listOf("Ongoing", "Completed", "Licensed", "On hiatus", "Cancelled")
+        ChimahonLibraryGroup.TrackingStatus -> listOf("Tracked", "Untracked", "Pending sync")
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ChimahonPalette.background),
+        contentPadding = PaddingValues(bottom = 20.dp),
+    ) {
+        item {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(categories, key = { it }) { category ->
+                    AndroidFilterChip(
+                        text = category,
+                        selected = category == selectedCategory,
+                        onClick = { selectedCategory = category },
+                    )
+                }
+            }
+        }
+        if (filtersVisible) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(ChimahonPalette.surface)
+                        .bottomDivider()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    FilterPanelLabel("Show", modifier = Modifier.padding(bottom = 5.dp))
+                    ScrollableFilterChips(
+                        chips = ChimahonFilterMode.entries.map { it.animeFilterTitle("Unseen") },
+                        selected = settings.unseenFilter.animeFilterTitle("Unseen"),
+                        onSelect = { selected ->
+                            ChimahonFilterMode.entries.firstOrNull {
+                                it.animeFilterTitle("Unseen") == selected
+                            }?.let { onSettingsChange(settings.copy(unseenFilter = it)) }
+                        },
+                    )
+                    ScrollableFilterChips(
+                        chips = ChimahonFilterMode.entries.map { it.animeFilterTitle("Downloaded") },
+                        selected = settings.downloadedFilter.animeFilterTitle("Downloaded"),
+                        onSelect = { selected ->
+                            ChimahonFilterMode.entries.firstOrNull {
+                                it.animeFilterTitle("Downloaded") == selected
+                            }?.let { onSettingsChange(settings.copy(downloadedFilter = it)) }
+                        },
+                    )
+                    FilterPanelLabel(
+                        "Sort",
+                        modifier = Modifier.padding(top = 10.dp, bottom = 5.dp),
+                    )
+                    ScrollableFilterChips(
+                        chips = ChimahonLibrarySort.entries.map { it.libraryTitle() },
+                        selected = settings.sort.libraryTitle(),
+                        onSelect = { selected ->
+                            ChimahonLibrarySort.entries.firstOrNull { it.libraryTitle() == selected }?.let {
+                                onSettingsChange(settings.copy(sort = it))
+                            }
+                        },
+                    )
+                    SettingsSwitchLine(
+                        label = "Ascending",
+                        checked = settings.sortAscending,
+                        onCheckedChange = { onSettingsChange(settings.copy(sortAscending = it)) },
+                    )
+                    FilterPanelLabel(
+                        "Display",
+                        modifier = Modifier.padding(top = 10.dp, bottom = 5.dp),
+                    )
+                    ScrollableFilterChips(
+                        chips = animeLibraryDisplayModes().map { it.animeDisplayTitle() },
+                        selected = settings.displayMode.animeDisplayTitle(),
+                        onSelect = { selected ->
+                            animeLibraryDisplayModes().firstOrNull { it.animeDisplayTitle() == selected }?.let {
+                                onSettingsChange(settings.copy(displayMode = it))
+                            }
+                        },
+                    )
+                    SettingsSwitchLine(
+                        label = "Show category tabs",
+                        checked = settings.showCategoryTabs,
+                        onCheckedChange = { onSettingsChange(settings.copy(showCategoryTabs = it)) },
+                    )
+                    SettingsSwitchLine(
+                        label = "Continue watching",
+                        checked = settings.showContinueWatchingButtons,
+                        onCheckedChange = {
+                            onSettingsChange(settings.copy(showContinueWatchingButtons = it))
+                        },
+                    )
+                }
+            }
+        }
+        item {
+            MobileBanner(
+                title = "Anime library",
+                detail = "Browse anime sources and install anime extensions, then keep episodes, downloads, and tracking together here.",
+                action = "Browse",
+                onAction = onOpenBrowseAnime,
+            )
+        }
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MangaActionButton(
+                    icon = UiIcon.PlayCircle,
+                    title = "Sources",
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenBrowseAnime,
+                )
+                MangaActionButton(
+                    icon = UiIcon.Download,
+                    title = "Queue",
+                    modifier = Modifier.weight(1f),
+                    onClick = {},
+                )
+                MangaActionButton(
+                    icon = UiIcon.Statistics,
+                    title = "Tracking",
+                    modifier = Modifier.weight(1f),
+                    onClick = {},
+                )
+            }
+        }
+        item {
+            EmptyListPanel(
+                marker = "A",
+                title = if (query.isBlank()) "No anime in library" else "No anime matches \"$query\"",
+                detail = "Browse anime sources or install anime extensions to add titles here.",
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsSwitchLine(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 42.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(role = Role.Switch) { onCheckedChange(!checked) }
+            .padding(horizontal = 2.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Label(
+            text = label,
+            color = ChimahonPalette.onSurface,
+            size = 12,
+            weight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        AndroidSwitchVisual(checked = checked)
     }
 }
 
@@ -11124,9 +11361,39 @@ private fun ChimahonFilterMode.filterTitle(): String = when (this) {
     ChimahonFilterMode.Exclude -> "Exclude"
 }
 
+private fun ChimahonFilterMode.animeFilterTitle(label: String): String = when (this) {
+    ChimahonFilterMode.Any -> "Any $label"
+    ChimahonFilterMode.Include -> label
+    ChimahonFilterMode.Exclude -> "Not $label"
+}
+
+private fun animeLibraryDisplayModes(): List<ChimahonLibraryDisplayMode> = listOf(
+    ChimahonLibraryDisplayMode.ComfortableGrid,
+    ChimahonLibraryDisplayMode.ComfortableGridPanorama,
+    ChimahonLibraryDisplayMode.CompactGrid,
+    ChimahonLibraryDisplayMode.CoverOnlyGrid,
+    ChimahonLibraryDisplayMode.List,
+)
+
+private fun ChimahonLibraryDisplayMode.animeDisplayTitle(): String = when (this) {
+    ChimahonLibraryDisplayMode.ComfortableGrid -> "Comfortable grid"
+    ChimahonLibraryDisplayMode.ComfortableGridPanorama -> "Comfortable grid panorama"
+    ChimahonLibraryDisplayMode.CompactGrid -> "Compact grid"
+    ChimahonLibraryDisplayMode.CoverOnlyGrid -> "Cover-only grid"
+    ChimahonLibraryDisplayMode.List -> "List"
+}
+
 private fun Int.toColumnTitle(): String = if (this <= 0) "Automatic" else toString()
 
 private fun String.toColumnCount(): Int = if (this == "Automatic") 0 else toIntOrNull() ?: 0
+
+private fun Double.toPercentTitle(): String = "${(this * 100).toInt()}%"
+
+private fun String.toPercentFraction(): Double? {
+    return removeSuffix("%").toDoubleOrNull()?.div(100.0)?.coerceIn(0.0, 1.0)
+}
+
+private fun Double.toSpeedTitle(): String = toString()
 
 private fun Int.toOffCountTitle(): String = if (this <= 0) "Off" else toString()
 
@@ -11375,6 +11642,10 @@ private fun List<String>.toCategoryListLabel(): String {
 
 private fun libraryUpdateRestrictionOptions(): List<String> {
     return listOf("Wi-Fi only", "Unmetered network", "Charging")
+}
+
+private fun animeLibraryUpdateRestrictionOptions(): List<String> {
+    return listOf("Wi-Fi only", "Unmetered network", "Charging", "Outside release period")
 }
 
 private fun librarySmartUpdateOptions(): List<String> {
@@ -17777,9 +18048,12 @@ private fun MoreHome(
     settings: ChimahonSettings,
     onAppearanceSettingsChange: (ChimahonAppearanceSettings) -> Unit,
     onLibrarySettingsChange: (ChimahonLibrarySettings) -> Unit,
+    onAnimeLibrarySettingsChange: (ChimahonAnimeLibrarySettings) -> Unit,
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
     onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
     onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onNavigationSettingsChange: (ChimahonNavigationSettings) -> Unit,
+    onPlayerSettingsChange: (ChimahonPlayerSettings) -> Unit,
     onTrackingSettingsChange: (ChimahonTrackingSettings) -> Unit,
     onConnectionSettingsChange: (ChimahonConnectionSettings) -> Unit,
     onDictionarySettingsChange: (ChimahonDictionarySettings) -> Unit,
@@ -17847,9 +18121,12 @@ private fun MoreHome(
             settings = settings,
             onAppearanceSettingsChange = onAppearanceSettingsChange,
             onLibrarySettingsChange = onLibrarySettingsChange,
+            onAnimeLibrarySettingsChange = onAnimeLibrarySettingsChange,
             onReaderSettingsChange = onReaderSettingsChange,
             onDownloadPreferencesChange = onDownloadPreferencesChange,
             onBrowseSettingsChange = onBrowseSettingsChange,
+            onNavigationSettingsChange = onNavigationSettingsChange,
+            onPlayerSettingsChange = onPlayerSettingsChange,
             onTrackingSettingsChange = onTrackingSettingsChange,
             onConnectionSettingsChange = onConnectionSettingsChange,
             onDictionarySettingsChange = onDictionarySettingsChange,
@@ -17901,6 +18178,15 @@ private fun MoreHome(
                 moreDownloadQueue?.downloadQueueHomeSummary() ?: "Queue and offline downloads",
                 UiIcon.Download,
                 onClick = { openPage(MorePage.Downloads) },
+            )
+        }
+        item { PreferenceDivider() }
+        item {
+            PreferenceRow(
+                title = "Anime",
+                subtitle = "Library, categories, player, and episode queues",
+                icon = UiIcon.PlayCircle,
+                onClick = { onSelectTab(HomeTab.Anime) },
             )
         }
         item { PreferenceDivider() }
@@ -18053,9 +18339,12 @@ private fun MoreDetailPage(
     settings: ChimahonSettings,
     onAppearanceSettingsChange: (ChimahonAppearanceSettings) -> Unit,
     onLibrarySettingsChange: (ChimahonLibrarySettings) -> Unit,
+    onAnimeLibrarySettingsChange: (ChimahonAnimeLibrarySettings) -> Unit,
     onReaderSettingsChange: (ChimahonReaderSettings) -> Unit,
     onDownloadPreferencesChange: (ChimahonDownloadPreferences) -> Unit,
     onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
+    onNavigationSettingsChange: (ChimahonNavigationSettings) -> Unit,
+    onPlayerSettingsChange: (ChimahonPlayerSettings) -> Unit,
     onTrackingSettingsChange: (ChimahonTrackingSettings) -> Unit,
     onConnectionSettingsChange: (ChimahonConnectionSettings) -> Unit,
     onDictionarySettingsChange: (ChimahonDictionarySettings) -> Unit,
@@ -18700,6 +18989,14 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceRow(
+                            "Navigation",
+                            "Start screen, navbar tabs, and hidden sections",
+                            UiIcon.Reorder,
+                            onClick = { onOpenPage(MorePage.NavigationSettings) },
+                        )
+                    }
+                    item {
+                        PreferenceRow(
                             "Security",
                             "Privacy and protected access",
                             UiIcon.Security,
@@ -18725,10 +19022,26 @@ private fun MoreDetailPage(
                     }
                     item {
                         PreferenceRow(
+                            "Anime library",
+                            "Episode filters, badges, grouping, and continue watching",
+                            UiIcon.PlayCircle,
+                            onClick = { onOpenPage(MorePage.AnimeLibrarySettings) },
+                        )
+                    }
+                    item {
+                        PreferenceRow(
                             "Reader",
                             "Reading mode, scale, background, page controls",
                             UiIcon.Chapters,
                             onClick = { onOpenPage(MorePage.ReaderSettings) },
+                        )
+                    }
+                    item {
+                        PreferenceRow(
+                            "Player",
+                            "Video controls, gestures, subtitles, audio, and casting",
+                            UiIcon.PlayCircle,
+                            onClick = { onOpenPage(MorePage.PlayerSettings) },
                         )
                     }
                     item {
@@ -18972,10 +19285,10 @@ private fun MoreDetailPage(
                         SettingsChoiceRow(
                             title = "Start screen",
                             options = ChimahonStartScreen.entries.map { it.title },
-                            selected = settings.appearance.startScreen.title,
+                            selected = settings.navigation.startScreen.title,
                             onSelect = { selected ->
                                 ChimahonStartScreen.entries.firstOrNull { it.title == selected }?.let {
-                                    onAppearanceSettingsChange(settings.appearance.copy(startScreen = it))
+                                    onNavigationSettingsChange(settings.navigation.copy(startScreen = it))
                                 }
                             },
                         )
@@ -19109,6 +19422,72 @@ private fun MoreDetailPage(
                                     settings.appearance.copy(showDescriptionImages = it),
                                 )
                             },
+                        )
+                    }
+                }
+                MorePage.NavigationSettings -> {
+                    item { ListGroupHeader("Navigation") }
+                    item {
+                        SettingsInfoPanel(
+                            title = "Active navbar",
+                            detail = settings.navigation.visibleHomeTabs()
+                                .filter { it != HomeTab.More }
+                                .joinToString { it.title }
+                                .ifBlank { "Library, Anime, Browse" },
+                            icon = UiIcon.Reorder,
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Start screen",
+                            options = ChimahonStartScreen.entries.map { it.title },
+                            selected = settings.navigation.startScreen.title,
+                            onSelect = { selected ->
+                                ChimahonStartScreen.entries.firstOrNull { it.title == selected }?.let {
+                                    onNavigationSettingsChange(settings.navigation.copy(startScreen = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show Updates tab",
+                            "Keep Updates directly in the navigation bar when the tab layout puts it elsewhere",
+                            UiIcon.Updates,
+                            checked = settings.navigation.showUpdatesTab,
+                            onCheckedChange = {
+                                onNavigationSettingsChange(settings.navigation.copy(showUpdatesTab = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show History tab",
+                            "Keep History available as a top-level navigation item",
+                            UiIcon.History,
+                            checked = settings.navigation.showHistoryTab,
+                            onCheckedChange = {
+                                onNavigationSettingsChange(settings.navigation.copy(showHistoryTab = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Tab layout") }
+                    items(ChimahonNavigationTab.entries, key = { it.key }) { tab ->
+                        SettingsChoiceRow(
+                            title = tab.title,
+                            options = ChimahonNavigationSection.entries.map { it.title },
+                            selected = settings.navigation.sectionFor(tab).title,
+                            onSelect = { selected ->
+                                ChimahonNavigationSection.entries.firstOrNull { it.title == selected }?.let {
+                                    onNavigationSettingsChange(settings.navigation.withTabSection(tab, it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        ExtensionStatusRow(
+                            title = "Ported shared tabs",
+                            subtitle = "Library, Anime, History, Browse, Updates, and More are available in this KMP shell.",
                         )
                     }
                 }
@@ -19601,6 +19980,329 @@ private fun MoreDetailPage(
                                 onLibrarySettingsChange(
                                     settings.library.copy(disallowNonAsciiFilenames = it),
                                 )
+                            },
+                        )
+                    }
+                }
+                MorePage.AnimeLibrarySettings -> {
+                    item { ListGroupHeader("Display") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Display mode",
+                            options = animeLibraryDisplayModes().map { it.animeDisplayTitle() },
+                            selected = settings.animeLibrary.displayMode.animeDisplayTitle(),
+                            onSelect = { selected ->
+                                animeLibraryDisplayModes()
+                                    .firstOrNull { it.animeDisplayTitle() == selected }
+                                    ?.let {
+                                        onAnimeLibrarySettingsChange(
+                                            settings.animeLibrary.copy(displayMode = it),
+                                        )
+                                    }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Grid columns portrait",
+                            options = listOf("Automatic", "2", "3", "4", "5", "6"),
+                            selected = settings.animeLibrary.gridColumnsPortrait.toColumnTitle(),
+                            onSelect = { selected ->
+                                onAnimeLibrarySettingsChange(
+                                    settings.animeLibrary.copy(
+                                        gridColumnsPortrait = selected.toColumnCount(),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Grid columns landscape",
+                            options = listOf("Automatic", "3", "4", "5", "6", "7", "8"),
+                            selected = settings.animeLibrary.gridColumnsLandscape.toColumnTitle(),
+                            onSelect = { selected ->
+                                onAnimeLibrarySettingsChange(
+                                    settings.animeLibrary.copy(
+                                        gridColumnsLandscape = selected.toColumnCount(),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Categorized display settings",
+                            "Remember anime display, sort, and filters per category",
+                            UiIcon.Tag,
+                            checked = settings.animeLibrary.categorizedDisplaySettings,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(
+                                    settings.animeLibrary.copy(categorizedDisplaySettings = it),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show category tabs",
+                            "Keep anime categories above the library grid",
+                            UiIcon.Tag,
+                            checked = settings.animeLibrary.showCategoryTabs,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(settings.animeLibrary.copy(showCategoryTabs = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Show category count",
+                            "Display anime counts beside category names",
+                            UiIcon.Info,
+                            checked = settings.animeLibrary.showCategoryItemCount,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(
+                                    settings.animeLibrary.copy(showCategoryItemCount = it),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Badges") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Unseen badges",
+                            "Display unseen episode counts on anime covers",
+                            UiIcon.Updates,
+                            checked = settings.animeLibrary.showUnseenBadges,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(settings.animeLibrary.copy(showUnseenBadges = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Downloaded badges",
+                            "Display offline episode availability on anime covers",
+                            UiIcon.Download,
+                            checked = settings.animeLibrary.showDownloadedBadges,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(settings.animeLibrary.copy(showDownloadedBadges = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Local badges",
+                            "Mark local anime entries",
+                            UiIcon.Storage,
+                            checked = settings.animeLibrary.showLocalBadges,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(settings.animeLibrary.copy(showLocalBadges = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Language badges",
+                            "Display source language on anime entries",
+                            UiIcon.Web,
+                            checked = settings.animeLibrary.showLanguageBadges,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(settings.animeLibrary.copy(showLanguageBadges = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Continue watching buttons",
+                            "Resume the next unseen episode from anime library entries",
+                            UiIcon.Play,
+                            checked = settings.animeLibrary.showContinueWatchingButtons,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(
+                                    settings.animeLibrary.copy(showContinueWatchingButtons = it),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Filter and sort") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Group by",
+                            options = ChimahonLibraryGroup.entries.map { it.title },
+                            selected = settings.animeLibrary.groupBy.title,
+                            onSelect = { selected ->
+                                ChimahonLibraryGroup.entries
+                                    .firstOrNull { it.title == selected }
+                                    ?.let { onAnimeLibrarySettingsChange(settings.animeLibrary.copy(groupBy = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Default sort",
+                            options = ChimahonLibrarySort.entries.map { it.libraryTitle() },
+                            selected = settings.animeLibrary.sort.libraryTitle(),
+                            onSelect = { selected ->
+                                ChimahonLibrarySort.entries
+                                    .firstOrNull { it.libraryTitle() == selected }
+                                    ?.let { onAnimeLibrarySettingsChange(settings.animeLibrary.copy(sort = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Ascending sort",
+                            "Reverse the selected anime sort when disabled",
+                            UiIcon.Swap,
+                            checked = settings.animeLibrary.sortAscending,
+                            onCheckedChange = {
+                                onAnimeLibrarySettingsChange(settings.animeLibrary.copy(sortAscending = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Downloaded filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.animeLibrary.downloadedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let {
+                                        onAnimeLibrarySettingsChange(
+                                            settings.animeLibrary.copy(downloadedFilter = it),
+                                        )
+                                    }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Unseen filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.animeLibrary.unseenFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onAnimeLibrarySettingsChange(settings.animeLibrary.copy(unseenFilter = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Started filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.animeLibrary.startedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onAnimeLibrarySettingsChange(settings.animeLibrary.copy(startedFilter = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Bookmarked filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.animeLibrary.bookmarkedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let {
+                                        onAnimeLibrarySettingsChange(
+                                            settings.animeLibrary.copy(bookmarkedFilter = it),
+                                        )
+                                    }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Completed filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.animeLibrary.completedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let {
+                                        onAnimeLibrarySettingsChange(
+                                            settings.animeLibrary.copy(completedFilter = it),
+                                        )
+                                    }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Filler filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.animeLibrary.fillerFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onAnimeLibrarySettingsChange(settings.animeLibrary.copy(fillerFilter = it)) }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Tracked filter",
+                            options = ChimahonFilterMode.entries.map { it.filterTitle() },
+                            selected = settings.animeLibrary.trackedFilter.filterTitle(),
+                            onSelect = { selected ->
+                                ChimahonFilterMode.entries
+                                    .firstOrNull { it.filterTitle() == selected }
+                                    ?.let { onAnimeLibrarySettingsChange(settings.animeLibrary.copy(trackedFilter = it)) }
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Updates and gestures") }
+                    item {
+                        SettingsMultiChoiceRow(
+                            title = "Update restrictions",
+                            options = animeLibraryUpdateRestrictionOptions(),
+                            selected = settings.animeLibrary.updateRestrictions,
+                            emptyLabel = "No restrictions",
+                            onToggle = { restriction ->
+                                onAnimeLibrarySettingsChange(
+                                    settings.animeLibrary.copy(
+                                        updateRestrictions =
+                                            settings.animeLibrary.updateRestrictions.toggled(restriction),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Episode swipe start",
+                            options = ChimahonEpisodeSwipeAction.entries.map { it.title },
+                            selected = settings.animeLibrary.swipeToStartAction.title,
+                            onSelect = { selected ->
+                                ChimahonEpisodeSwipeAction.entries
+                                    .firstOrNull { it.title == selected }
+                                    ?.let {
+                                        onAnimeLibrarySettingsChange(
+                                            settings.animeLibrary.copy(swipeToStartAction = it),
+                                        )
+                                    }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Episode swipe end",
+                            options = ChimahonEpisodeSwipeAction.entries.map { it.title },
+                            selected = settings.animeLibrary.swipeToEndAction.title,
+                            onSelect = { selected ->
+                                ChimahonEpisodeSwipeAction.entries
+                                    .firstOrNull { it.title == selected }
+                                    ?.let {
+                                        onAnimeLibrarySettingsChange(
+                                            settings.animeLibrary.copy(swipeToEndAction = it),
+                                        )
+                                    }
                             },
                         )
                     }
@@ -20397,6 +21099,429 @@ private fun MoreDetailPage(
                             checked = settings.reader.folderPerManga,
                             onCheckedChange = {
                                 onReaderSettingsChange(settings.reader.copy(folderPerManga = it))
+                            },
+                        )
+                    }
+                }
+                MorePage.PlayerSettings -> {
+                    item { ListGroupHeader("Playback") }
+                    item {
+                        SettingsInfoPanel(
+                            title = "Player defaults",
+                            detail = "${settings.player.defaultOrientation.title} - ${settings.player.aspect.title} - ${settings.player.playerSpeed}x",
+                            icon = UiIcon.PlayCircle,
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Preserve watching position",
+                            "Resume videos from the saved progress threshold",
+                            UiIcon.History,
+                            checked = settings.player.preserveWatchingPosition,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(settings.player.copy(preserveWatchingPosition = it))
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Progress threshold",
+                            options = listOf("50%", "65%", "75%", "85%", "90%", "95%"),
+                            selected = settings.player.progressPreference.toPercentTitle(),
+                            onSelect = { selected ->
+                                selected.toPercentFraction()?.let {
+                                    onPlayerSettingsChange(settings.player.copy(progressPreference = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Default orientation",
+                            options = ChimahonPlayerOrientation.entries.map { it.title },
+                            selected = settings.player.defaultOrientation.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerOrientation.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(settings.player.copy(defaultOrientation = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Aspect",
+                            options = ChimahonPlayerAspect.entries.map { it.title },
+                            selected = settings.player.aspect.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerAspect.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(settings.player.copy(aspect = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsScrollableChoiceRow(
+                            title = "Playback speed",
+                            options = settings.player.speedPresets,
+                            selected = settings.player.playerSpeed.toSpeedTitle(),
+                            onSelect = { selected ->
+                                selected.toDoubleOrNull()?.let {
+                                    onPlayerSettingsChange(settings.player.copy(playerSpeed = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Autoplay next episode",
+                            "Automatically continue to the next episode when available",
+                            UiIcon.Play,
+                            checked = settings.player.autoplayEnabled,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(settings.player.copy(autoplayEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Always use external player",
+                            "Open streams with the configured platform player",
+                            UiIcon.Web,
+                            checked = settings.player.alwaysUseExternalPlayer,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(settings.player.copy(alwaysUseExternalPlayer = it))
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Controls") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Fullscreen",
+                            "Use fullscreen playback by default",
+                            UiIcon.Crop,
+                            checked = settings.player.fullscreen,
+                            onCheckedChange = { onPlayerSettingsChange(settings.player.copy(fullscreen = it)) },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Hide controls",
+                            "Start playback with controls hidden",
+                            UiIcon.VisibilityOff,
+                            checked = settings.player.hideControls,
+                            onCheckedChange = { onPlayerSettingsChange(settings.player.copy(hideControls = it)) },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Hide delay",
+                            options = listOf("1000", "2000", "3000", "4000", "5000", "7000", "10000"),
+                            selected = settings.player.controlsHideDelayMillis.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(settings.player.copy(controlsHideDelayMillis = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Panel opacity",
+                            options = listOf("20%", "40%", "60%", "80%", "100%"),
+                            selected = "${settings.player.panelOpacityPercent}%",
+                            onSelect = { selected ->
+                                selected.removeSuffix("%").toIntOrNull()?.let {
+                                    onPlayerSettingsChange(settings.player.copy(panelOpacityPercent = it))
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Loading circle",
+                            "Show buffering progress in the player",
+                            UiIcon.Refresh,
+                            checked = settings.player.showLoadingCircle,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(settings.player.copy(showLoadingCircle = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Current episode",
+                            "Show the current episode in player controls",
+                            UiIcon.Info,
+                            checked = settings.player.showCurrentEpisode,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(settings.player.copy(showCurrentEpisode = it))
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Reduce motion",
+                            "Use quieter player animations",
+                            UiIcon.VisibilityOff,
+                            checked = settings.player.reduceMotion,
+                            onCheckedChange = { onPlayerSettingsChange(settings.player.copy(reduceMotion = it)) },
+                        )
+                    }
+                    item { ListGroupHeader("Gestures") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Volume and brightness gestures",
+                            "Swipe vertically to adjust playback volume and brightness",
+                            UiIcon.Swap,
+                            checked = settings.player.gestures.volumeBrightnessGestures,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        gestures = settings.player.gestures.copy(volumeBrightnessGestures = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Swap gesture sides",
+                            "Swap the volume and brightness gesture zones",
+                            UiIcon.Swap,
+                            checked = settings.player.gestures.swapVolumeAndBrightness,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        gestures = settings.player.gestures.copy(swapVolumeAndBrightness = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Horizontal seek gesture",
+                            "Swipe horizontally to seek through playback",
+                            UiIcon.Reorder,
+                            checked = settings.player.gestures.horizontalSeekGesture,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        gestures = settings.player.gestures.copy(horizontalSeekGesture = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Skip length",
+                            options = listOf("5", "10", "15", "30", "45", "60"),
+                            selected = settings.player.gestures.skipLengthSeconds.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            gestures = settings.player.gestures.copy(skipLengthSeconds = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Left double tap",
+                            options = ChimahonPlayerGestureAction.entries.map { it.title },
+                            selected = settings.player.gestures.leftDoubleTap.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerGestureAction.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            gestures = settings.player.gestures.copy(leftDoubleTap = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Center double tap",
+                            options = ChimahonPlayerGestureAction.entries.map { it.title },
+                            selected = settings.player.gestures.centerDoubleTap.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerGestureAction.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            gestures = settings.player.gestures.copy(centerDoubleTap = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Right double tap",
+                            options = ChimahonPlayerGestureAction.entries.map { it.title },
+                            selected = settings.player.gestures.rightDoubleTap.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerGestureAction.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            gestures = settings.player.gestures.copy(rightDoubleTap = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Skip intro and PiP") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Skip intro button",
+                            "Show a skip-intro action when intro timing is known",
+                            UiIcon.SkipNext,
+                            checked = settings.player.skipIntroEnabled,
+                            onCheckedChange = { onPlayerSettingsChange(settings.player.copy(skipIntroEnabled = it)) },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Auto skip intro",
+                            "Skip known intros without prompting",
+                            UiIcon.SkipNext,
+                            checked = settings.player.autoSkipIntro,
+                            onCheckedChange = { onPlayerSettingsChange(settings.player.copy(autoSkipIntro = it)) },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Picture-in-picture",
+                            "Allow platform PiP where supported",
+                            UiIcon.PictureInPicture,
+                            checked = settings.player.pipEnabled,
+                            onCheckedChange = { onPlayerSettingsChange(settings.player.copy(pipEnabled = it)) },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Cast",
+                            "Enable cast controls where supported",
+                            UiIcon.Cast,
+                            checked = settings.player.castEnabled,
+                            onCheckedChange = { onPlayerSettingsChange(settings.player.copy(castEnabled = it)) },
+                        )
+                    }
+                    item { ListGroupHeader("Subtitles and audio") }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Subtitle font size",
+                            options = listOf("35", "45", "55", "65", "75", "90"),
+                            selected = settings.player.subtitles.fontSize.toString(),
+                            onSelect = { selected ->
+                                selected.toIntOrNull()?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(fontSize = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Subtitle border",
+                            options = ChimahonSubtitleBorderStyle.entries.map { it.title },
+                            selected = settings.player.subtitles.borderStyle.title,
+                            onSelect = { selected ->
+                                ChimahonSubtitleBorderStyle.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            subtitles = settings.player.subtitles.copy(borderStyle = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Override ASS subtitles",
+                            "Apply Chimahon subtitle styling over embedded ASS styles",
+                            UiIcon.Edit,
+                            checked = settings.player.subtitles.overrideAss,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        subtitles = settings.player.subtitles.copy(overrideAss = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Audio channels",
+                            options = ChimahonAudioChannels.entries.map { it.title },
+                            selected = settings.player.audio.channels.title,
+                            onSelect = { selected ->
+                                ChimahonAudioChannels.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            audio = settings.player.audio.copy(channels = it),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    item {
+                        PreferenceSwitchRow(
+                            "Pitch correction",
+                            "Preserve pitch while changing playback speed",
+                            UiIcon.Volume,
+                            checked = settings.player.audio.pitchCorrection,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        audio = settings.player.audio.copy(pitchCorrection = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item { ListGroupHeader("Decoder") }
+                    item {
+                        PreferenceSwitchRow(
+                            "Hardware decoding",
+                            "Try platform hardware decoding first",
+                            UiIcon.Settings,
+                            checked = settings.player.decoder.tryHardwareDecoding,
+                            onCheckedChange = {
+                                onPlayerSettingsChange(
+                                    settings.player.copy(
+                                        decoder = settings.player.decoder.copy(tryHardwareDecoding = it),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        SettingsChoiceRow(
+                            title = "Debanding",
+                            options = ChimahonPlayerDebanding.entries.map { it.title },
+                            selected = settings.player.decoder.debanding.title,
+                            onSelect = { selected ->
+                                ChimahonPlayerDebanding.entries.firstOrNull { it.title == selected }?.let {
+                                    onPlayerSettingsChange(
+                                        settings.player.copy(
+                                            decoder = settings.player.decoder.copy(debanding = it),
+                                        ),
+                                    )
+                                }
                             },
                         )
                     }
@@ -22369,8 +23494,11 @@ private fun MorePage.morePageSubtitle(snapshot: ChimahonSnapshot): String = when
     MorePage.Storage -> "Cache, files, and maintenance"
     MorePage.Settings -> "Reader, library, downloads, and app preferences"
     MorePage.AppearanceSettings -> "Theme, navigation, and display density"
+    MorePage.NavigationSettings -> "Start screen and tab layout"
     MorePage.LibrarySettings -> "Categories, filters, sorting, and updates"
+    MorePage.AnimeLibrarySettings -> "Anime filters, badges, grouping, and episodes"
     MorePage.ReaderSettings -> "Viewer, controls, page loading, and behavior"
+    MorePage.PlayerSettings -> "Playback, gestures, subtitles, and audio"
     MorePage.DownloadSettings -> "Offline reading, queue, and cleanup"
     MorePage.TrackingSettings -> "Trackers, sync, and category scope"
     MorePage.ConnectionsSettings -> "External links and Discord activity"
@@ -24180,7 +25308,12 @@ private fun MobileListItem(
 }
 
 @Composable
-private fun MobileBanner(title: String, detail: String, action: String) {
+private fun MobileBanner(
+    title: String,
+    detail: String,
+    action: String,
+    onAction: () -> Unit = {},
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -24193,7 +25326,7 @@ private fun MobileBanner(title: String, detail: String, action: String) {
             Label(title, ChimahonPalette.primary, 15, weight = FontWeight.SemiBold)
             Label(detail, ChimahonPalette.onPrimaryContainer, 12, maxLines = 2, modifier = Modifier.padding(top = 4.dp))
         }
-        TextButtonLike(action, onClick = {})
+        TextButtonLike(action, onClick = onAction)
     }
 }
 
@@ -24654,6 +25787,7 @@ private fun ChimahonUiState.badgeFor(tab: HomeTab): Int? {
     if (this !is ChimahonUiState.Ready) return null
     return when (tab) {
         HomeTab.Library -> snapshot.library.size
+        HomeTab.Anime -> null
         HomeTab.Updates -> (snapshot.updates.size + snapshot.updateIssues.size).takeIf { it > 0 }
         HomeTab.History -> snapshot.history.size.takeIf { it > 0 }
         HomeTab.Browse -> snapshot.summary.sourceCount.takeIf { it > 0 }
@@ -24665,6 +25799,7 @@ private fun HomeTab.subtitle(state: ChimahonUiState): String {
     val snapshot = (state as? ChimahonUiState.Ready)?.snapshot
     return when (this) {
         HomeTab.Library -> snapshot?.let { "${it.library.size} manga in your library" } ?: "Your manga library"
+        HomeTab.Anime -> "Anime library and player"
         HomeTab.Updates -> snapshot?.let { "${it.updates.size} recent chapter update(s)" } ?: "Recent chapters"
         HomeTab.History -> snapshot?.let { "${it.history.size} reading history item(s)" } ?: "Recently read manga"
         HomeTab.Browse -> snapshot?.let { "${it.summary.sourceCount} source(s), ${it.summary.extensionCount} extension(s)" } ?: "Sources and extensions"
@@ -25139,8 +26274,6 @@ private fun List<ChimahonChapterEntry>.sortedForDetail(
 ): List<ChimahonChapterEntry> {
     val comparator = when (sort) {
         ChapterSort.SourceOrder -> compareBy<ChimahonChapterEntry> { sourceOrder[it.id] ?: Int.MAX_VALUE }
-            .thenBy { it.chapterNumber }
-            .thenBy { it.name.lowercase() }
         ChapterSort.ChapterNumber -> compareBy<ChimahonChapterEntry> { it.chapterNumber }
             .thenBy { it.name.lowercase() }
         ChapterSort.UploadDate -> compareBy<ChimahonChapterEntry> { it.dateUpload }
@@ -25162,8 +26295,6 @@ private fun List<ChimahonRemoteChapterEntry>.sortedForRemoteDetail(
 ): List<ChimahonRemoteChapterEntry> {
     val comparator = when (sort) {
         ChapterSort.SourceOrder -> compareBy<ChimahonRemoteChapterEntry> { it.sourceOrder }
-            .thenBy { it.chapterNumber }
-            .thenBy { it.name.lowercase() }
         ChapterSort.ChapterNumber -> compareBy<ChimahonRemoteChapterEntry> { it.chapterNumber }
             .thenBy { it.name.lowercase() }
             .thenBy { it.sourceOrder }
@@ -25373,6 +26504,7 @@ private enum class HomeTab(
     val icon: UiIcon,
 ) {
     Library("Library", UiIcon.Library),
+    Anime("Anime", UiIcon.PlayCircle),
     Updates("Updates", UiIcon.Updates),
     History("History", UiIcon.History),
     Browse("Browse", UiIcon.Browse),
@@ -25381,10 +26513,63 @@ private enum class HomeTab(
 
 private fun ChimahonStartScreen.toHomeTab(): HomeTab = when (this) {
     ChimahonStartScreen.Library -> HomeTab.Library
+    ChimahonStartScreen.Anime -> HomeTab.Anime
     ChimahonStartScreen.Updates -> HomeTab.Updates
     ChimahonStartScreen.History -> HomeTab.History
     ChimahonStartScreen.Browse -> HomeTab.Browse
+    ChimahonStartScreen.Dictionary,
+    ChimahonStartScreen.Novels,
     ChimahonStartScreen.More -> HomeTab.More
+}
+
+private fun ChimahonNavigationSettings.visibleHomeTabs(): List<HomeTab> {
+    val tabs = tabLayout
+        .filter { it.section == ChimahonNavigationSection.Navbar }
+        .mapNotNull { it.tab.toHomeTabOrNull() }
+        .distinct()
+        .toMutableList()
+    if (tabs.isEmpty()) {
+        tabs += listOf(HomeTab.Library, HomeTab.Anime, HomeTab.History, HomeTab.Browse)
+    }
+    if (showUpdatesTab && HomeTab.Updates !in tabs) {
+        val insertIndex = (tabs.indexOf(HomeTab.Anime) + 1).coerceAtLeast(1).coerceAtMost(tabs.size)
+        tabs.add(insertIndex, HomeTab.Updates)
+    }
+    if (!showHistoryTab) {
+        tabs.remove(HomeTab.History)
+    }
+    if (HomeTab.More !in tabs) tabs += HomeTab.More
+    return tabs.ifEmpty { listOf(HomeTab.Library, HomeTab.More) }
+}
+
+private fun ChimahonNavigationSettings.sectionFor(tab: ChimahonNavigationTab): ChimahonNavigationSection {
+    return tabLayout.firstOrNull { it.tab == tab }?.section
+        ?: ChimahonNavigationTabDefaults.firstOrNull { it.tab == tab }?.section
+        ?: ChimahonNavigationSection.Disabled
+}
+
+private fun ChimahonNavigationSettings.withTabSection(
+    tab: ChimahonNavigationTab,
+    section: ChimahonNavigationSection,
+): ChimahonNavigationSettings {
+    val nextLayout = ChimahonNavigationTab.entries.map { entryTab ->
+        val current = tabLayout.firstOrNull { it.tab == entryTab }
+            ?: ChimahonNavigationTabDefaults.firstOrNull { it.tab == entryTab }
+            ?: ChimahonNavigationTabEntry(entryTab, ChimahonNavigationSection.Disabled)
+        if (entryTab == tab) current.copy(section = section) else current
+    }
+    return copy(tabLayout = nextLayout)
+}
+
+private fun ChimahonNavigationTab.toHomeTabOrNull(): HomeTab? = when (this) {
+    ChimahonNavigationTab.Library -> HomeTab.Library
+    ChimahonNavigationTab.Anime -> HomeTab.Anime
+    ChimahonNavigationTab.Updates -> HomeTab.Updates
+    ChimahonNavigationTab.History -> HomeTab.History
+    ChimahonNavigationTab.Browse -> HomeTab.Browse
+    ChimahonNavigationTab.Novels,
+    ChimahonNavigationTab.Dictionary,
+    -> null
 }
 
 private enum class BrowseSection(val title: String) {
@@ -25416,6 +26601,7 @@ private const val CHIMAHON_ISSUES_URL = "https://github.com/sohilsayed/chimahon/
 
 private enum class UiIcon {
     Library,
+    PlayCircle,
     Updates,
     History,
     Browse,
@@ -25462,6 +26648,10 @@ private enum class UiIcon {
     Rotation,
     PageLayout,
     ShiftPage,
+    PictureInPicture,
+    Cast,
+    Edit,
+    Volume,
     Close,
 }
 
@@ -25483,6 +26673,7 @@ private fun IconGlyph(
 private val UiIcon.imageVector: ImageVector
     get() = when (this) {
         UiIcon.Library -> Icons.Outlined.CollectionsBookmark
+        UiIcon.PlayCircle -> Icons.Outlined.PlayCircle
         UiIcon.Updates -> Icons.Outlined.NewReleases
         UiIcon.History -> Icons.Outlined.History
         UiIcon.Browse -> Icons.Outlined.Explore
@@ -25529,6 +26720,10 @@ private val UiIcon.imageVector: ImageVector
         UiIcon.Rotation -> Icons.Outlined.ScreenRotation
         UiIcon.PageLayout -> Icons.Outlined.ViewColumn
         UiIcon.ShiftPage -> Icons.Outlined.SwapHoriz
+        UiIcon.PictureInPicture -> Icons.Outlined.PictureInPictureAlt
+        UiIcon.Cast -> Icons.Outlined.Cast
+        UiIcon.Edit -> Icons.Outlined.Edit
+        UiIcon.Volume -> Icons.Outlined.VolumeUp
         UiIcon.Close -> Icons.Outlined.Close
     }
 

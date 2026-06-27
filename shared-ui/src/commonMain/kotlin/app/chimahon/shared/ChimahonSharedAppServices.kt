@@ -1404,6 +1404,12 @@ class ChimahonSharedAppServices private constructor(
         return settingsRepository.saveLibrarySettings(settings)
     }
 
+    suspend fun saveAnimeLibrarySettings(
+        settings: ChimahonAnimeLibrarySettings,
+    ): ChimahonAnimeLibrarySettings {
+        return settingsRepository.saveAnimeLibrarySettings(settings)
+    }
+
     suspend fun saveDownloadPreferences(
         settings: ChimahonDownloadPreferences,
     ): ChimahonDownloadPreferences {
@@ -1412,6 +1418,14 @@ class ChimahonSharedAppServices private constructor(
 
     suspend fun saveBrowseSettings(settings: ChimahonBrowseSettings): ChimahonBrowseSettings {
         return settingsRepository.saveBrowseSettings(settings)
+    }
+
+    suspend fun saveNavigationSettings(settings: ChimahonNavigationSettings): ChimahonNavigationSettings {
+        return settingsRepository.saveNavigationSettings(settings)
+    }
+
+    suspend fun savePlayerSettings(settings: ChimahonPlayerSettings): ChimahonPlayerSettings {
+        return settingsRepository.savePlayerSettings(settings)
     }
 
     suspend fun saveTrackingSettings(settings: ChimahonTrackingSettings): ChimahonTrackingSettings {

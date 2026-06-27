@@ -10,8 +10,11 @@ data class ChimahonSettings(
     val appearance: ChimahonAppearanceSettings = ChimahonAppearanceSettings(),
     val reader: ChimahonReaderSettings = ChimahonReaderSettings(),
     val library: ChimahonLibrarySettings = ChimahonLibrarySettings(),
+    val animeLibrary: ChimahonAnimeLibrarySettings = ChimahonAnimeLibrarySettings(),
     val downloads: ChimahonDownloadPreferences = ChimahonDownloadPreferences(),
     val browse: ChimahonBrowseSettings = ChimahonBrowseSettings(),
+    val navigation: ChimahonNavigationSettings = ChimahonNavigationSettings(),
+    val player: ChimahonPlayerSettings = ChimahonPlayerSettings(),
     val tracking: ChimahonTrackingSettings = ChimahonTrackingSettings(),
     val connections: ChimahonConnectionSettings = ChimahonConnectionSettings(),
     val dictionary: ChimahonDictionarySettings = ChimahonDictionarySettings(),
@@ -128,11 +131,52 @@ enum class ChimahonDateFormat(val title: String) {
 
 enum class ChimahonStartScreen(val title: String) {
     Library("Library"),
+    Anime("Anime"),
     Updates("Updates"),
     History("History"),
     Browse("Browse"),
+    Dictionary("Dictionary"),
+    Novels("Novels"),
     More("More"),
 }
+
+data class ChimahonNavigationSettings(
+    val tabLayout: List<ChimahonNavigationTabEntry> = ChimahonNavigationTabDefaults,
+    val startScreen: ChimahonStartScreen = ChimahonStartScreen.Library,
+    val showUpdatesTab: Boolean = false,
+    val showHistoryTab: Boolean = true,
+)
+
+data class ChimahonNavigationTabEntry(
+    val tab: ChimahonNavigationTab,
+    val section: ChimahonNavigationSection,
+)
+
+enum class ChimahonNavigationTab(val key: String, val title: String) {
+    Library("Library", "Library"),
+    Novels("Novels", "Novels"),
+    Anime("Anime", "Anime"),
+    Updates("Updates", "Updates"),
+    History("History", "History"),
+    Browse("Browse", "Browse"),
+    Dictionary("Dictionary", "Dictionary"),
+}
+
+enum class ChimahonNavigationSection(val wireName: String, val title: String) {
+    Navbar("navbar", "Navigation bar"),
+    More("more", "More"),
+    Disabled("disabled", "Disabled"),
+}
+
+val ChimahonNavigationTabDefaults: List<ChimahonNavigationTabEntry> = listOf(
+    ChimahonNavigationTabEntry(ChimahonNavigationTab.Library, ChimahonNavigationSection.Navbar),
+    ChimahonNavigationTabEntry(ChimahonNavigationTab.Novels, ChimahonNavigationSection.Navbar),
+    ChimahonNavigationTabEntry(ChimahonNavigationTab.Anime, ChimahonNavigationSection.Navbar),
+    ChimahonNavigationTabEntry(ChimahonNavigationTab.Updates, ChimahonNavigationSection.More),
+    ChimahonNavigationTabEntry(ChimahonNavigationTab.History, ChimahonNavigationSection.Navbar),
+    ChimahonNavigationTabEntry(ChimahonNavigationTab.Browse, ChimahonNavigationSection.Navbar),
+    ChimahonNavigationTabEntry(ChimahonNavigationTab.Dictionary, ChimahonNavigationSection.Navbar),
+)
 
 data class ChimahonReaderSettings(
     val mode: ChimahonReaderMode = ChimahonReaderMode.Webtoon,
@@ -361,7 +405,9 @@ data class ChimahonLibrarySettings(
 
 enum class ChimahonLibraryDisplayMode {
     ComfortableGrid,
+    ComfortableGridPanorama,
     CompactGrid,
+    CoverOnlyGrid,
     List,
 }
 
@@ -401,6 +447,49 @@ enum class ChimahonChapterSwipeAction(val title: String) {
     Disabled("Disabled"),
     ToggleBookmark("Bookmark"),
     ToggleRead("Mark read"),
+    Download("Download"),
+}
+
+data class ChimahonAnimeLibrarySettings(
+    val displayMode: ChimahonLibraryDisplayMode = ChimahonLibraryDisplayMode.CompactGrid,
+    val gridColumnsPortrait: Int = 0,
+    val gridColumnsLandscape: Int = 0,
+    val defaultCategoryId: Int = -1,
+    val categorizedDisplaySettings: Boolean = false,
+    val showCategoryTabs: Boolean = true,
+    val showCategoryItemCount: Boolean = false,
+    val showUnseenBadges: Boolean = true,
+    val showDownloadedBadges: Boolean = false,
+    val showLocalBadges: Boolean = true,
+    val showLanguageBadges: Boolean = false,
+    val showContinueWatchingButtons: Boolean = false,
+    val sort: ChimahonLibrarySort = ChimahonLibrarySort.Alphabetical,
+    val sortAscending: Boolean = true,
+    val downloadedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val unseenFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val startedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val bookmarkedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val completedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val fillerFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val trackedFilter: ChimahonFilterMode = ChimahonFilterMode.Any,
+    val groupBy: ChimahonLibraryGroup = ChimahonLibraryGroup.Default,
+    val updateRestrictions: List<String> = listOf("Outside release period"),
+    val swipeToStartAction: ChimahonEpisodeSwipeAction = ChimahonEpisodeSwipeAction.ToggleSeen,
+    val swipeToEndAction: ChimahonEpisodeSwipeAction = ChimahonEpisodeSwipeAction.ToggleSeen,
+)
+
+enum class ChimahonLibraryGroup(val title: String) {
+    Default("Default"),
+    Source("Source"),
+    Status("Status"),
+    TrackingStatus("Tracking status"),
+}
+
+enum class ChimahonEpisodeSwipeAction(val title: String) {
+    Disabled("Disabled"),
+    ToggleBookmark("Bookmark"),
+    ToggleSeen("Mark seen"),
+    ToggleFiller("Mark filler"),
     Download("Download"),
 }
 
@@ -448,6 +537,185 @@ enum class ChimahonBrowseSourceDisplayMode {
     List,
     CompactList,
     Grid,
+}
+
+data class ChimahonPlayerSettings(
+    val preserveWatchingPosition: Boolean = false,
+    val progressPreference: Double = 0.85,
+    val defaultOrientation: ChimahonPlayerOrientation = ChimahonPlayerOrientation.SensorLandscape,
+    val allowGesturesInPanels: Boolean = false,
+    val showLoadingCircle: Boolean = true,
+    val showCurrentEpisode: Boolean = true,
+    val rememberBrightness: Boolean = false,
+    val rememberedBrightness: Double = -1.0,
+    val rememberVolume: Boolean = false,
+    val rememberedVolume: Double = -1.0,
+    val showFailedHosters: Boolean = false,
+    val showEmptyHosters: Boolean = false,
+    val fullscreen: Boolean = true,
+    val hideControls: Boolean = false,
+    val displayVolumePercent: Boolean = true,
+    val showSystemStatusBar: Boolean = false,
+    val reduceMotion: Boolean = false,
+    val controlsHideDelayMillis: Int = 4000,
+    val panelOpacityPercent: Int = 60,
+    val skipIntroEnabled: Boolean = true,
+    val autoSkipIntro: Boolean = false,
+    val netflixStyleSkipIntro: Boolean = false,
+    val skipIntroWaitSeconds: Int = 5,
+    val aniSkipEnabled: Boolean = false,
+    val disableAniSkipOnChapters: Boolean = true,
+    val pipEnabled: Boolean = true,
+    val pipEpisodeToasts: Boolean = true,
+    val pipOnExit: Boolean = false,
+    val pipReplaceWithPrevious: Boolean = false,
+    val castEnabled: Boolean = false,
+    val alwaysUseExternalPlayer: Boolean = false,
+    val externalPlayerPackage: String = "",
+    val playerSpeed: Double = 1.0,
+    val speedPresets: List<String> = listOf(
+        "0.25",
+        "0.5",
+        "0.75",
+        "1.0",
+        "1.25",
+        "1.5",
+        "1.75",
+        "2.0",
+        "2.5",
+        "3.0",
+        "3.5",
+        "4.0",
+    ),
+    val invertDuration: Boolean = false,
+    val aspect: ChimahonPlayerAspect = ChimahonPlayerAspect.Fit,
+    val autoplayEnabled: Boolean = false,
+    val gestures: ChimahonPlayerGestureSettings = ChimahonPlayerGestureSettings(),
+    val decoder: ChimahonPlayerDecoderSettings = ChimahonPlayerDecoderSettings(),
+    val subtitles: ChimahonPlayerSubtitleSettings = ChimahonPlayerSubtitleSettings(),
+    val audio: ChimahonPlayerAudioSettings = ChimahonPlayerAudioSettings(),
+    val advanced: ChimahonPlayerAdvancedSettings = ChimahonPlayerAdvancedSettings(),
+)
+
+data class ChimahonPlayerGestureSettings(
+    val volumeBrightnessGestures: Boolean = true,
+    val swapVolumeAndBrightness: Boolean = false,
+    val horizontalSeekGesture: Boolean = true,
+    val showSeekBar: Boolean = false,
+    val defaultIntroLengthSeconds: Int = 85,
+    val skipLengthSeconds: Int = 10,
+    val smoothSeek: Boolean = false,
+    val leftDoubleTap: ChimahonPlayerGestureAction = ChimahonPlayerGestureAction.Seek,
+    val centerDoubleTap: ChimahonPlayerGestureAction = ChimahonPlayerGestureAction.PlayPause,
+    val rightDoubleTap: ChimahonPlayerGestureAction = ChimahonPlayerGestureAction.Seek,
+    val mediaPrevious: ChimahonPlayerGestureAction = ChimahonPlayerGestureAction.Switch,
+    val mediaPlayPause: ChimahonPlayerGestureAction = ChimahonPlayerGestureAction.PlayPause,
+    val mediaNext: ChimahonPlayerGestureAction = ChimahonPlayerGestureAction.Switch,
+)
+
+data class ChimahonPlayerDecoderSettings(
+    val tryHardwareDecoding: Boolean = true,
+    val gpuNext: Boolean = false,
+    val debanding: ChimahonPlayerDebanding = ChimahonPlayerDebanding.None,
+    val useYuv420p: Boolean = true,
+    val brightnessFilter: Int = 0,
+    val saturationFilter: Int = 0,
+    val contrastFilter: Int = 0,
+    val gammaFilter: Int = 0,
+    val hueFilter: Int = 0,
+)
+
+data class ChimahonPlayerSubtitleSettings(
+    val preferredLanguages: String = "",
+    val whitelist: String = "",
+    val blacklist: String = "",
+    val jimakuApiKey: String = "",
+    val jimakuTitle: String = "",
+    val screenshotSubtitles: Boolean = false,
+    val font: String = "Sans Serif",
+    val fontSize: Int = 55,
+    val fontScale: Double = 1.0,
+    val borderSize: Int = 3,
+    val bold: Boolean = false,
+    val italic: Boolean = false,
+    val textColorArgb: Int = -1,
+    val borderColorArgb: Int = -16777216,
+    val borderStyle: ChimahonSubtitleBorderStyle = ChimahonSubtitleBorderStyle.OutlineAndShadow,
+    val shadowOffset: Int = 0,
+    val backgroundColorArgb: Int = 0,
+    val justification: ChimahonSubtitleJustification = ChimahonSubtitleJustification.Auto,
+    val positionPercent: Int = 100,
+    val overrideAss: Boolean = false,
+    val delayMillis: Int = 0,
+    val speed: Double = 1.0,
+    val secondaryDelayMillis: Int = 0,
+)
+
+data class ChimahonPlayerAudioSettings(
+    val preferredLanguages: String = "",
+    val pitchCorrection: Boolean = true,
+    val channels: ChimahonAudioChannels = ChimahonAudioChannels.AutoSafe,
+    val volumeBoostCap: Int = 30,
+    val delayMillis: Int = 0,
+)
+
+data class ChimahonPlayerAdvancedSettings(
+    val mpvScriptsEnabled: Boolean = false,
+    val mpvConfig: String = "",
+    val mpvInput: String = "",
+    val statisticsPage: Int = 0,
+)
+
+enum class ChimahonPlayerOrientation(val title: String) {
+    Free("Free"),
+    Portrait("Portrait"),
+    Landscape("Landscape"),
+    SensorPortrait("Sensor portrait"),
+    SensorLandscape("Sensor landscape"),
+    ReversePortrait("Reverse portrait"),
+    ReverseLandscape("Reverse landscape"),
+}
+
+enum class ChimahonPlayerAspect(val title: String) {
+    Fit("Fit"),
+    Crop("Crop"),
+    Stretch("Stretch"),
+}
+
+enum class ChimahonPlayerGestureAction(val title: String) {
+    None("None"),
+    Seek("Seek"),
+    PlayPause("Play/pause"),
+    Switch("Switch episode"),
+}
+
+enum class ChimahonPlayerDebanding(val title: String) {
+    None("None"),
+    Weak("Weak"),
+    Medium("Medium"),
+    Strong("Strong"),
+}
+
+enum class ChimahonSubtitleBorderStyle(val title: String) {
+    None("None"),
+    Outline("Outline"),
+    Shadow("Shadow"),
+    OutlineAndShadow("Outline and shadow"),
+}
+
+enum class ChimahonSubtitleJustification(val title: String) {
+    Left("Left"),
+    Center("Center"),
+    Right("Right"),
+    Auto("Auto"),
+}
+
+enum class ChimahonAudioChannels(val title: String) {
+    Auto("Auto"),
+    AutoSafe("Auto safe"),
+    Mono("Mono"),
+    Stereo("Stereo"),
+    ReverseStereo("Reverse stereo"),
 }
 
 data class ChimahonTrackingSettings(
@@ -600,8 +868,11 @@ internal class ChimahonSettingsRepository(
             appearance = loadAppearanceSettings(),
             reader = loadReaderSettings(),
             library = loadLibrarySettings(),
+            animeLibrary = loadAnimeLibrarySettings(),
             downloads = loadDownloadSettings(),
             browse = loadBrowseSettings(),
+            navigation = loadNavigationSettings(),
+            player = loadPlayerSettings(),
             tracking = loadTrackingSettings(),
             connections = loadConnectionSettings(),
             dictionary = loadDictionarySettings(),
@@ -1119,6 +1390,116 @@ internal class ChimahonSettingsRepository(
         return settings
     }
 
+    suspend fun loadAnimeLibrarySettings(): ChimahonAnimeLibrarySettings {
+        return ChimahonAnimeLibrarySettings(
+            displayMode = readEnum(
+                ANIME_LIBRARY_DISPLAY_MODE_KEY,
+                ChimahonLibraryDisplayMode.CompactGrid,
+            ),
+            gridColumnsPortrait = settingsStore.readInt(ANIME_LIBRARY_GRID_COLUMNS_PORTRAIT_KEY),
+            gridColumnsLandscape = settingsStore.readInt(ANIME_LIBRARY_GRID_COLUMNS_LANDSCAPE_KEY),
+            defaultCategoryId = settingsStore.readInt(
+                ANIME_LIBRARY_DEFAULT_CATEGORY_ID_KEY,
+                defaultValue = -1,
+            ),
+            categorizedDisplaySettings = settingsStore.readBoolean(
+                ANIME_LIBRARY_CATEGORIZED_DISPLAY_SETTINGS_KEY,
+            ),
+            showCategoryTabs = settingsStore.readBoolean(
+                ANIME_LIBRARY_CATEGORY_TABS_KEY,
+                defaultValue = true,
+            ),
+            showCategoryItemCount = settingsStore.readBoolean(ANIME_LIBRARY_CATEGORY_ITEM_COUNT_KEY),
+            showUnseenBadges = settingsStore.readBoolean(
+                ANIME_LIBRARY_UNSEEN_BADGES_KEY,
+                defaultValue = true,
+            ),
+            showDownloadedBadges = settingsStore.readBoolean(ANIME_LIBRARY_DOWNLOADED_BADGES_KEY),
+            showLocalBadges = settingsStore.readBoolean(
+                ANIME_LIBRARY_LOCAL_BADGES_KEY,
+                defaultValue = true,
+            ),
+            showLanguageBadges = settingsStore.readBoolean(ANIME_LIBRARY_LANGUAGE_BADGES_KEY),
+            showContinueWatchingButtons = settingsStore.readBoolean(
+                ANIME_LIBRARY_CONTINUE_WATCHING_BUTTONS_KEY,
+            ),
+            sort = readEnum(ANIME_LIBRARY_SORT_KEY, ChimahonLibrarySort.Alphabetical),
+            sortAscending = settingsStore.readBoolean(
+                ANIME_LIBRARY_SORT_ASCENDING_KEY,
+                defaultValue = true,
+            ),
+            downloadedFilter = readEnum(
+                ANIME_LIBRARY_FILTER_DOWNLOADED_KEY,
+                ChimahonFilterMode.Any,
+            ),
+            unseenFilter = readEnum(ANIME_LIBRARY_FILTER_UNSEEN_KEY, ChimahonFilterMode.Any),
+            startedFilter = readEnum(ANIME_LIBRARY_FILTER_STARTED_KEY, ChimahonFilterMode.Any),
+            bookmarkedFilter = readEnum(
+                ANIME_LIBRARY_FILTER_BOOKMARKED_KEY,
+                ChimahonFilterMode.Any,
+            ),
+            completedFilter = readEnum(ANIME_LIBRARY_FILTER_COMPLETED_KEY, ChimahonFilterMode.Any),
+            fillerFilter = readEnum(ANIME_LIBRARY_FILTER_FILLER_KEY, ChimahonFilterMode.Any),
+            trackedFilter = readEnum(ANIME_LIBRARY_FILTER_TRACKED_KEY, ChimahonFilterMode.Any),
+            groupBy = readEnum(ANIME_LIBRARY_GROUP_BY_KEY, ChimahonLibraryGroup.Default),
+            updateRestrictions = readStringList(
+                ANIME_LIBRARY_UPDATE_RESTRICTIONS_KEY,
+                defaultValue = listOf("Outside release period"),
+            ),
+            swipeToStartAction = readEnum(
+                ANIME_LIBRARY_SWIPE_TO_START_ACTION_KEY,
+                ChimahonEpisodeSwipeAction.ToggleSeen,
+            ),
+            swipeToEndAction = readEnum(
+                ANIME_LIBRARY_SWIPE_TO_END_ACTION_KEY,
+                ChimahonEpisodeSwipeAction.ToggleSeen,
+            ),
+        )
+    }
+
+    suspend fun saveAnimeLibrarySettings(
+        settings: ChimahonAnimeLibrarySettings,
+    ): ChimahonAnimeLibrarySettings {
+        settingsStore.writeString(ANIME_LIBRARY_DISPLAY_MODE_KEY, settings.displayMode.name)
+        settingsStore.writeInt(ANIME_LIBRARY_GRID_COLUMNS_PORTRAIT_KEY, settings.gridColumnsPortrait)
+        settingsStore.writeInt(ANIME_LIBRARY_GRID_COLUMNS_LANDSCAPE_KEY, settings.gridColumnsLandscape)
+        settingsStore.writeInt(ANIME_LIBRARY_DEFAULT_CATEGORY_ID_KEY, settings.defaultCategoryId)
+        settingsStore.writeBoolean(
+            ANIME_LIBRARY_CATEGORIZED_DISPLAY_SETTINGS_KEY,
+            settings.categorizedDisplaySettings,
+        )
+        settingsStore.writeBoolean(ANIME_LIBRARY_CATEGORY_TABS_KEY, settings.showCategoryTabs)
+        settingsStore.writeBoolean(ANIME_LIBRARY_CATEGORY_ITEM_COUNT_KEY, settings.showCategoryItemCount)
+        settingsStore.writeBoolean(ANIME_LIBRARY_UNSEEN_BADGES_KEY, settings.showUnseenBadges)
+        settingsStore.writeBoolean(ANIME_LIBRARY_DOWNLOADED_BADGES_KEY, settings.showDownloadedBadges)
+        settingsStore.writeBoolean(ANIME_LIBRARY_LOCAL_BADGES_KEY, settings.showLocalBadges)
+        settingsStore.writeBoolean(ANIME_LIBRARY_LANGUAGE_BADGES_KEY, settings.showLanguageBadges)
+        settingsStore.writeBoolean(
+            ANIME_LIBRARY_CONTINUE_WATCHING_BUTTONS_KEY,
+            settings.showContinueWatchingButtons,
+        )
+        settingsStore.writeString(ANIME_LIBRARY_SORT_KEY, settings.sort.name)
+        settingsStore.writeBoolean(ANIME_LIBRARY_SORT_ASCENDING_KEY, settings.sortAscending)
+        settingsStore.writeString(ANIME_LIBRARY_FILTER_DOWNLOADED_KEY, settings.downloadedFilter.name)
+        settingsStore.writeString(ANIME_LIBRARY_FILTER_UNSEEN_KEY, settings.unseenFilter.name)
+        settingsStore.writeString(ANIME_LIBRARY_FILTER_STARTED_KEY, settings.startedFilter.name)
+        settingsStore.writeString(ANIME_LIBRARY_FILTER_BOOKMARKED_KEY, settings.bookmarkedFilter.name)
+        settingsStore.writeString(ANIME_LIBRARY_FILTER_COMPLETED_KEY, settings.completedFilter.name)
+        settingsStore.writeString(ANIME_LIBRARY_FILTER_FILLER_KEY, settings.fillerFilter.name)
+        settingsStore.writeString(ANIME_LIBRARY_FILTER_TRACKED_KEY, settings.trackedFilter.name)
+        settingsStore.writeString(ANIME_LIBRARY_GROUP_BY_KEY, settings.groupBy.name)
+        writeStringList(ANIME_LIBRARY_UPDATE_RESTRICTIONS_KEY, settings.updateRestrictions)
+        settingsStore.writeString(
+            ANIME_LIBRARY_SWIPE_TO_START_ACTION_KEY,
+            settings.swipeToStartAction.name,
+        )
+        settingsStore.writeString(
+            ANIME_LIBRARY_SWIPE_TO_END_ACTION_KEY,
+            settings.swipeToEndAction.name,
+        )
+        return settings
+    }
+
     suspend fun loadDownloadSettings(): ChimahonDownloadPreferences {
         return ChimahonDownloadPreferences(
             wifiOnly = settingsStore.readBoolean(DOWNLOAD_WIFI_ONLY_KEY, defaultValue = true),
@@ -1258,6 +1639,340 @@ internal class ChimahonSettingsRepository(
         settingsStore.writeBoolean(BROWSE_FEED_TAB_IN_FRONT_KEY, settings.feedTabInFront)
         settingsStore.writeBoolean(BROWSE_HIDE_LIBRARY_FEED_ENTRIES_KEY, settings.hideLibraryFeedEntries)
         return settings
+    }
+
+    suspend fun loadNavigationSettings(): ChimahonNavigationSettings {
+        return ChimahonNavigationSettings(
+            tabLayout = parseNavigationTabLayout(
+                settingsStore.readString(NAVIGATION_TAB_LAYOUT_KEY),
+            ),
+            startScreen = readEnum(NAVIGATION_START_SCREEN_KEY, ChimahonStartScreen.Library),
+            showUpdatesTab = settingsStore.readBoolean(NAVIGATION_SHOW_UPDATES_TAB_KEY),
+            showHistoryTab = settingsStore.readBoolean(
+                NAVIGATION_SHOW_HISTORY_TAB_KEY,
+                defaultValue = true,
+            ),
+        )
+    }
+
+    suspend fun saveNavigationSettings(
+        settings: ChimahonNavigationSettings,
+    ): ChimahonNavigationSettings {
+        settingsStore.writeString(
+            NAVIGATION_TAB_LAYOUT_KEY,
+            serializeNavigationTabLayout(settings.tabLayout),
+        )
+        settingsStore.writeString(NAVIGATION_START_SCREEN_KEY, settings.startScreen.name)
+        settingsStore.writeBoolean(NAVIGATION_SHOW_UPDATES_TAB_KEY, settings.showUpdatesTab)
+        settingsStore.writeBoolean(NAVIGATION_SHOW_HISTORY_TAB_KEY, settings.showHistoryTab)
+        return settings
+    }
+
+    suspend fun loadPlayerSettings(): ChimahonPlayerSettings {
+        return ChimahonPlayerSettings(
+            preserveWatchingPosition = settingsStore.readBoolean(PLAYER_PRESERVE_POSITION_KEY),
+            progressPreference = readDouble(PLAYER_PROGRESS_PREFERENCE_KEY, defaultValue = 0.85),
+            defaultOrientation = readEnum(
+                PLAYER_DEFAULT_ORIENTATION_KEY,
+                ChimahonPlayerOrientation.SensorLandscape,
+            ),
+            allowGesturesInPanels = settingsStore.readBoolean(PLAYER_ALLOW_GESTURES_IN_PANELS_KEY),
+            showLoadingCircle = settingsStore.readBoolean(PLAYER_SHOW_LOADING_KEY, defaultValue = true),
+            showCurrentEpisode = settingsStore.readBoolean(
+                PLAYER_SHOW_CURRENT_EPISODE_KEY,
+                defaultValue = true,
+            ),
+            rememberBrightness = settingsStore.readBoolean(PLAYER_REMEMBER_BRIGHTNESS_KEY),
+            rememberedBrightness = readDouble(PLAYER_BRIGHTNESS_VALUE_KEY, defaultValue = -1.0),
+            rememberVolume = settingsStore.readBoolean(PLAYER_REMEMBER_VOLUME_KEY),
+            rememberedVolume = readDouble(PLAYER_VOLUME_VALUE_KEY, defaultValue = -1.0),
+            showFailedHosters = settingsStore.readBoolean(PLAYER_SHOW_FAILED_HOSTERS_KEY),
+            showEmptyHosters = settingsStore.readBoolean(PLAYER_SHOW_EMPTY_HOSTERS_KEY),
+            fullscreen = settingsStore.readBoolean(PLAYER_FULLSCREEN_KEY, defaultValue = true),
+            hideControls = settingsStore.readBoolean(PLAYER_HIDE_CONTROLS_KEY),
+            displayVolumePercent = settingsStore.readBoolean(
+                PLAYER_DISPLAY_VOLUME_PERCENT_KEY,
+                defaultValue = true,
+            ),
+            showSystemStatusBar = settingsStore.readBoolean(PLAYER_SHOW_SYSTEM_STATUS_BAR_KEY),
+            reduceMotion = settingsStore.readBoolean(PLAYER_REDUCE_MOTION_KEY),
+            controlsHideDelayMillis = settingsStore.readInt(
+                PLAYER_CONTROLS_HIDE_DELAY_KEY,
+                defaultValue = 4000,
+            ),
+            panelOpacityPercent = settingsStore.readInt(PLAYER_PANEL_OPACITY_KEY, defaultValue = 60),
+            skipIntroEnabled = settingsStore.readBoolean(PLAYER_SKIP_INTRO_ENABLED_KEY, defaultValue = true),
+            autoSkipIntro = settingsStore.readBoolean(PLAYER_AUTO_SKIP_INTRO_KEY),
+            netflixStyleSkipIntro = settingsStore.readBoolean(PLAYER_NETFLIX_STYLE_SKIP_INTRO_KEY),
+            skipIntroWaitSeconds = settingsStore.readInt(PLAYER_SKIP_INTRO_WAIT_KEY, defaultValue = 5),
+            aniSkipEnabled = settingsStore.readBoolean(PLAYER_ANI_SKIP_ENABLED_KEY),
+            disableAniSkipOnChapters = settingsStore.readBoolean(
+                PLAYER_DISABLE_ANI_SKIP_ON_CHAPTERS_KEY,
+                defaultValue = true,
+            ),
+            pipEnabled = settingsStore.readBoolean(PLAYER_PIP_ENABLED_KEY, defaultValue = true),
+            pipEpisodeToasts = settingsStore.readBoolean(
+                PLAYER_PIP_EPISODE_TOASTS_KEY,
+                defaultValue = true,
+            ),
+            pipOnExit = settingsStore.readBoolean(PLAYER_PIP_ON_EXIT_KEY),
+            pipReplaceWithPrevious = settingsStore.readBoolean(PLAYER_PIP_REPLACE_WITH_PREVIOUS_KEY),
+            castEnabled = settingsStore.readBoolean(PLAYER_CAST_ENABLED_KEY),
+            alwaysUseExternalPlayer = settingsStore.readBoolean(PLAYER_ALWAYS_EXTERNAL_KEY),
+            externalPlayerPackage = settingsStore.readString(PLAYER_EXTERNAL_PACKAGE_KEY) ?: "",
+            playerSpeed = readDouble(PLAYER_SPEED_KEY, defaultValue = 1.0),
+            speedPresets = readStringList(
+                PLAYER_SPEED_PRESETS_KEY,
+                defaultValue = ChimahonPlayerSettings().speedPresets,
+            ),
+            invertDuration = settingsStore.readBoolean(PLAYER_INVERT_DURATION_KEY),
+            aspect = readEnum(PLAYER_ASPECT_KEY, ChimahonPlayerAspect.Fit),
+            autoplayEnabled = settingsStore.readBoolean(PLAYER_AUTOPLAY_KEY),
+            gestures = loadPlayerGestureSettings(),
+            decoder = loadPlayerDecoderSettings(),
+            subtitles = loadPlayerSubtitleSettings(),
+            audio = loadPlayerAudioSettings(),
+            advanced = loadPlayerAdvancedSettings(),
+        )
+    }
+
+    suspend fun savePlayerSettings(settings: ChimahonPlayerSettings): ChimahonPlayerSettings {
+        settingsStore.writeBoolean(PLAYER_PRESERVE_POSITION_KEY, settings.preserveWatchingPosition)
+        writeDouble(PLAYER_PROGRESS_PREFERENCE_KEY, settings.progressPreference)
+        settingsStore.writeString(PLAYER_DEFAULT_ORIENTATION_KEY, settings.defaultOrientation.name)
+        settingsStore.writeBoolean(PLAYER_ALLOW_GESTURES_IN_PANELS_KEY, settings.allowGesturesInPanels)
+        settingsStore.writeBoolean(PLAYER_SHOW_LOADING_KEY, settings.showLoadingCircle)
+        settingsStore.writeBoolean(PLAYER_SHOW_CURRENT_EPISODE_KEY, settings.showCurrentEpisode)
+        settingsStore.writeBoolean(PLAYER_REMEMBER_BRIGHTNESS_KEY, settings.rememberBrightness)
+        writeDouble(PLAYER_BRIGHTNESS_VALUE_KEY, settings.rememberedBrightness)
+        settingsStore.writeBoolean(PLAYER_REMEMBER_VOLUME_KEY, settings.rememberVolume)
+        writeDouble(PLAYER_VOLUME_VALUE_KEY, settings.rememberedVolume)
+        settingsStore.writeBoolean(PLAYER_SHOW_FAILED_HOSTERS_KEY, settings.showFailedHosters)
+        settingsStore.writeBoolean(PLAYER_SHOW_EMPTY_HOSTERS_KEY, settings.showEmptyHosters)
+        settingsStore.writeBoolean(PLAYER_FULLSCREEN_KEY, settings.fullscreen)
+        settingsStore.writeBoolean(PLAYER_HIDE_CONTROLS_KEY, settings.hideControls)
+        settingsStore.writeBoolean(PLAYER_DISPLAY_VOLUME_PERCENT_KEY, settings.displayVolumePercent)
+        settingsStore.writeBoolean(PLAYER_SHOW_SYSTEM_STATUS_BAR_KEY, settings.showSystemStatusBar)
+        settingsStore.writeBoolean(PLAYER_REDUCE_MOTION_KEY, settings.reduceMotion)
+        settingsStore.writeInt(PLAYER_CONTROLS_HIDE_DELAY_KEY, settings.controlsHideDelayMillis)
+        settingsStore.writeInt(PLAYER_PANEL_OPACITY_KEY, settings.panelOpacityPercent)
+        settingsStore.writeBoolean(PLAYER_SKIP_INTRO_ENABLED_KEY, settings.skipIntroEnabled)
+        settingsStore.writeBoolean(PLAYER_AUTO_SKIP_INTRO_KEY, settings.autoSkipIntro)
+        settingsStore.writeBoolean(PLAYER_NETFLIX_STYLE_SKIP_INTRO_KEY, settings.netflixStyleSkipIntro)
+        settingsStore.writeInt(PLAYER_SKIP_INTRO_WAIT_KEY, settings.skipIntroWaitSeconds)
+        settingsStore.writeBoolean(PLAYER_ANI_SKIP_ENABLED_KEY, settings.aniSkipEnabled)
+        settingsStore.writeBoolean(
+            PLAYER_DISABLE_ANI_SKIP_ON_CHAPTERS_KEY,
+            settings.disableAniSkipOnChapters,
+        )
+        settingsStore.writeBoolean(PLAYER_PIP_ENABLED_KEY, settings.pipEnabled)
+        settingsStore.writeBoolean(PLAYER_PIP_EPISODE_TOASTS_KEY, settings.pipEpisodeToasts)
+        settingsStore.writeBoolean(PLAYER_PIP_ON_EXIT_KEY, settings.pipOnExit)
+        settingsStore.writeBoolean(PLAYER_PIP_REPLACE_WITH_PREVIOUS_KEY, settings.pipReplaceWithPrevious)
+        settingsStore.writeBoolean(PLAYER_CAST_ENABLED_KEY, settings.castEnabled)
+        settingsStore.writeBoolean(PLAYER_ALWAYS_EXTERNAL_KEY, settings.alwaysUseExternalPlayer)
+        settingsStore.writeString(PLAYER_EXTERNAL_PACKAGE_KEY, settings.externalPlayerPackage)
+        writeDouble(PLAYER_SPEED_KEY, settings.playerSpeed)
+        writeStringList(PLAYER_SPEED_PRESETS_KEY, settings.speedPresets)
+        settingsStore.writeBoolean(PLAYER_INVERT_DURATION_KEY, settings.invertDuration)
+        settingsStore.writeString(PLAYER_ASPECT_KEY, settings.aspect.name)
+        settingsStore.writeBoolean(PLAYER_AUTOPLAY_KEY, settings.autoplayEnabled)
+        savePlayerGestureSettings(settings.gestures)
+        savePlayerDecoderSettings(settings.decoder)
+        savePlayerSubtitleSettings(settings.subtitles)
+        savePlayerAudioSettings(settings.audio)
+        savePlayerAdvancedSettings(settings.advanced)
+        return settings
+    }
+
+    private suspend fun loadPlayerGestureSettings(): ChimahonPlayerGestureSettings {
+        return ChimahonPlayerGestureSettings(
+            volumeBrightnessGestures = settingsStore.readBoolean(
+                PLAYER_GESTURE_VOLUME_BRIGHTNESS_KEY,
+                defaultValue = true,
+            ),
+            swapVolumeAndBrightness = settingsStore.readBoolean(PLAYER_GESTURE_SWAP_SLIDERS_KEY),
+            horizontalSeekGesture = settingsStore.readBoolean(
+                PLAYER_GESTURE_HORIZONTAL_SEEK_KEY,
+                defaultValue = true,
+            ),
+            showSeekBar = settingsStore.readBoolean(PLAYER_GESTURE_SHOW_SEEKBAR_KEY),
+            defaultIntroLengthSeconds = settingsStore.readInt(
+                PLAYER_GESTURE_DEFAULT_INTRO_LENGTH_KEY,
+                defaultValue = 85,
+            ),
+            skipLengthSeconds = settingsStore.readInt(
+                PLAYER_GESTURE_SKIP_LENGTH_KEY,
+                defaultValue = 10,
+            ),
+            smoothSeek = settingsStore.readBoolean(PLAYER_GESTURE_SMOOTH_SEEK_KEY),
+            leftDoubleTap = readEnum(
+                PLAYER_GESTURE_LEFT_DOUBLE_TAP_KEY,
+                ChimahonPlayerGestureAction.Seek,
+            ),
+            centerDoubleTap = readEnum(
+                PLAYER_GESTURE_CENTER_DOUBLE_TAP_KEY,
+                ChimahonPlayerGestureAction.PlayPause,
+            ),
+            rightDoubleTap = readEnum(
+                PLAYER_GESTURE_RIGHT_DOUBLE_TAP_KEY,
+                ChimahonPlayerGestureAction.Seek,
+            ),
+            mediaPrevious = readEnum(
+                PLAYER_GESTURE_MEDIA_PREVIOUS_KEY,
+                ChimahonPlayerGestureAction.Switch,
+            ),
+            mediaPlayPause = readEnum(
+                PLAYER_GESTURE_MEDIA_PLAY_PAUSE_KEY,
+                ChimahonPlayerGestureAction.PlayPause,
+            ),
+            mediaNext = readEnum(PLAYER_GESTURE_MEDIA_NEXT_KEY, ChimahonPlayerGestureAction.Switch),
+        )
+    }
+
+    private suspend fun savePlayerGestureSettings(settings: ChimahonPlayerGestureSettings) {
+        settingsStore.writeBoolean(PLAYER_GESTURE_VOLUME_BRIGHTNESS_KEY, settings.volumeBrightnessGestures)
+        settingsStore.writeBoolean(PLAYER_GESTURE_SWAP_SLIDERS_KEY, settings.swapVolumeAndBrightness)
+        settingsStore.writeBoolean(PLAYER_GESTURE_HORIZONTAL_SEEK_KEY, settings.horizontalSeekGesture)
+        settingsStore.writeBoolean(PLAYER_GESTURE_SHOW_SEEKBAR_KEY, settings.showSeekBar)
+        settingsStore.writeInt(PLAYER_GESTURE_DEFAULT_INTRO_LENGTH_KEY, settings.defaultIntroLengthSeconds)
+        settingsStore.writeInt(PLAYER_GESTURE_SKIP_LENGTH_KEY, settings.skipLengthSeconds)
+        settingsStore.writeBoolean(PLAYER_GESTURE_SMOOTH_SEEK_KEY, settings.smoothSeek)
+        settingsStore.writeString(PLAYER_GESTURE_LEFT_DOUBLE_TAP_KEY, settings.leftDoubleTap.name)
+        settingsStore.writeString(PLAYER_GESTURE_CENTER_DOUBLE_TAP_KEY, settings.centerDoubleTap.name)
+        settingsStore.writeString(PLAYER_GESTURE_RIGHT_DOUBLE_TAP_KEY, settings.rightDoubleTap.name)
+        settingsStore.writeString(PLAYER_GESTURE_MEDIA_PREVIOUS_KEY, settings.mediaPrevious.name)
+        settingsStore.writeString(PLAYER_GESTURE_MEDIA_PLAY_PAUSE_KEY, settings.mediaPlayPause.name)
+        settingsStore.writeString(PLAYER_GESTURE_MEDIA_NEXT_KEY, settings.mediaNext.name)
+    }
+
+    private suspend fun loadPlayerDecoderSettings(): ChimahonPlayerDecoderSettings {
+        return ChimahonPlayerDecoderSettings(
+            tryHardwareDecoding = settingsStore.readBoolean(
+                PLAYER_DECODER_TRY_HW_KEY,
+                defaultValue = true,
+            ),
+            gpuNext = settingsStore.readBoolean(PLAYER_DECODER_GPU_NEXT_KEY),
+            debanding = readEnum(PLAYER_DECODER_DEBANDING_KEY, ChimahonPlayerDebanding.None),
+            useYuv420p = settingsStore.readBoolean(PLAYER_DECODER_USE_YUV420P_KEY, defaultValue = true),
+            brightnessFilter = settingsStore.readInt(PLAYER_DECODER_BRIGHTNESS_FILTER_KEY),
+            saturationFilter = settingsStore.readInt(PLAYER_DECODER_SATURATION_FILTER_KEY),
+            contrastFilter = settingsStore.readInt(PLAYER_DECODER_CONTRAST_FILTER_KEY),
+            gammaFilter = settingsStore.readInt(PLAYER_DECODER_GAMMA_FILTER_KEY),
+            hueFilter = settingsStore.readInt(PLAYER_DECODER_HUE_FILTER_KEY),
+        )
+    }
+
+    private suspend fun savePlayerDecoderSettings(settings: ChimahonPlayerDecoderSettings) {
+        settingsStore.writeBoolean(PLAYER_DECODER_TRY_HW_KEY, settings.tryHardwareDecoding)
+        settingsStore.writeBoolean(PLAYER_DECODER_GPU_NEXT_KEY, settings.gpuNext)
+        settingsStore.writeString(PLAYER_DECODER_DEBANDING_KEY, settings.debanding.name)
+        settingsStore.writeBoolean(PLAYER_DECODER_USE_YUV420P_KEY, settings.useYuv420p)
+        settingsStore.writeInt(PLAYER_DECODER_BRIGHTNESS_FILTER_KEY, settings.brightnessFilter)
+        settingsStore.writeInt(PLAYER_DECODER_SATURATION_FILTER_KEY, settings.saturationFilter)
+        settingsStore.writeInt(PLAYER_DECODER_CONTRAST_FILTER_KEY, settings.contrastFilter)
+        settingsStore.writeInt(PLAYER_DECODER_GAMMA_FILTER_KEY, settings.gammaFilter)
+        settingsStore.writeInt(PLAYER_DECODER_HUE_FILTER_KEY, settings.hueFilter)
+    }
+
+    private suspend fun loadPlayerSubtitleSettings(): ChimahonPlayerSubtitleSettings {
+        return ChimahonPlayerSubtitleSettings(
+            preferredLanguages = settingsStore.readString(PLAYER_SUBTITLE_LANGUAGES_KEY) ?: "",
+            whitelist = settingsStore.readString(PLAYER_SUBTITLE_WHITELIST_KEY) ?: "",
+            blacklist = settingsStore.readString(PLAYER_SUBTITLE_BLACKLIST_KEY) ?: "",
+            jimakuApiKey = settingsStore.readString(PLAYER_SUBTITLE_JIMAKU_API_KEY) ?: "",
+            jimakuTitle = settingsStore.readString(PLAYER_SUBTITLE_JIMAKU_TITLE_KEY) ?: "",
+            screenshotSubtitles = settingsStore.readBoolean(PLAYER_SUBTITLE_SCREENSHOT_KEY),
+            font = settingsStore.readString(PLAYER_SUBTITLE_FONT_KEY) ?: "Sans Serif",
+            fontSize = settingsStore.readInt(PLAYER_SUBTITLE_FONT_SIZE_KEY, defaultValue = 55),
+            fontScale = readDouble(PLAYER_SUBTITLE_FONT_SCALE_KEY, defaultValue = 1.0),
+            borderSize = settingsStore.readInt(PLAYER_SUBTITLE_BORDER_SIZE_KEY, defaultValue = 3),
+            bold = settingsStore.readBoolean(PLAYER_SUBTITLE_BOLD_KEY),
+            italic = settingsStore.readBoolean(PLAYER_SUBTITLE_ITALIC_KEY),
+            textColorArgb = settingsStore.readInt(PLAYER_SUBTITLE_TEXT_COLOR_KEY, defaultValue = -1),
+            borderColorArgb = settingsStore.readInt(
+                PLAYER_SUBTITLE_BORDER_COLOR_KEY,
+                defaultValue = -16777216,
+            ),
+            borderStyle = readEnum(
+                PLAYER_SUBTITLE_BORDER_STYLE_KEY,
+                ChimahonSubtitleBorderStyle.OutlineAndShadow,
+            ),
+            shadowOffset = settingsStore.readInt(PLAYER_SUBTITLE_SHADOW_OFFSET_KEY),
+            backgroundColorArgb = settingsStore.readInt(PLAYER_SUBTITLE_BACKGROUND_COLOR_KEY),
+            justification = readEnum(
+                PLAYER_SUBTITLE_JUSTIFICATION_KEY,
+                ChimahonSubtitleJustification.Auto,
+            ),
+            positionPercent = settingsStore.readInt(PLAYER_SUBTITLE_POSITION_KEY, defaultValue = 100),
+            overrideAss = settingsStore.readBoolean(PLAYER_SUBTITLE_OVERRIDE_ASS_KEY),
+            delayMillis = settingsStore.readInt(PLAYER_SUBTITLE_DELAY_KEY),
+            speed = readDouble(PLAYER_SUBTITLE_SPEED_KEY, defaultValue = 1.0),
+            secondaryDelayMillis = settingsStore.readInt(PLAYER_SUBTITLE_SECONDARY_DELAY_KEY),
+        )
+    }
+
+    private suspend fun savePlayerSubtitleSettings(settings: ChimahonPlayerSubtitleSettings) {
+        settingsStore.writeString(PLAYER_SUBTITLE_LANGUAGES_KEY, settings.preferredLanguages)
+        settingsStore.writeString(PLAYER_SUBTITLE_WHITELIST_KEY, settings.whitelist)
+        settingsStore.writeString(PLAYER_SUBTITLE_BLACKLIST_KEY, settings.blacklist)
+        settingsStore.writeString(PLAYER_SUBTITLE_JIMAKU_API_KEY, settings.jimakuApiKey)
+        settingsStore.writeString(PLAYER_SUBTITLE_JIMAKU_TITLE_KEY, settings.jimakuTitle)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_SCREENSHOT_KEY, settings.screenshotSubtitles)
+        settingsStore.writeString(PLAYER_SUBTITLE_FONT_KEY, settings.font)
+        settingsStore.writeInt(PLAYER_SUBTITLE_FONT_SIZE_KEY, settings.fontSize)
+        writeDouble(PLAYER_SUBTITLE_FONT_SCALE_KEY, settings.fontScale)
+        settingsStore.writeInt(PLAYER_SUBTITLE_BORDER_SIZE_KEY, settings.borderSize)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_BOLD_KEY, settings.bold)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_ITALIC_KEY, settings.italic)
+        settingsStore.writeInt(PLAYER_SUBTITLE_TEXT_COLOR_KEY, settings.textColorArgb)
+        settingsStore.writeInt(PLAYER_SUBTITLE_BORDER_COLOR_KEY, settings.borderColorArgb)
+        settingsStore.writeString(PLAYER_SUBTITLE_BORDER_STYLE_KEY, settings.borderStyle.name)
+        settingsStore.writeInt(PLAYER_SUBTITLE_SHADOW_OFFSET_KEY, settings.shadowOffset)
+        settingsStore.writeInt(PLAYER_SUBTITLE_BACKGROUND_COLOR_KEY, settings.backgroundColorArgb)
+        settingsStore.writeString(PLAYER_SUBTITLE_JUSTIFICATION_KEY, settings.justification.name)
+        settingsStore.writeInt(PLAYER_SUBTITLE_POSITION_KEY, settings.positionPercent)
+        settingsStore.writeBoolean(PLAYER_SUBTITLE_OVERRIDE_ASS_KEY, settings.overrideAss)
+        settingsStore.writeInt(PLAYER_SUBTITLE_DELAY_KEY, settings.delayMillis)
+        writeDouble(PLAYER_SUBTITLE_SPEED_KEY, settings.speed)
+        settingsStore.writeInt(PLAYER_SUBTITLE_SECONDARY_DELAY_KEY, settings.secondaryDelayMillis)
+    }
+
+    private suspend fun loadPlayerAudioSettings(): ChimahonPlayerAudioSettings {
+        return ChimahonPlayerAudioSettings(
+            preferredLanguages = settingsStore.readString(PLAYER_AUDIO_LANGUAGES_KEY) ?: "",
+            pitchCorrection = settingsStore.readBoolean(
+                PLAYER_AUDIO_PITCH_CORRECTION_KEY,
+                defaultValue = true,
+            ),
+            channels = readEnum(PLAYER_AUDIO_CHANNELS_KEY, ChimahonAudioChannels.AutoSafe),
+            volumeBoostCap = settingsStore.readInt(PLAYER_AUDIO_VOLUME_BOOST_CAP_KEY, defaultValue = 30),
+            delayMillis = settingsStore.readInt(PLAYER_AUDIO_DELAY_KEY),
+        )
+    }
+
+    private suspend fun savePlayerAudioSettings(settings: ChimahonPlayerAudioSettings) {
+        settingsStore.writeString(PLAYER_AUDIO_LANGUAGES_KEY, settings.preferredLanguages)
+        settingsStore.writeBoolean(PLAYER_AUDIO_PITCH_CORRECTION_KEY, settings.pitchCorrection)
+        settingsStore.writeString(PLAYER_AUDIO_CHANNELS_KEY, settings.channels.name)
+        settingsStore.writeInt(PLAYER_AUDIO_VOLUME_BOOST_CAP_KEY, settings.volumeBoostCap)
+        settingsStore.writeInt(PLAYER_AUDIO_DELAY_KEY, settings.delayMillis)
+    }
+
+    private suspend fun loadPlayerAdvancedSettings(): ChimahonPlayerAdvancedSettings {
+        return ChimahonPlayerAdvancedSettings(
+            mpvScriptsEnabled = settingsStore.readBoolean(PLAYER_ADVANCED_MPV_SCRIPTS_KEY),
+            mpvConfig = settingsStore.readString(PLAYER_ADVANCED_MPV_CONFIG_KEY) ?: "",
+            mpvInput = settingsStore.readString(PLAYER_ADVANCED_MPV_INPUT_KEY) ?: "",
+            statisticsPage = settingsStore.readInt(PLAYER_ADVANCED_STATISTICS_PAGE_KEY),
+        )
+    }
+
+    private suspend fun savePlayerAdvancedSettings(settings: ChimahonPlayerAdvancedSettings) {
+        settingsStore.writeBoolean(PLAYER_ADVANCED_MPV_SCRIPTS_KEY, settings.mpvScriptsEnabled)
+        settingsStore.writeString(PLAYER_ADVANCED_MPV_CONFIG_KEY, settings.mpvConfig)
+        settingsStore.writeString(PLAYER_ADVANCED_MPV_INPUT_KEY, settings.mpvInput)
+        settingsStore.writeInt(PLAYER_ADVANCED_STATISTICS_PAGE_KEY, settings.statisticsPage)
     }
 
     suspend fun loadTrackingSettings(): ChimahonTrackingSettings {
@@ -1573,6 +2288,45 @@ internal class ChimahonSettingsRepository(
         return settingsStore.readBoolean(INCOGNITO_MODE_KEY)
     }
 
+    private fun parseNavigationTabLayout(serialized: String?): List<ChimahonNavigationTabEntry> {
+        if (serialized.isNullOrBlank()) return ChimahonNavigationTabDefaults
+
+        val parsed = serialized
+            .split(",")
+            .mapNotNull { token ->
+                val parts = token.trim().split(":", limit = 2)
+                if (parts.size != 2) return@mapNotNull null
+
+                val tab = ChimahonNavigationTab.entries.firstOrNull { it.key == parts[0] }
+                    ?: return@mapNotNull null
+                val section = ChimahonNavigationSection.entries.firstOrNull {
+                    it.wireName == parts[1].lowercase()
+                } ?: ChimahonNavigationSection.Navbar
+
+                ChimahonNavigationTabEntry(tab, section)
+            }
+            .distinctBy { it.tab }
+
+        if (parsed.isEmpty()) return ChimahonNavigationTabDefaults
+
+        val missingDefaults = ChimahonNavigationTabDefaults.filter { defaultEntry ->
+            parsed.none { it.tab == defaultEntry.tab }
+        }
+        return parsed + missingDefaults
+    }
+
+    private fun serializeNavigationTabLayout(
+        entries: List<ChimahonNavigationTabEntry>,
+    ): String {
+        val normalized = entries.distinctBy { it.tab }
+        val missingDefaults = ChimahonNavigationTabDefaults.filter { defaultEntry ->
+            normalized.none { it.tab == defaultEntry.tab }
+        }
+        return (normalized + missingDefaults).joinToString(",") { entry ->
+            "${entry.tab.key}:${entry.section.wireName}"
+        }
+    }
+
     private suspend fun readStringList(
         key: String,
         defaultValue: List<String> = emptyList(),
@@ -1827,6 +2581,53 @@ internal class ChimahonSettingsRepository(
             "__APP_STATE_chimahon_library_update_manga_titles"
         const val LIBRARY_DISALLOW_NON_ASCII_FILENAMES_KEY =
             "__APP_STATE_chimahon_library_disallow_non_ascii_filenames"
+        const val ANIME_LIBRARY_DISPLAY_MODE_KEY = "__APP_STATE_chimahon_anime_library_display_mode"
+        const val ANIME_LIBRARY_GRID_COLUMNS_PORTRAIT_KEY =
+            "__APP_STATE_chimahon_anime_library_grid_columns_portrait"
+        const val ANIME_LIBRARY_GRID_COLUMNS_LANDSCAPE_KEY =
+            "__APP_STATE_chimahon_anime_library_grid_columns_landscape"
+        const val ANIME_LIBRARY_DEFAULT_CATEGORY_ID_KEY =
+            "__APP_STATE_chimahon_anime_library_default_category_id"
+        const val ANIME_LIBRARY_CATEGORIZED_DISPLAY_SETTINGS_KEY =
+            "__APP_STATE_chimahon_anime_library_categorized_display_settings"
+        const val ANIME_LIBRARY_CATEGORY_TABS_KEY =
+            "__APP_STATE_chimahon_anime_library_category_tabs"
+        const val ANIME_LIBRARY_CATEGORY_ITEM_COUNT_KEY =
+            "__APP_STATE_chimahon_anime_library_category_item_count"
+        const val ANIME_LIBRARY_UNSEEN_BADGES_KEY =
+            "__APP_STATE_chimahon_anime_library_unseen_badges"
+        const val ANIME_LIBRARY_DOWNLOADED_BADGES_KEY =
+            "__APP_STATE_chimahon_anime_library_downloaded_badges"
+        const val ANIME_LIBRARY_LOCAL_BADGES_KEY =
+            "__APP_STATE_chimahon_anime_library_local_badges"
+        const val ANIME_LIBRARY_LANGUAGE_BADGES_KEY =
+            "__APP_STATE_chimahon_anime_library_language_badges"
+        const val ANIME_LIBRARY_CONTINUE_WATCHING_BUTTONS_KEY =
+            "__APP_STATE_chimahon_anime_library_continue_watching_buttons"
+        const val ANIME_LIBRARY_SORT_KEY = "__APP_STATE_chimahon_anime_library_sort"
+        const val ANIME_LIBRARY_SORT_ASCENDING_KEY =
+            "__APP_STATE_chimahon_anime_library_sort_ascending"
+        const val ANIME_LIBRARY_FILTER_DOWNLOADED_KEY =
+            "__APP_STATE_chimahon_anime_library_filter_downloaded"
+        const val ANIME_LIBRARY_FILTER_UNSEEN_KEY =
+            "__APP_STATE_chimahon_anime_library_filter_unseen"
+        const val ANIME_LIBRARY_FILTER_STARTED_KEY =
+            "__APP_STATE_chimahon_anime_library_filter_started"
+        const val ANIME_LIBRARY_FILTER_BOOKMARKED_KEY =
+            "__APP_STATE_chimahon_anime_library_filter_bookmarked"
+        const val ANIME_LIBRARY_FILTER_COMPLETED_KEY =
+            "__APP_STATE_chimahon_anime_library_filter_completed"
+        const val ANIME_LIBRARY_FILTER_FILLER_KEY =
+            "__APP_STATE_chimahon_anime_library_filter_filler"
+        const val ANIME_LIBRARY_FILTER_TRACKED_KEY =
+            "__APP_STATE_chimahon_anime_library_filter_tracked"
+        const val ANIME_LIBRARY_GROUP_BY_KEY = "__APP_STATE_chimahon_anime_library_group_by"
+        const val ANIME_LIBRARY_UPDATE_RESTRICTIONS_KEY =
+            "__APP_STATE_chimahon_anime_library_update_restrictions"
+        const val ANIME_LIBRARY_SWIPE_TO_START_ACTION_KEY =
+            "__APP_STATE_chimahon_anime_library_swipe_to_start_action"
+        const val ANIME_LIBRARY_SWIPE_TO_END_ACTION_KEY =
+            "__APP_STATE_chimahon_anime_library_swipe_to_end_action"
         const val DOWNLOAD_WIFI_ONLY_KEY = "__APP_STATE_chimahon_download_wifi_only"
         const val DOWNLOAD_SAVE_AS_CBZ_KEY = "__APP_STATE_chimahon_download_save_as_cbz"
         const val DOWNLOAD_SPLIT_TALL_IMAGES_KEY = "__APP_STATE_chimahon_download_split_tall_images"
@@ -1879,6 +2680,160 @@ internal class ChimahonSettingsRepository(
             "__APP_STATE_chimahon_browse_feed_tab_in_front"
         const val BROWSE_HIDE_LIBRARY_FEED_ENTRIES_KEY =
             "__APP_STATE_chimahon_browse_hide_library_feed_entries"
+        const val NAVIGATION_TAB_LAYOUT_KEY = "__APP_STATE_chimahon_navigation_tab_layout"
+        const val NAVIGATION_START_SCREEN_KEY = "__APP_STATE_chimahon_navigation_start_screen"
+        const val NAVIGATION_SHOW_UPDATES_TAB_KEY =
+            "__APP_STATE_chimahon_navigation_show_updates_tab"
+        const val NAVIGATION_SHOW_HISTORY_TAB_KEY =
+            "__APP_STATE_chimahon_navigation_show_history_tab"
+        const val PLAYER_PRESERVE_POSITION_KEY = "__APP_STATE_chimahon_player_preserve_position"
+        const val PLAYER_PROGRESS_PREFERENCE_KEY = "__APP_STATE_chimahon_player_progress_preference"
+        const val PLAYER_DEFAULT_ORIENTATION_KEY = "__APP_STATE_chimahon_player_default_orientation"
+        const val PLAYER_ALLOW_GESTURES_IN_PANELS_KEY =
+            "__APP_STATE_chimahon_player_allow_gestures_in_panels"
+        const val PLAYER_SHOW_LOADING_KEY = "__APP_STATE_chimahon_player_show_loading"
+        const val PLAYER_SHOW_CURRENT_EPISODE_KEY =
+            "__APP_STATE_chimahon_player_show_current_episode"
+        const val PLAYER_REMEMBER_BRIGHTNESS_KEY =
+            "__APP_STATE_chimahon_player_remember_brightness"
+        const val PLAYER_BRIGHTNESS_VALUE_KEY = "__APP_STATE_chimahon_player_brightness_value"
+        const val PLAYER_REMEMBER_VOLUME_KEY = "__APP_STATE_chimahon_player_remember_volume"
+        const val PLAYER_VOLUME_VALUE_KEY = "__APP_STATE_chimahon_player_volume_value"
+        const val PLAYER_SHOW_FAILED_HOSTERS_KEY =
+            "__APP_STATE_chimahon_player_show_failed_hosters"
+        const val PLAYER_SHOW_EMPTY_HOSTERS_KEY =
+            "__APP_STATE_chimahon_player_show_empty_hosters"
+        const val PLAYER_FULLSCREEN_KEY = "__APP_STATE_chimahon_player_fullscreen"
+        const val PLAYER_HIDE_CONTROLS_KEY = "__APP_STATE_chimahon_player_hide_controls"
+        const val PLAYER_DISPLAY_VOLUME_PERCENT_KEY =
+            "__APP_STATE_chimahon_player_display_volume_percent"
+        const val PLAYER_SHOW_SYSTEM_STATUS_BAR_KEY =
+            "__APP_STATE_chimahon_player_show_system_status_bar"
+        const val PLAYER_REDUCE_MOTION_KEY = "__APP_STATE_chimahon_player_reduce_motion"
+        const val PLAYER_CONTROLS_HIDE_DELAY_KEY =
+            "__APP_STATE_chimahon_player_controls_hide_delay"
+        const val PLAYER_PANEL_OPACITY_KEY = "__APP_STATE_chimahon_player_panel_opacity"
+        const val PLAYER_SKIP_INTRO_ENABLED_KEY =
+            "__APP_STATE_chimahon_player_skip_intro_enabled"
+        const val PLAYER_AUTO_SKIP_INTRO_KEY = "__APP_STATE_chimahon_player_auto_skip_intro"
+        const val PLAYER_NETFLIX_STYLE_SKIP_INTRO_KEY =
+            "__APP_STATE_chimahon_player_netflix_style_skip_intro"
+        const val PLAYER_SKIP_INTRO_WAIT_KEY = "__APP_STATE_chimahon_player_skip_intro_wait"
+        const val PLAYER_ANI_SKIP_ENABLED_KEY = "__APP_STATE_chimahon_player_ani_skip_enabled"
+        const val PLAYER_DISABLE_ANI_SKIP_ON_CHAPTERS_KEY =
+            "__APP_STATE_chimahon_player_disable_ani_skip_on_chapters"
+        const val PLAYER_PIP_ENABLED_KEY = "__APP_STATE_chimahon_player_pip_enabled"
+        const val PLAYER_PIP_EPISODE_TOASTS_KEY =
+            "__APP_STATE_chimahon_player_pip_episode_toasts"
+        const val PLAYER_PIP_ON_EXIT_KEY = "__APP_STATE_chimahon_player_pip_on_exit"
+        const val PLAYER_PIP_REPLACE_WITH_PREVIOUS_KEY =
+            "__APP_STATE_chimahon_player_pip_replace_with_previous"
+        const val PLAYER_CAST_ENABLED_KEY = "__APP_STATE_chimahon_player_cast_enabled"
+        const val PLAYER_ALWAYS_EXTERNAL_KEY = "__APP_STATE_chimahon_player_always_external"
+        const val PLAYER_EXTERNAL_PACKAGE_KEY = "__APP_STATE_chimahon_player_external_package"
+        const val PLAYER_SPEED_KEY = "__APP_STATE_chimahon_player_speed"
+        const val PLAYER_SPEED_PRESETS_KEY = "__APP_STATE_chimahon_player_speed_presets"
+        const val PLAYER_INVERT_DURATION_KEY = "__APP_STATE_chimahon_player_invert_duration"
+        const val PLAYER_ASPECT_KEY = "__APP_STATE_chimahon_player_aspect"
+        const val PLAYER_AUTOPLAY_KEY = "__APP_STATE_chimahon_player_autoplay"
+        const val PLAYER_GESTURE_VOLUME_BRIGHTNESS_KEY =
+            "__APP_STATE_chimahon_player_gesture_volume_brightness"
+        const val PLAYER_GESTURE_SWAP_SLIDERS_KEY =
+            "__APP_STATE_chimahon_player_gesture_swap_sliders"
+        const val PLAYER_GESTURE_HORIZONTAL_SEEK_KEY =
+            "__APP_STATE_chimahon_player_gesture_horizontal_seek"
+        const val PLAYER_GESTURE_SHOW_SEEKBAR_KEY =
+            "__APP_STATE_chimahon_player_gesture_show_seekbar"
+        const val PLAYER_GESTURE_DEFAULT_INTRO_LENGTH_KEY =
+            "__APP_STATE_chimahon_player_gesture_default_intro_length"
+        const val PLAYER_GESTURE_SKIP_LENGTH_KEY =
+            "__APP_STATE_chimahon_player_gesture_skip_length"
+        const val PLAYER_GESTURE_SMOOTH_SEEK_KEY =
+            "__APP_STATE_chimahon_player_gesture_smooth_seek"
+        const val PLAYER_GESTURE_LEFT_DOUBLE_TAP_KEY =
+            "__APP_STATE_chimahon_player_gesture_left_double_tap"
+        const val PLAYER_GESTURE_CENTER_DOUBLE_TAP_KEY =
+            "__APP_STATE_chimahon_player_gesture_center_double_tap"
+        const val PLAYER_GESTURE_RIGHT_DOUBLE_TAP_KEY =
+            "__APP_STATE_chimahon_player_gesture_right_double_tap"
+        const val PLAYER_GESTURE_MEDIA_PREVIOUS_KEY =
+            "__APP_STATE_chimahon_player_gesture_media_previous"
+        const val PLAYER_GESTURE_MEDIA_PLAY_PAUSE_KEY =
+            "__APP_STATE_chimahon_player_gesture_media_play_pause"
+        const val PLAYER_GESTURE_MEDIA_NEXT_KEY =
+            "__APP_STATE_chimahon_player_gesture_media_next"
+        const val PLAYER_DECODER_TRY_HW_KEY = "__APP_STATE_chimahon_player_decoder_try_hw"
+        const val PLAYER_DECODER_GPU_NEXT_KEY = "__APP_STATE_chimahon_player_decoder_gpu_next"
+        const val PLAYER_DECODER_DEBANDING_KEY =
+            "__APP_STATE_chimahon_player_decoder_debanding"
+        const val PLAYER_DECODER_USE_YUV420P_KEY =
+            "__APP_STATE_chimahon_player_decoder_use_yuv420p"
+        const val PLAYER_DECODER_BRIGHTNESS_FILTER_KEY =
+            "__APP_STATE_chimahon_player_decoder_brightness_filter"
+        const val PLAYER_DECODER_SATURATION_FILTER_KEY =
+            "__APP_STATE_chimahon_player_decoder_saturation_filter"
+        const val PLAYER_DECODER_CONTRAST_FILTER_KEY =
+            "__APP_STATE_chimahon_player_decoder_contrast_filter"
+        const val PLAYER_DECODER_GAMMA_FILTER_KEY =
+            "__APP_STATE_chimahon_player_decoder_gamma_filter"
+        const val PLAYER_DECODER_HUE_FILTER_KEY =
+            "__APP_STATE_chimahon_player_decoder_hue_filter"
+        const val PLAYER_SUBTITLE_LANGUAGES_KEY =
+            "__APP_STATE_chimahon_player_subtitle_languages"
+        const val PLAYER_SUBTITLE_WHITELIST_KEY =
+            "__APP_STATE_chimahon_player_subtitle_whitelist"
+        const val PLAYER_SUBTITLE_BLACKLIST_KEY =
+            "__APP_STATE_chimahon_player_subtitle_blacklist"
+        const val PLAYER_SUBTITLE_JIMAKU_API_KEY =
+            "__APP_STATE_chimahon_player_subtitle_jimaku_api_key"
+        const val PLAYER_SUBTITLE_JIMAKU_TITLE_KEY =
+            "__APP_STATE_chimahon_player_subtitle_jimaku_title"
+        const val PLAYER_SUBTITLE_SCREENSHOT_KEY =
+            "__APP_STATE_chimahon_player_subtitle_screenshot"
+        const val PLAYER_SUBTITLE_FONT_KEY = "__APP_STATE_chimahon_player_subtitle_font"
+        const val PLAYER_SUBTITLE_FONT_SIZE_KEY =
+            "__APP_STATE_chimahon_player_subtitle_font_size"
+        const val PLAYER_SUBTITLE_FONT_SCALE_KEY =
+            "__APP_STATE_chimahon_player_subtitle_font_scale"
+        const val PLAYER_SUBTITLE_BORDER_SIZE_KEY =
+            "__APP_STATE_chimahon_player_subtitle_border_size"
+        const val PLAYER_SUBTITLE_BOLD_KEY = "__APP_STATE_chimahon_player_subtitle_bold"
+        const val PLAYER_SUBTITLE_ITALIC_KEY = "__APP_STATE_chimahon_player_subtitle_italic"
+        const val PLAYER_SUBTITLE_TEXT_COLOR_KEY =
+            "__APP_STATE_chimahon_player_subtitle_text_color"
+        const val PLAYER_SUBTITLE_BORDER_COLOR_KEY =
+            "__APP_STATE_chimahon_player_subtitle_border_color"
+        const val PLAYER_SUBTITLE_BORDER_STYLE_KEY =
+            "__APP_STATE_chimahon_player_subtitle_border_style"
+        const val PLAYER_SUBTITLE_SHADOW_OFFSET_KEY =
+            "__APP_STATE_chimahon_player_subtitle_shadow_offset"
+        const val PLAYER_SUBTITLE_BACKGROUND_COLOR_KEY =
+            "__APP_STATE_chimahon_player_subtitle_background_color"
+        const val PLAYER_SUBTITLE_JUSTIFICATION_KEY =
+            "__APP_STATE_chimahon_player_subtitle_justification"
+        const val PLAYER_SUBTITLE_POSITION_KEY =
+            "__APP_STATE_chimahon_player_subtitle_position"
+        const val PLAYER_SUBTITLE_OVERRIDE_ASS_KEY =
+            "__APP_STATE_chimahon_player_subtitle_override_ass"
+        const val PLAYER_SUBTITLE_DELAY_KEY = "__APP_STATE_chimahon_player_subtitle_delay"
+        const val PLAYER_SUBTITLE_SPEED_KEY = "__APP_STATE_chimahon_player_subtitle_speed"
+        const val PLAYER_SUBTITLE_SECONDARY_DELAY_KEY =
+            "__APP_STATE_chimahon_player_subtitle_secondary_delay"
+        const val PLAYER_AUDIO_LANGUAGES_KEY = "__APP_STATE_chimahon_player_audio_languages"
+        const val PLAYER_AUDIO_PITCH_CORRECTION_KEY =
+            "__APP_STATE_chimahon_player_audio_pitch_correction"
+        const val PLAYER_AUDIO_CHANNELS_KEY = "__APP_STATE_chimahon_player_audio_channels"
+        const val PLAYER_AUDIO_VOLUME_BOOST_CAP_KEY =
+            "__APP_STATE_chimahon_player_audio_volume_boost_cap"
+        const val PLAYER_AUDIO_DELAY_KEY = "__APP_STATE_chimahon_player_audio_delay"
+        const val PLAYER_ADVANCED_MPV_SCRIPTS_KEY =
+            "__APP_STATE_chimahon_player_advanced_mpv_scripts"
+        const val PLAYER_ADVANCED_MPV_CONFIG_KEY =
+            "__APP_STATE_chimahon_player_advanced_mpv_config"
+        const val PLAYER_ADVANCED_MPV_INPUT_KEY =
+            "__APP_STATE_chimahon_player_advanced_mpv_input"
+        const val PLAYER_ADVANCED_STATISTICS_PAGE_KEY =
+            "__APP_STATE_chimahon_player_advanced_statistics_page"
         const val TRACKING_AUTO_SYNC_ENABLED_KEY =
             "__APP_STATE_chimahon_tracking_auto_sync_enabled"
         const val TRACKING_UPDATE_INTERVAL_HOURS_KEY =
