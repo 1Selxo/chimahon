@@ -2504,6 +2504,7 @@ private fun HomeContent(
             onAddRemoteMangaToLibrary = onAddRemoteMangaToLibrary,
             onSetMangaFavorite = onSetMangaFavorite,
             browseSettings = settings.browse,
+            onBrowseSettingsChange = onBrowseSettingsChange,
             onAddExtensionRepo = onAddExtensionRepo,
             onDeleteExtensionRepo = onDeleteExtensionRepo,
             onLoadExtensionRepoCatalog = onLoadExtensionRepoCatalog,
@@ -6056,6 +6057,7 @@ private fun BrowseHome(
     onAddRemoteMangaToLibrary: suspend (ChimahonRemoteMangaDetail) -> Long,
     onSetMangaFavorite: suspend (Long, Boolean) -> Unit,
     browseSettings: ChimahonBrowseSettings,
+    onBrowseSettingsChange: (ChimahonBrowseSettings) -> Unit,
     onAddExtensionRepo: suspend (String) -> ChimahonExtensionRepoEntry,
     onDeleteExtensionRepo: suspend (String) -> Unit,
     onLoadExtensionRepoCatalog: suspend (ChimahonExtensionRepoEntry) -> ChimahonExtensionRepoCatalog,
@@ -6075,6 +6077,7 @@ private fun BrowseHome(
                 query = query,
                 filtersVisible = filtersVisible,
                 settings = browseSettings,
+                onSettingsChange = onBrowseSettingsChange,
                 onOpenSource = onOpenSource,
                 onInstallExtension = { onSectionChange(BrowseSection.Extensions) },
             )
@@ -6170,13 +6173,14 @@ private fun SourcesSection(
     query: String,
     filtersVisible: Boolean,
     settings: ChimahonBrowseSettings,
+    onSettingsChange: (ChimahonBrowseSettings) -> Unit,
     onOpenSource: (Long, ChimahonSourceBrowseMode) -> Unit,
     onInstallExtension: () -> Unit,
 ) {
     var selectedLanguage by remember(sources) { mutableStateOf("All") }
     var quickFilter by remember { mutableStateOf(SourceQuickFilter.All) }
     var sourceSort by remember { mutableStateOf(SourceSort.Name) }
-    val pinnedSources = remember { mutableStateMapOf<Long, Boolean>() }
+    val pinnedSourceIds = settings.pinnedSourceIds.toSet()
     val languageOptions = remember(sources, settings.enabledLanguages) {
         listOf("All") + sources
             .map { it.language.sourceLanguageCode() }
@@ -6215,8 +6219,16 @@ private fun SourcesSection(
             )
         }
     }
-    val pinnedFilteredSources = filteredSources.filter { pinnedSources[it.id] == true }
-    val unpinnedFilteredSources = filteredSources.filterNot { pinnedSources[it.id] == true }
+    val pinnedFilteredSources = filteredSources.filter { it.id in pinnedSourceIds }
+    val unpinnedFilteredSources = filteredSources.filterNot { it.id in pinnedSourceIds }
+    fun togglePinned(sourceId: Long) {
+        val nextPins = if (sourceId in pinnedSourceIds) {
+            settings.pinnedSourceIds.filterNot { it == sourceId }
+        } else {
+            (settings.pinnedSourceIds + sourceId).distinct()
+        }
+        onSettingsChange(settings.copy(pinnedSourceIds = nextPins))
+    }
     val sourceGroups = mutableListOf<Pair<String?, List<ChimahonSourceEntry>>>().apply {
         if (pinnedFilteredSources.isNotEmpty()) {
             add("Pinned" to pinnedFilteredSources)
@@ -6271,12 +6283,12 @@ private fun SourcesSection(
                         }
                     }
                     items(group, key = { it.id }) { source ->
-                        val pinned = pinnedSources[source.id] == true
+                        val pinned = source.id in pinnedSourceIds
                         SourceGridCard(
                             source = source,
                             pinned = pinned,
                             showLanguage = settings.showSourceLanguage,
-                            onTogglePinned = { pinnedSources[source.id] = !pinned },
+                            onTogglePinned = { togglePinned(source.id) },
                             onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
                             onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
                         )
@@ -6293,13 +6305,13 @@ private fun SourcesSection(
                         item { SourceLanguageHeader(language, group.size) }
                     }
                     items(group, key = { it.id }) { source ->
-                        val pinned = pinnedSources[source.id] == true
+                        val pinned = source.id in pinnedSourceIds
                         SourceListItem(
                             source = source,
                             compact = settings.sourceDisplayMode == ChimahonBrowseSourceDisplayMode.CompactList,
                             pinned = pinned,
                             showLanguage = settings.showSourceLanguage,
-                            onTogglePinned = { pinnedSources[source.id] = !pinned },
+                            onTogglePinned = { togglePinned(source.id) },
                             onClick = { onOpenSource(source.id, ChimahonSourceBrowseMode.Popular) },
                             onClickLatest = { onOpenSource(source.id, ChimahonSourceBrowseMode.Latest) },
                         )
@@ -12001,6 +12013,32 @@ private fun ChimahonSnapshot.sourceLanguageOptions(): List<String> {
     return (sourceLanguages + installedLanguages + listOf("EN", "JA", "KO", "ZH", "ES", "FR", "DE", "AR", "MULTI"))
         .distinct()
         .sorted()
+}
+
+private data class SourcePinOption(
+    val sourceId: Long,
+    val label: String,
+)
+
+private fun ChimahonSnapshot.sourcePinOptions(): List<SourcePinOption> {
+    return sources
+        .sortedWith(
+            compareBy<ChimahonSourceEntry> { it.language.sourceLanguageCode() }
+                .thenBy { it.name.lowercase() }
+                .thenBy { it.id },
+        )
+        .map { source -> SourcePinOption(source.id, source.sourcePinLabel()) }
+}
+
+private fun ChimahonSnapshot.pinnedSourceLabels(pinnedSourceIds: List<Long>): List<String> {
+    val sourcesById = sources.associateBy { it.id }
+    return pinnedSourceIds.mapNotNull { sourceId ->
+        sourcesById[sourceId]?.sourcePinLabel()
+    }
+}
+
+private fun ChimahonSourceEntry.sourcePinLabel(): String {
+    return "${name} (${language.sourceLanguageCode()}) #$id"
 }
 
 private fun ChimahonSnapshot.libraryCategoryOptions(): List<String> {
@@ -22781,6 +22819,29 @@ private fun MoreDetailPage(
                                 )
                             },
                         )
+                    }
+                    if (snapshot.sources.isNotEmpty()) {
+                        item {
+                            val pinOptions = snapshot.sourcePinOptions()
+                            SettingsMultiChoiceRow(
+                                title = "Pinned sources",
+                                options = pinOptions.map { it.label },
+                                selected = snapshot.pinnedSourceLabels(settings.browse.pinnedSourceIds),
+                                emptyLabel = "No pinned sources",
+                                onToggle = { label ->
+                                    val sourceId = pinOptions.firstOrNull { it.label == label }?.sourceId
+                                        ?: return@SettingsMultiChoiceRow
+                                    val nextPinnedSourceIds = if (sourceId in settings.browse.pinnedSourceIds) {
+                                        settings.browse.pinnedSourceIds.filterNot { it == sourceId }
+                                    } else {
+                                        (settings.browse.pinnedSourceIds + sourceId).distinct()
+                                    }
+                                    onBrowseSettingsChange(
+                                        settings.browse.copy(pinnedSourceIds = nextPinnedSourceIds),
+                                    )
+                                },
+                            )
+                        }
                     }
                     item {
                         PreferenceSwitchRow(
