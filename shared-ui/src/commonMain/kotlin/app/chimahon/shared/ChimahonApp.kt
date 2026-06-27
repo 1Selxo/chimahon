@@ -10015,6 +10015,7 @@ private fun ReaderScaffold(
                 icon = if (mode.rightToLeft) UiIcon.Forward else UiIcon.Back,
                 contentDescription = if (mode.rightToLeft) "Next page" else "Previous page",
                 canvas = canvas,
+                enabled = canPreviousPage,
                 onClick = leftAction,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
@@ -10024,6 +10025,7 @@ private fun ReaderScaffold(
                 icon = if (mode.rightToLeft) UiIcon.Back else UiIcon.Forward,
                 contentDescription = if (mode.rightToLeft) "Previous page" else "Next page",
                 canvas = canvas,
+                enabled = canNextPage,
                 onClick = rightAction,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
@@ -15583,9 +15585,19 @@ private fun ExtensionsSection(
                     icon = if (message.startsWith("Could not")) UiIcon.Info else UiIcon.CheckCircle,
                     title = message,
                     subtitle = selectedRepo?.baseUrl ?: "Extension repository",
-                    action = selectedRepo?.let { "Refresh" },
+                    action = when {
+                        selectedRepoDisabled -> "Enable"
+                        selectedRepo != null -> "Refresh"
+                        else -> null
+                    },
                     error = message.startsWith("Could not"),
-                    onAction = { catalogRequestKey++ },
+                    onAction = {
+                        if (selectedRepoDisabled) {
+                            selectedRepo?.let { setRepoDisabled(it, false) }
+                        } else {
+                            catalogRequestKey++
+                        }
+                    },
                 )
             }
         }

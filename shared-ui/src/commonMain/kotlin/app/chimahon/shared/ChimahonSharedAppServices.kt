@@ -668,6 +668,15 @@ class ChimahonSharedAppServices private constructor(
                 fingerprint = repo.signingKeyFingerprint,
             )
         }
+        val browseSettings = settingsRepository.loadBrowseSettings()
+        if (repo.baseUrl in browseSettings.disabledExtensionRepoUrls) {
+            settingsRepository.saveBrowseSettings(
+                browseSettings.copy(
+                    disabledExtensionRepoUrls = browseSettings.disabledExtensionRepoUrls
+                        .filterNot { it == repo.baseUrl },
+                ),
+            )
+        }
         return repo
     }
 
