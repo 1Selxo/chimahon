@@ -135,6 +135,7 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -13749,15 +13750,27 @@ private fun ReaderPageImage(
                     pageState.image.height.coerceAtLeast(1).toFloat()
                 val colorFilter = readerSettings.readerColorFilter()
                 val panEnabled = paged && readerSettings.navigateToPan && scale != ReaderScale.FitScreen
+                val widePage = aspectRatio >= 1.25f
+                val splitWidePage = paged && readerSettings.splitWidePages && widePage
+                val rotateWidePage = !splitWidePage && widePage && if (paged) {
+                    readerSettings.rotateWidePagesToFit
+                } else {
+                    readerSettings.rotateWidePagesToFitWebtoon
+                }
+                val layoutAspectRatio = if (rotateWidePage) {
+                    1f / aspectRatio
+                } else {
+                    aspectRatio
+                }
                 val baseImageModifier = when {
                         paged && readerSettings.cropBorders -> Modifier.fillMaxSize()
                         paged && scale == ReaderScale.FitScreen -> Modifier.fillMaxSize()
                         paged && scale == ReaderScale.FitHeight -> Modifier
                             .fillMaxHeight()
-                            .aspectRatio(aspectRatio)
+                            .aspectRatio(layoutAspectRatio)
                         else -> Modifier
                             .fillMaxWidth()
-                            .aspectRatio(aspectRatio)
+                            .aspectRatio(layoutAspectRatio)
                     }
                 val imageModifier = baseImageModifier
                     .graphicsLayer {
@@ -13784,11 +13797,23 @@ private fun ReaderPageImage(
                             },
                         )
                     }
-                if (paged && readerSettings.splitWidePages && aspectRatio >= 1.25f) {
+                if (splitWidePage) {
                     ReaderSplitWidePageImage(
                         bitmap = pageState.image,
                         contentDescription = "Page ${page.index + 1} split spread",
                         rtl = readerSettings.mode == ChimahonReaderMode.RightToLeft,
+                        colorFilter = colorFilter,
+                        modifier = imageModifier,
+                    )
+                } else if (rotateWidePage) {
+                    ReaderRotatedWidePageImage(
+                        bitmap = pageState.image,
+                        contentDescription = "Page ${page.index + 1} rotated wide page",
+                        clockwise = if (paged) {
+                            !readerSettings.invertWidePageRotation
+                        } else {
+                            !readerSettings.invertWidePageRotationWebtoon
+                        },
                         colorFilter = colorFilter,
                         modifier = imageModifier,
                     )
@@ -13913,6 +13938,42 @@ private fun ReaderSplitWidePageImage(
             topLeft = Offset((size.width - gutter) / 2f, 0f),
             size = Size(gutter, size.height),
         )
+    }
+}
+
+@Composable
+private fun ReaderRotatedWidePageImage(
+    bitmap: ImageBitmap,
+    contentDescription: String,
+    clockwise: Boolean,
+    colorFilter: ColorFilter?,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(
+        modifier = modifier.semantics {
+            this.contentDescription = contentDescription
+        },
+    ) {
+        val fitScale = min(
+            size.width / bitmap.height.coerceAtLeast(1).toFloat(),
+            size.height / bitmap.width.coerceAtLeast(1).toFloat(),
+        )
+        val dstWidth = (bitmap.width * fitScale).coerceAtLeast(1f)
+        val dstHeight = (bitmap.height * fitScale).coerceAtLeast(1f)
+        val dstX = (size.width - dstWidth) / 2f
+        val dstY = (size.height - dstHeight) / 2f
+
+        rotate(
+            degrees = if (clockwise) 90f else -90f,
+            pivot = Offset(size.width / 2f, size.height / 2f),
+        ) {
+            drawImage(
+                image = bitmap,
+                dstOffset = IntOffset(dstX.roundToInt(), dstY.roundToInt()),
+                dstSize = IntSize(dstWidth.roundToInt(), dstHeight.roundToInt()),
+                colorFilter = colorFilter,
+            )
+        }
     }
 }
 
