@@ -42,6 +42,7 @@ import tachiyomi.data.Mangas
 import tachiyomi.data.StringListColumnAdapter
 import tachiyomi.data.libraryUpdateError.LibraryUpdateErrorRepositoryImpl
 import tachiyomi.data.libraryUpdateErrorMessage.LibraryUpdateErrorMessageRepositoryImpl
+import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.libraryUpdateError.interactor.GetLibraryUpdateErrors
 import tachiyomi.domain.libraryUpdateErrorMessage.interactor.GetLibraryUpdateErrorMessages
 import tachiyomi.view.History
@@ -1041,7 +1042,10 @@ class ChimahonSharedAppServices private constructor(
             thumbnailUrl = details.thumbnail_url,
             initialized = details.initialized,
             chapters = chapters.mapIndexed { index, chapter ->
-                chapter.toRemoteChapterEntry(sourceOrder = index)
+                chapter.toRemoteChapterEntry(
+                    mangaTitle = details.title.ifBlank { remoteManga.title },
+                    sourceOrder = index,
+                )
             },
         )
     }
@@ -2264,11 +2268,18 @@ private fun SManga.toRemoteMangaEntry(sourceId: Long): ChimahonRemoteMangaEntry 
     )
 }
 
-private fun SChapter.toRemoteChapterEntry(sourceOrder: Int): ChimahonRemoteChapterEntry {
+private fun SChapter.toRemoteChapterEntry(
+    mangaTitle: String,
+    sourceOrder: Int,
+): ChimahonRemoteChapterEntry {
     return ChimahonRemoteChapterEntry(
         name = safeName(),
         url = safeUrl(),
-        chapterNumber = chapter_number.toDouble(),
+        chapterNumber = ChapterRecognition.parseChapterNumber(
+            mangaTitle = mangaTitle,
+            chapterName = safeName(),
+            chapterNumber = chapter_number.toDouble(),
+        ),
         scanlator = scanlator,
         dateUpload = date_upload,
         sourceOrder = sourceOrder,
