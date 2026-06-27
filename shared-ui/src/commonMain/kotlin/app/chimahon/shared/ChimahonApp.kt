@@ -2862,7 +2862,6 @@ private fun LibraryHome(
                         } else {
                             null
                         },
-                        favorite = entry.favorite,
                         selected = selectedMangaIds[entry.id] == true,
                         selectionActive = selectedMangaCount > 0,
                         onToggleSelected = {
@@ -3560,7 +3559,6 @@ private fun LibraryMangaListItem(
     unreadCount: Int,
     downloadedCount: Int,
     sourceLanguage: String?,
-    favorite: Boolean,
     selected: Boolean,
     selectionActive: Boolean,
     onToggleSelected: () -> Unit,
@@ -3637,7 +3635,6 @@ private fun LibraryMangaListItem(
             downloadedCount = downloadedCount,
             source = source,
             sourceLanguage = sourceLanguage,
-            favorite = favorite,
         )
         if (selectionActive) {
             ChapterQuickAction(
@@ -3666,7 +3663,6 @@ private fun LibraryBadgeGroup(
     downloadedCount: Int,
     source: ChimahonSourceEntry?,
     sourceLanguage: String?,
-    favorite: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -3698,14 +3694,6 @@ private fun LibraryBadgeGroup(
         }
         source?.let {
             LibrarySourceBadgeChip(source = it)
-        }
-        if (favorite) {
-            LibraryBadgeChip(
-                label = "",
-                icon = UiIcon.Favorite,
-                containerColor = ChimahonPalette.surfaceVariant,
-                contentColor = ChimahonPalette.primary,
-            )
         }
     }
 }
@@ -3974,9 +3962,6 @@ private fun LibraryMangaCard(
                     },
                     source?.let {
                         CoverBadgeSpec(it.sourceInitials(), Color.Black.copy(alpha = 0.56f), Color.White, UiIcon.Web)
-                    },
-                    entry.favorite.takeIf { it }?.let {
-                        CoverBadgeSpec("", Color.Black.copy(alpha = 0.56f), Color.White, UiIcon.Favorite)
                     },
                 ),
                 showStatus = false,
@@ -7987,7 +7972,8 @@ private fun RemoteMangaDetailHeader(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(ChimahonPalette.surface),
     ) {
         ThumbnailArtwork(
@@ -8108,7 +8094,7 @@ private fun RemoteMangaInfoColumn(
     ) {
         Label(detail.title, ChimahonPalette.onSurface, 22, weight = FontWeight.SemiBold, lineHeight = 27)
         Label(
-            text = detail.author ?: detail.artist ?: "Unknown author",
+            text = detail.remoteCreatorLine(),
             color = ChimahonPalette.secondaryText,
             size = 13,
             maxLines = 1,
@@ -8159,6 +8145,8 @@ private fun RemoteMangaActionRow(
                 enabled = hasChapters,
                 modifier = Modifier.weight(1f),
                 onClick = {
+                    addError = null
+                    openError = null
                     val startQueue = detail.chapters.remoteStartReadingOrder()
                     startQueue.lastOrNull()?.let { chapter ->
                         onOpenReader(chapter.toReaderRequest(detail, startQueue))
@@ -8177,11 +8165,14 @@ private fun RemoteMangaActionRow(
                 modifier = Modifier.weight(1f),
                 onClick = {
                     if (existingMangaId != null) {
+                        addError = null
+                        openError = null
                         onOpenLibraryManga(existingMangaId)
                     } else if (!adding) {
                         scope.launch {
                             adding = true
                             addError = null
+                            openError = null
                             runCatching { onAddToLibrary(detail) }
                                 .onFailure { addError = it.message ?: "Could not add manga to the library." }
                             adding = false
@@ -8194,6 +8185,7 @@ private fun RemoteMangaActionRow(
                 title = "Source",
                 modifier = Modifier.weight(1f),
                 onClick = {
+                    addError = null
                     openError = null
                     if (!onOpenRemoteMangaUrl(detail)) {
                         openError = "Could not open this manga in the source website."
@@ -13406,7 +13398,11 @@ private fun ReaderChapterQueuePanel(
                             fontSize = 12.sp,
                             lineHeight = 16.sp,
                         ),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics {
+                                contentDescription = "Search chapter queue"
+                            },
                     )
                 }
             }
@@ -13452,7 +13448,7 @@ private fun ReaderChapterQueuePanel(
                                 this.selected = selected
                                 stateDescription = chapter.readerQueueStateDescription(selected)
                             }
-                            .clickable { onOpenChapter(chapter) }
+                            .clickable(role = Role.Button) { onOpenChapter(chapter) }
                             .padding(horizontal = 8.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
