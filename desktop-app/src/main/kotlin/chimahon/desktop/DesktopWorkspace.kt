@@ -10,10 +10,12 @@ fun ChimahonDesktopApp(
     services: ChimahonSharedAppServices,
     desktopCommandRequest: ChimahonDesktopCommandRequest?,
     onDesktopCommandHandled: (Long) -> Unit,
+    onReaderActiveChanged: (Boolean) -> Unit = {},
 ) {
     ChimahonServiceApp(
         services = services,
         desktopCommandRequest = desktopCommandRequest,
         onDesktopCommandHandled = onDesktopCommandHandled,
+        onReaderActiveChanged = onReaderActiveChanged,
     )
 }

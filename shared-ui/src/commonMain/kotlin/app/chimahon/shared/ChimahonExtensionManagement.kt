@@ -13,9 +13,42 @@ data class ChimahonExtensionDetails(
     val repoBaseUrl: String?,
     val artifactUrl: String?,
     val updateAvailable: Boolean,
+    val isSupportedOnPlatform: Boolean,
 ) {
     val isInstalled: Boolean
         get() = installedVersion != null
+
+    val isAvailable: Boolean
+        get() = availableVersion != null
+
+    val installState: ChimahonExtensionInstallState
+        get() = when {
+            !isSupportedOnPlatform && !isInstalled -> ChimahonExtensionInstallState.Unsupported
+            updateAvailable -> ChimahonExtensionInstallState.UpdateAvailable
+            isInstalled && isAvailable -> ChimahonExtensionInstallState.Installed
+            isInstalled -> ChimahonExtensionInstallState.MissingFromRepositories
+            else -> ChimahonExtensionInstallState.NotInstalled
+        }
+
+    val canInstall: Boolean
+        get() = !isInstalled && isAvailable && isSupportedOnPlatform
+
+    val canUpdate: Boolean
+        get() = updateAvailable && isSupportedOnPlatform
+
+    val displayVersion: String
+        get() = installedVersion ?: availableVersion.orEmpty()
+
+    val displaySourceCount: Int
+        get() = maxOf(installedSourceCount, availableSourceCount)
+}
+
+enum class ChimahonExtensionInstallState {
+    NotInstalled,
+    Installed,
+    UpdateAvailable,
+    MissingFromRepositories,
+    Unsupported,
 }
 
 data class ChimahonExtensionManagementData(
@@ -47,7 +80,17 @@ internal fun buildExtensionManagementData(
         .groupBy(ChimahonRepoExtensionEntry::extensionKey)
         .mapValues { (_, entries) ->
             entries.maxWithOrNull { first, second ->
-                compareExtensionVersions(first.version, second.version)
+                val versionComparison = compareExtensionVersions(first.version, second.version)
+                if (versionComparison != 0) {
+                    versionComparison
+                } else {
+                    compareValuesBy(
+                        first,
+                        second,
+                        { it.sourceCount },
+                        { it.language },
+                    )
+                }
             } ?: entries.first()
         }
     val keys = (installedByKey.keys + availableByKey.keys)
@@ -70,6 +113,8 @@ internal fun buildExtensionManagementData(
             updateAvailable = installed != null &&
                 available != null &&
                 compareExtensionVersions(available.version, installed.version) > 0,
+            isSupportedOnPlatform = key.packageType != ChimahonExtensionPackageType.AndroidApk ||
+                apkStatus.isSupported,
         )
     }
     return ChimahonExtensionManagementData(
@@ -79,7 +124,7 @@ internal fun buildExtensionManagementData(
                 .thenBy { it.name.lowercase() },
         ),
         availableUpdates = details
-            .filter(ChimahonExtensionDetails::updateAvailable)
+            .filter(ChimahonExtensionDetails::canUpdate)
             .sortedBy { it.name.lowercase() },
         apkExtensionsSupported = apkStatus.isSupported,
         registeredApkSourceCount = apkStatus.registeredSourceCount,

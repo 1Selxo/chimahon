@@ -9,12 +9,12 @@ object AnimeHistoryMapper {
     fun mapAnimeHistory(
         id: Long,
         episodeId: Long,
-        watchedAt: Date?,
+        watchedAt: Long?,
         watchDuration: Long,
     ): AnimeHistory = AnimeHistory(
         id = id,
         episodeId = episodeId,
-        watchedAt = watchedAt,
+        watchedAt = watchedAt?.let(::Date),
         watchDuration = watchDuration,
     )
 
@@ -31,7 +31,7 @@ object AnimeHistoryMapper {
         seen: Boolean,
         lastSecondSeen: Long,
         totalSeconds: Long,
-        watchedAt: Date?,
+        watchedAt: Long?,
         watchDuration: Long,
     ): AnimeHistoryWithRelations = AnimeHistoryWithRelations(
         id = historyId,
@@ -42,7 +42,7 @@ object AnimeHistoryMapper {
         seen = seen,
         lastSecondSeen = lastSecondSeen,
         totalSeconds = totalSeconds,
-        watchedAt = watchedAt,
+        watchedAt = watchedAt?.let(::Date),
         watchDuration = watchDuration,
         coverData = AnimeCover(
             animeId = animeId,

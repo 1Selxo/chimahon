@@ -18,6 +18,12 @@ val enableUpdater = Config.enableUpdater
 val hasLocalOcr = file("../chimahon-local-ocr/build.gradle.kts").exists()
 val releaseVersionName = providers.gradleProperty("releaseVersionName").orNull
 val releaseVersionCode = providers.gradleProperty("releaseVersionCode").orNull?.toIntOrNull()
+val defaultEnableAbiSplits = gradle.startParameter.taskNames.none { taskName ->
+    taskName.contains("bundle", ignoreCase = true)
+}
+val enableAbiSplits = providers.gradleProperty("enableAbiSplits")
+    .map(String::toBoolean)
+    .orElse(defaultEnableAbiSplits)
 
 if (includeTelemetry) {
     pluginManager.apply {
@@ -125,7 +131,7 @@ android {
 
     splits {
         abi {
-            isEnable = true
+            isEnable = enableAbiSplits.get()
             isUniversalApk = true
             reset()
             include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")

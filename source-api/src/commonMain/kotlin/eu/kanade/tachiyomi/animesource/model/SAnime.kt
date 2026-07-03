@@ -3,9 +3,9 @@
 package eu.kanade.tachiyomi.animesource.model
 
 import eu.kanade.tachiyomi.animesource.model.FetchType
-import java.io.Serializable
+import eu.kanade.tachiyomi.source.model.PlatformSerializable
 
-interface SAnime : Serializable {
+interface SAnime : PlatformSerializable {
 
     var url: String
 

@@ -2,9 +2,9 @@
 
 package eu.kanade.tachiyomi.animesource.model
 
-import java.io.Serializable
+import eu.kanade.tachiyomi.source.model.PlatformSerializable
 
-interface SEpisode : Serializable {
+interface SEpisode : PlatformSerializable {
 
     var url: String
 

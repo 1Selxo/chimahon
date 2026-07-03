@@ -14,6 +14,11 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
 import eu.kanade.tachiyomi.source.online.SourceNetworkContext
 import eu.kanade.tachiyomi.source.online.sourceNetworkContext
+import eu.kanade.tachiyomi.source.sourceApiLogError
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -55,6 +60,11 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
 
     override fun toString() = "$name (${lang.uppercase()})"
 
+    @Suppress("DEPRECATION")
+    override suspend fun getPopularAnime(page: Int): AnimesPage {
+        return fetchPopularAnime(page).awaitSingle()
+    }
+
     @Deprecated(
         "Use the non-RxJava API instead",
         ReplaceWith("getPopularAnime"),
@@ -70,6 +80,11 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
     protected abstract fun popularAnimeRequest(page: Int): Request
 
     protected abstract fun popularAnimeParse(response: Response): AnimesPage
+
+    @Suppress("DEPRECATION")
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
+        return fetchSearchAnime(page, query, filters).awaitSingle()
+    }
 
     @Deprecated(
         "Use the non-RxJava API instead",
@@ -91,6 +106,11 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
     protected abstract fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request
 
     protected abstract fun searchAnimeParse(response: Response): AnimesPage
+
+    @Suppress("DEPRECATION")
+    override suspend fun getLatestUpdates(page: Int): AnimesPage {
+        return fetchLatestUpdates(page).awaitSingle()
+    }
 
     @Deprecated(
         "Use the non-RxJava API instead",
@@ -147,6 +167,8 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
     }
 
     protected abstract fun episodeListParse(response: Response): List<SEpisode>
+
+    override suspend fun getSeasonList(anime: SAnime): List<SAnime> = emptyList()
 
     protected open fun episodeVideoParse(response: Response): SEpisode = throw UnsupportedOperationException("Not used")
 
@@ -315,5 +337,94 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
 
     open fun prepareNewEpisode(episode: SEpisode, anime: SAnime) {}
 
+    override val supportsRelatedAnime: Boolean
+        get() = false
+
+    override val disableRelatedAnimeBySearch: Boolean
+        get() = false
+
+    override val disableRelatedAnime: Boolean
+        get() = false
+
+    override suspend fun getRelatedAnimeList(
+        anime: SAnime,
+        exceptionHandler: (Throwable) -> Unit,
+        pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
+    ) {
+        val handler = CoroutineExceptionHandler { _, e -> exceptionHandler(e) }
+        if (!disableRelatedAnime) {
+            supervisorScope {
+                if (supportsRelatedAnime) launch(handler) { getRelatedAnimeListByExtension(anime, pushResults) }
+                if (!disableRelatedAnimeBySearch) launch(handler) { getRelatedAnimeListBySearch(anime, pushResults) }
+            }
+        }
+    }
+
+    override suspend fun getRelatedAnimeListByExtension(
+        anime: SAnime,
+        pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
+    ) {
+        runCatching { fetchRelatedAnimeList(anime) }
+            .onSuccess { if (it.isNotEmpty()) pushResults(Pair("", it), false) }
+            .onFailure { e ->
+                sourceApiLogError("getRelatedAnimeListByExtension failed", e)
+            }
+    }
+
+    override suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime> =
+        throw UnsupportedOperationException("Unsupported!")
+
+    override suspend fun getRelatedAnimeListBySearch(
+        anime: SAnime,
+        pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
+    ) {
+        val words = linkedSetOf(anime.title)
+        anime.title.stripKeywordForRelatedAnime()
+            .filterNot { word -> words.any { it.equals(word, ignoreCase = true) } }
+            .onEach { words.add(it) }
+        if (words.isEmpty()) return
+
+        coroutineScope {
+            val filterList = getFilterList()
+            words.map { keyword ->
+                launch {
+                    runCatching {
+                        getSearchAnime(1, keyword.sanitizeRelatedQuery(), filterList).animes
+                    }
+                        .onSuccess { if (it.isNotEmpty()) pushResults(Pair(keyword, it), false) }
+                        .onFailure { e ->
+                            sourceApiLogError("getRelatedAnimeListBySearch failed", e)
+                        }
+                }
+            }
+        }
+    }
+
     override fun getFilterList() = AnimeFilterList()
+}
+
+private fun String.stripKeywordForRelatedAnime(): List<String> {
+    val regexWhitespace = Regex("\\s+")
+    val regexSpecialCharacters = Regex("([!~#$%^&*+_|/\\\\,?:;'\"<>(){}\\[\\]]|\\s-|-\\s|\\s\\.|\\.\\s])")
+    val regexNumberOnly = Regex("^\\d+$")
+
+    return replace(regexSpecialCharacters, " ")
+        .split(regexWhitespace)
+        .map {
+            it.replace(regexNumberOnly, "")
+                .lowercase()
+        }
+        .filter { it.length > 1 }
+}
+
+private fun String.sanitizeRelatedQuery(): String {
+    return trim()
+        .trim(' ', '-', '_', ',', ':')
+        .replace('\u2018', '\'')
+        .replace('\u2019', '\'')
+        .replace('\u201C', '"')
+        .replace('\u201D', '"')
+        .replace('\u2013', '-')
+        .replace('\u2014', '-')
+        .replace("\u2026", "...")
 }

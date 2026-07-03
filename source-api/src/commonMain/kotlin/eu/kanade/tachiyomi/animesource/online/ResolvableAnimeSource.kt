@@ -4,7 +4,7 @@ import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 
-interface ResolvableAnimeSource : AnimeSource {
+expect interface ResolvableAnimeSource : AnimeSource {
 
     fun getUriType(uri: String): UriType
 

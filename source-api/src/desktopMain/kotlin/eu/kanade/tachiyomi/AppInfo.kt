@@ -14,6 +14,5 @@ object AppInfo {
         "image/png",
         "image/gif",
         "image/webp",
-        "image/avif",
     )
 }

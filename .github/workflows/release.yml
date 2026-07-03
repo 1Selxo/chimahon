@@ -365,6 +365,8 @@ jobs:
       - name: Build Windows desktop installers
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          JPACKAGE_JAVA_HOME: ${{ env.JAVA_HOME }}
         run: |
           .\gradlew.bat :desktop-app:createDistributable :desktop-app:packageExe :desktop-app:packageMsi `
             '-PreleaseVersionName=${{ needs.metadata.outputs.version_name }}' `

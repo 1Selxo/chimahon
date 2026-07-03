@@ -3,146 +3,42 @@ package eu.kanade.tachiyomi.animesource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
-import eu.kanade.tachiyomi.source.sourceApiLogError
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
-import rx.Observable
-import tachiyomi.core.common.util.lang.awaitSingle
 
-interface AnimeCatalogueSource : AnimeSource {
+expect interface AnimeCatalogueSource : AnimeSource {
 
     override val lang: String
 
     val supportsLatest: Boolean
 
-    @Suppress("DEPRECATION")
-    suspend fun getPopularAnime(page: Int): AnimesPage {
-        return fetchPopularAnime(page).awaitSingle()
-    }
+    suspend fun getPopularAnime(page: Int): AnimesPage
 
-    @Suppress("DEPRECATION")
-    suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        return fetchSearchAnime(page, query, filters).awaitSingle()
-    }
+    suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage
 
-    @Suppress("DEPRECATION")
-    suspend fun getLatestUpdates(page: Int): AnimesPage {
-        return fetchLatestUpdates(page).awaitSingle()
-    }
+    suspend fun getLatestUpdates(page: Int): AnimesPage
 
     fun getFilterList(): AnimeFilterList
 
-    /**
-     * Whether the extension provides its own related anime request.
-     */
-    val supportsRelatedAnime: Boolean get() = false
+    val supportsRelatedAnime: Boolean
 
-    /**
-     * Extensions can opt out of the app's title-search based recommendations.
-     */
-    val disableRelatedAnimeBySearch: Boolean get() = false
+    val disableRelatedAnimeBySearch: Boolean
 
-    /**
-     * Disable showing any related anime.
-     */
-    val disableRelatedAnime: Boolean get() = false
+    val disableRelatedAnime: Boolean
 
     override suspend fun getRelatedAnimeList(
         anime: SAnime,
         exceptionHandler: (Throwable) -> Unit,
         pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
-    ) {
-        val handler = CoroutineExceptionHandler { _, e -> exceptionHandler(e) }
-        if (!disableRelatedAnime) {
-            supervisorScope {
-                if (supportsRelatedAnime) launch(handler) { getRelatedAnimeListByExtension(anime, pushResults) }
-                if (!disableRelatedAnimeBySearch) launch(handler) { getRelatedAnimeListBySearch(anime, pushResults) }
-            }
-        }
-    }
+    )
 
     suspend fun getRelatedAnimeListByExtension(
         anime: SAnime,
         pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
-    ) {
-        runCatching { fetchRelatedAnimeList(anime) }
-            .onSuccess { if (it.isNotEmpty()) pushResults(Pair("", it), false) }
-            .onFailure { e ->
-                sourceApiLogError("getRelatedAnimeListByExtension failed", e)
-            }
-    }
+    )
 
-    suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime> = throw UnsupportedOperationException("Unsupported!")
-
-    fun String.stripKeywordForRelatedAnime(): List<String> {
-        val regexWhitespace = Regex("\\s+")
-        val regexSpecialCharacters = Regex("([!~#$%^&*+_|/\\\\,?:;'\"<>(){}\\[\\]]|\\s-|-\\s|\\s\\.|\\.\\s])")
-        val regexNumberOnly = Regex("^\\d+$")
-
-        return replace(regexSpecialCharacters, " ")
-            .split(regexWhitespace)
-            .map {
-                it.replace(regexNumberOnly, "")
-                    .lowercase()
-            }
-            .filter { it.length > 1 }
-    }
+    suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime>
 
     suspend fun getRelatedAnimeListBySearch(
         anime: SAnime,
         pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
-    ) {
-        val words = linkedSetOf(anime.title)
-        anime.title.stripKeywordForRelatedAnime()
-            .filterNot { word -> words.any { it.equals(word, ignoreCase = true) } }
-            .onEach { words.add(it) }
-        if (words.isEmpty()) return
-
-        coroutineScope {
-            val filterList = getFilterList()
-            words.map { keyword ->
-                launch {
-                    runCatching {
-                        getSearchAnime(1, keyword.sanitizeRelatedQuery(), filterList).animes
-                    }
-                        .onSuccess { if (it.isNotEmpty()) pushResults(Pair(keyword, it), false) }
-                        .onFailure { e ->
-                            sourceApiLogError("getRelatedAnimeListBySearch failed", e)
-                        }
-                }
-            }
-        }
-    }
-
-    @Deprecated(
-        "Use the non-RxJava API instead",
-        ReplaceWith("getPopularAnime"),
     )
-    fun fetchPopularAnime(page: Int): Observable<AnimesPage>
-
-    @Deprecated(
-        "Use the non-RxJava API instead",
-        ReplaceWith("getSearchAnime"),
-    )
-    fun fetchSearchAnime(page: Int, query: String, filters: AnimeFilterList): Observable<AnimesPage>
-
-    @Deprecated(
-        "Use the non-RxJava API instead",
-        ReplaceWith("getLatestUpdates"),
-    )
-    fun fetchLatestUpdates(page: Int): Observable<AnimesPage>
-}
-
-private fun String.sanitizeRelatedQuery(): String {
-    return trim()
-        .trim(' ', '-', '_', ',', ':')
-        .replace('\u2018', '\'')
-        .replace('\u2019', '\'')
-        .replace('\u201C', '"')
-        .replace('\u201D', '"')
-        .replace('\u2013', '-')
-        .replace('\u2014', '-')
-        .replace("\u2026", "...")
 }

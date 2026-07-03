@@ -229,18 +229,6 @@ private fun presentShareSheet(items: List<*>, title: String?): Boolean {
             activityItems = shareItems,
             applicationActivities = null,
         )
-        val shareTitle = title.shareTitleOrNull()
-        activityController.title = shareTitle
-        if (shareTitle != null) {
-            runCatching {
-                activityController.setValue(shareTitle, forKey = "subject")
-            }
-        }
-        val sourceView = presenter.view ?: return@performOnMainThread false
-        activityController.popoverPresentationController?.let { popover ->
-            popover.sourceView = sourceView
-            popover.sourceRect = sourceView.bounds
-        }
         presenter.presentViewController(activityController, animated = true, completion = null)
         true
     }

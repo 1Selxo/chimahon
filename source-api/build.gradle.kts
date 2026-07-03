@@ -64,6 +64,20 @@ kotlin {
         val nativeMain by getting {
             dependencies {
                 implementation("io.ktor:ktor-client-core:3.5.0")
+            }
+        }
+        val iosMain by getting {
+            dependencies {
+                implementation("io.ktor:ktor-client-darwin:3.5.0")
+            }
+        }
+        val linuxMain by getting {
+            dependencies {
+                implementation("io.ktor:ktor-client-cio:3.5.0")
+            }
+        }
+        val windowsMain by getting {
+            dependencies {
                 implementation("io.ktor:ktor-client-cio:3.5.0")
             }
         }

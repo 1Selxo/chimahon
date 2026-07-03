@@ -1,15 +1,24 @@
 package app.chimahon.shared
 
+import app.cash.sqldelight.ColumnAdapter
 import app.cash.sqldelight.db.SqlDriver
+import app.chimahon.shared.anime.ChimahonAnimeCategory
+import app.chimahon.shared.anime.ChimahonAnimeEpisodeEntry
+import app.chimahon.shared.anime.ChimahonAnimeSourceInfo
+import app.chimahon.shared.anime.defaultAnimeCategory
+import app.chimahon.shared.anime.toAnimeLibraryData
+import app.chimahon.shared.anime.toChimahonAnimeEpisodeEntry
+import app.chimahon.shared.anime.toChimahonAnimeLibraryRecords
+import dataanime.Animes
+import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceRegistry
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.ScriptExtensionSourceManager
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.readRawBytes
@@ -21,6 +30,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okio.FileSystem
@@ -44,6 +54,7 @@ import tachiyomi.data.libraryUpdateError.LibraryUpdateErrorRepositoryImpl
 import tachiyomi.data.libraryUpdateErrorMessage.LibraryUpdateErrorMessageRepositoryImpl
 import tachiyomi.domain.libraryUpdateError.interactor.GetLibraryUpdateErrors
 import tachiyomi.domain.libraryUpdateErrorMessage.interactor.GetLibraryUpdateErrorMessages
+import tachiyomi.mi.data.AnimeDatabase
 import tachiyomi.view.History
 import tachiyomi.view.UpdatesView
 import kotlin.time.TimeMark
@@ -69,11 +80,10 @@ class ChimahonSharedAppServices private constructor(
     private val downloadQueueRepository = ChimahonDownloadQueueRepository(settingsStore)
     private val json = Json {
         ignoreUnknownKeys = true
+        isLenient = true
+        coerceInputValues = true
     }
-    private val httpClient = HttpClient(CIO) {
-        expectSuccess = false
-        followRedirects = true
-    }
+    private val httpClient = createChimahonHttpClient()
     private val scriptExtensionLoader = ScriptExtensionLoader(platformServices.javaScriptRuntimeFactory)
     private val scriptExtensionManager = ScriptExtensionSourceManager(
         store = ScriptExtensionStore(
@@ -85,6 +95,8 @@ class ChimahonSharedAppServices private constructor(
     )
     private val readerProgressMutex = Mutex()
     private val readerProgressMarks = mutableMapOf<Long, TimeMark>()
+    private val readerOcrCacheMutex = Mutex()
+    private val readerOcrCache = linkedMapOf<String, List<ChimahonReaderOcrBlock>>()
     private val thumbnailCacheMutex = Mutex()
     private val thumbnailCache = mutableMapOf<String, ByteArray>()
     private val extensionMutationMutex = Mutex()
@@ -95,6 +107,7 @@ class ChimahonSharedAppServices private constructor(
 
     suspend fun loadSnapshot(): ChimahonSnapshot {
         val extensionState = loadExtensions()
+        val apkExtensionStatus = platformServices.apkExtensionManager.status()
         val allManga = platformServices.databaseHandler.awaitList {
             mangasQueries.getAllManga()
         }
@@ -149,12 +162,52 @@ class ChimahonSharedAppServices private constructor(
         val sources = platformServices.sourceRegistry
             .getCatalogueSources()
             .sortedWith(compareBy<CatalogueSource> { it.lang }.thenBy { it.name.lowercase() })
+        val animeRows = platformServices.animeDatabase.animesQueries.getFavorites().executeAsList()
+        val animeEpisodesByAnimeId = animeRows.associate { anime ->
+            anime._id to platformServices.animeDatabase.episodesQueries.getEpisodesByAnimeId(anime._id)
+                .executeAsList()
+                .map { episode -> episode.toChimahonAnimeEpisodeEntry() }
+                .sortedWith(
+                    compareBy<ChimahonAnimeEpisodeEntry> { it.sourceOrder }
+                        .thenBy { it.id },
+                )
+        }
+        val animeSourceInfos = sources.associate { source ->
+            source.id to ChimahonAnimeSourceInfo(
+                id = source.id,
+                name = source.name,
+                language = source.lang,
+                isLocal = source.id == 0L || source.name.contains("local", ignoreCase = true),
+                supportsSearch = true,
+                supportsLatest = source.supportsLatest,
+            )
+        }
+        val animeCategories = categories
+            .map { category ->
+                ChimahonAnimeCategory(
+                    id = category.id,
+                    name = category.name,
+                    order = category.order,
+                    hidden = category.hidden != 0L,
+                )
+            }
+            .ifEmpty { listOf(defaultAnimeCategory()) }
+        val animeLibraryData = animeRows
+            .toChimahonAnimeLibraryRecords(
+                episodesByAnimeId = animeEpisodesByAnimeId,
+                sourceInfos = animeSourceInfos,
+            )
+            .toAnimeLibraryData(
+                categories = animeCategories,
+                episodesByAnimeId = animeEpisodesByAnimeId,
+            )
 
         return ChimahonSnapshot(
             summary = ChimahonSummary(
                 extensionCount = extensionState.extensionCount,
                 sourceCount = sources.size,
                 mangaCount = allManga.size,
+                apkExtensionsSupported = apkExtensionStatus.isSupported,
             ),
             mangaDetails = sharedMangaById,
             library = libraryManga
@@ -208,6 +261,7 @@ class ChimahonSharedAppServices private constructor(
                 extensionState = extensionState.label,
                 backgroundState = platformServices.backgroundState,
             ),
+            animeLibrary = animeLibraryData,
         )
     }
 
@@ -642,22 +696,7 @@ class ChimahonSharedAppServices private constructor(
     }
 
     suspend fun addExtensionRepo(input: String): ChimahonExtensionRepoEntry {
-        val baseUrl = normalizeExtensionRepoBaseUrl(input)
-        val repo = if (baseUrl.endsWith(SCRIPT_EXTENSION_SUFFIX, ignoreCase = true)) {
-            val script = fetchText(baseUrl)
-            val extension = scriptExtensionLoader.load(script)
-            ChimahonExtensionRepoEntry(
-                baseUrl = baseUrl,
-                name = extension.manifest.name,
-                shortName = extension.manifest.name.take(16),
-                website = baseUrl,
-                signingKeyFingerprint = "script-${extension.manifest.id}",
-            )
-        } else {
-            val metadata = fetchRepoMetadata(baseUrl)
-            loadExtensionRepoCatalog(metadata)
-            metadata
-        }
+        val repo = resolveExtensionRepoForStorage(input)
 
         platformServices.databaseHandler.await {
             extension_reposQueries.upsert(
@@ -669,12 +708,65 @@ class ChimahonSharedAppServices private constructor(
             )
         }
         val browseSettings = settingsRepository.loadBrowseSettings()
-        if (repo.baseUrl in browseSettings.disabledExtensionRepoUrls) {
+        val disabledRepoUrls = browseSettings.disabledExtensionRepoUrls.normalizedExtensionRepoBaseUrls()
+        if (repo.baseUrl in disabledRepoUrls) {
             settingsRepository.saveBrowseSettings(
                 browseSettings.copy(
                     disabledExtensionRepoUrls = browseSettings.disabledExtensionRepoUrls
-                        .filterNot { it == repo.baseUrl },
+                        .filterNot { url -> normalizeExtensionRepoBaseUrlOrNull(url) == repo.baseUrl },
                 ),
+            )
+        }
+        return repo
+    }
+
+    suspend fun replaceExtensionRepo(
+        currentBaseUrl: String,
+        input: String,
+    ): ChimahonExtensionRepoEntry {
+        val normalizedCurrentBaseUrl = normalizeExtensionRepoBaseUrl(currentBaseUrl)
+        findStoredExtensionRepo(normalizedCurrentBaseUrl)
+            ?: error("Extension repo $normalizedCurrentBaseUrl does not exist.")
+        val repo = resolveExtensionRepoForStorage(input)
+        val existingByBaseUrl = findStoredExtensionRepo(repo.baseUrl)
+        require(existingByBaseUrl == null || existingByBaseUrl.baseUrl == normalizedCurrentBaseUrl) {
+            "Extension repo ${repo.baseUrl} already exists."
+        }
+        val existingByFingerprint = findStoredExtensionRepoByFingerprint(repo.signingKeyFingerprint)
+        require(existingByFingerprint == null || existingByFingerprint.baseUrl == normalizedCurrentBaseUrl) {
+            "Extension repo ${existingByFingerprint?.name ?: repo.signingKeyFingerprint} already uses this signing key."
+        }
+
+        val storedBaseUrls = platformServices.databaseHandler.awaitList {
+            extension_reposQueries.findAll()
+        }
+            .map(Extension_repos::base_url)
+            .filter { storedUrl -> normalizeExtensionRepoBaseUrlOrNull(storedUrl) == normalizedCurrentBaseUrl }
+            .ifEmpty { listOf(normalizedCurrentBaseUrl) }
+        platformServices.databaseHandler.await(inTransaction = true) {
+            storedBaseUrls.distinct().forEach(extension_reposQueries::delete)
+            extension_reposQueries.upsert(
+                base_url = repo.baseUrl,
+                name = repo.name,
+                short_name = repo.shortName,
+                website = repo.website,
+                fingerprint = repo.signingKeyFingerprint,
+            )
+        }
+
+        val browseSettings = settingsRepository.loadBrowseSettings()
+        val disabledRepoUrls = browseSettings.disabledExtensionRepoUrls.normalizedExtensionRepoBaseUrls()
+        val wasDisabled = normalizedCurrentBaseUrl in disabledRepoUrls
+        val updatedDisabledRepoUrls = browseSettings.disabledExtensionRepoUrls
+            .filterNot { url ->
+                normalizeExtensionRepoBaseUrlOrNull(url)
+                    ?.let { it == normalizedCurrentBaseUrl || it == repo.baseUrl }
+                    ?: false
+            }
+            .let { urls -> if (wasDisabled) (urls + repo.baseUrl).distinct() else urls }
+        if (updatedDisabledRepoUrls != browseSettings.disabledExtensionRepoUrls) {
+            settingsRepository.saveBrowseSettings(
+                browseSettings.copy(disabledExtensionRepoUrls = updatedDisabledRepoUrls),
             )
         }
         return repo
@@ -682,9 +774,7 @@ class ChimahonSharedAppServices private constructor(
 
     suspend fun refreshExtensionRepo(baseUrl: String): ChimahonExtensionRepoEntry {
         val normalizedBaseUrl = normalizeExtensionRepoBaseUrl(baseUrl)
-        val current = platformServices.databaseHandler.awaitOneOrNull {
-            extension_reposQueries.findOne(normalizedBaseUrl)
-        }?.toSharedExtensionRepoEntry()
+        val current = findStoredExtensionRepo(normalizedBaseUrl)
             ?: error("Extension repo $normalizedBaseUrl does not exist.")
         val refreshed = fetchRepoMetadata(normalizedBaseUrl, current)
         if (
@@ -707,15 +797,21 @@ class ChimahonSharedAppServices private constructor(
 
     suspend fun deleteExtensionRepo(baseUrl: String) {
         val normalizedBaseUrl = normalizeExtensionRepoBaseUrl(baseUrl)
+        val storedBaseUrls = platformServices.databaseHandler.awaitList {
+            extension_reposQueries.findAll()
+        }
+            .map(Extension_repos::base_url)
+            .filter { storedUrl -> normalizeExtensionRepoBaseUrlOrNull(storedUrl) == normalizedBaseUrl }
+            .ifEmpty { listOf(normalizedBaseUrl) }
         platformServices.databaseHandler.await {
-            extension_reposQueries.delete(normalizedBaseUrl)
+            storedBaseUrls.distinct().forEach(extension_reposQueries::delete)
         }
         val browseSettings = settingsRepository.loadBrowseSettings()
-        if (normalizedBaseUrl in browseSettings.disabledExtensionRepoUrls) {
+        if (normalizedBaseUrl in browseSettings.disabledExtensionRepoUrls.normalizedExtensionRepoBaseUrls()) {
             settingsRepository.saveBrowseSettings(
                 browseSettings.copy(
                     disabledExtensionRepoUrls = browseSettings.disabledExtensionRepoUrls
-                        .filterNot { it == normalizedBaseUrl },
+                        .filterNot { url -> normalizeExtensionRepoBaseUrlOrNull(url) == normalizedBaseUrl },
                 ),
             )
         }
@@ -724,21 +820,23 @@ class ChimahonSharedAppServices private constructor(
     suspend fun loadExtensionRepoCatalog(
         repo: ChimahonExtensionRepoEntry,
     ): ChimahonExtensionRepoCatalog {
-        val extensions = if (repo.baseUrl.endsWith(SCRIPT_EXTENSION_SUFFIX, ignoreCase = true)) {
-            val script = fetchText(repo.baseUrl)
+        val repoBaseUrl = normalizeExtensionRepoBaseUrl(repo.baseUrl)
+        val normalizedRepo = repo.copy(baseUrl = repoBaseUrl)
+        val extensions = if (repoBaseUrl.endsWith(SCRIPT_EXTENSION_SUFFIX, ignoreCase = true)) {
+            val script = fetchText(repoBaseUrl)
             val extension = scriptExtensionLoader.load(script)
-            listOf(extension.toRepoExtensionEntry(repo.baseUrl, repo.baseUrl))
+            listOf(extension.toRepoExtensionEntry(repoBaseUrl, repoBaseUrl))
         } else {
             fetchFirstCompatibleRepoCatalog(
-                repoBaseUrl = repo.baseUrl,
-                urls = repoCatalogUrls(repo.baseUrl),
+                repoBaseUrl = repoBaseUrl,
+                urls = repoCatalogUrls(repoBaseUrl),
             )
         }
         require(extensions.isNotEmpty()) {
             "Repository has no compatible JavaScript or Android APK extensions."
         }
         return ChimahonExtensionRepoCatalog(
-            repo = repo,
+            repo = normalizedRepo,
             extensions = extensions.sortedBy { it.name.lowercase() },
         )
     }
@@ -828,9 +926,14 @@ class ChimahonSharedAppServices private constructor(
         val repos = platformServices.databaseHandler.awaitList {
             extension_reposQueries.findAll()
         }.map(Extension_repos::toSharedExtensionRepoEntry)
+            .map { repo ->
+                normalizeExtensionRepoBaseUrlOrNull(repo.baseUrl)
+                    ?.let { normalizedBaseUrl -> repo.copy(baseUrl = normalizedBaseUrl) }
+                    ?: repo
+            }
         val disabledRepoUrls = settingsRepository.loadBrowseSettings()
             .disabledExtensionRepoUrls
-            .toSet()
+            .normalizedExtensionRepoBaseUrls()
         val availableExtensions = mutableListOf<ChimahonRepoExtensionEntry>()
         val catalogErrors = mutableListOf<String>()
         repos.filterNot { it.baseUrl in disabledRepoUrls }.forEach { repo ->
@@ -848,30 +951,80 @@ class ChimahonSharedAppServices private constructor(
         )
     }
 
+    private suspend fun findStoredExtensionRepo(
+        normalizedBaseUrl: String,
+    ): ChimahonExtensionRepoEntry? {
+        platformServices.databaseHandler.awaitOneOrNull {
+            extension_reposQueries.findOne(normalizedBaseUrl)
+        }?.toSharedExtensionRepoEntry()?.let { return it.copy(baseUrl = normalizedBaseUrl) }
+
+        return platformServices.databaseHandler.awaitList {
+            extension_reposQueries.findAll()
+        }
+            .map(Extension_repos::toSharedExtensionRepoEntry)
+            .firstOrNull { repo -> normalizeExtensionRepoBaseUrlOrNull(repo.baseUrl) == normalizedBaseUrl }
+            ?.copy(baseUrl = normalizedBaseUrl)
+    }
+
+    private suspend fun findStoredExtensionRepoByFingerprint(
+        fingerprint: String,
+    ): ChimahonExtensionRepoEntry? {
+        if (fingerprint.isBlank()) return null
+        return platformServices.databaseHandler.awaitOneOrNull {
+            extension_reposQueries.findOneBySigningKeyFingerprint(fingerprint)
+        }
+            ?.toSharedExtensionRepoEntry()
+            ?.let { repo ->
+                normalizeExtensionRepoBaseUrlOrNull(repo.baseUrl)
+                    ?.let { normalizedBaseUrl -> repo.copy(baseUrl = normalizedBaseUrl) }
+                    ?: repo
+            }
+    }
+
+    private suspend fun resolveExtensionRepoForStorage(input: String): ChimahonExtensionRepoEntry {
+        val baseUrl = normalizeExtensionRepoBaseUrl(input)
+        return if (baseUrl.endsWith(SCRIPT_EXTENSION_SUFFIX, ignoreCase = true)) {
+            val script = fetchText(baseUrl)
+            val extension = scriptExtensionLoader.load(script)
+            ChimahonExtensionRepoEntry(
+                baseUrl = baseUrl,
+                name = extension.manifest.name,
+                shortName = extension.manifest.name.take(16),
+                website = baseUrl,
+                signingKeyFingerprint = "script-${extension.manifest.id}",
+            )
+        } else {
+            val metadata = fetchRepoMetadata(baseUrl)
+            loadExtensionRepoCatalog(metadata)
+            metadata
+        }
+    }
+
     private suspend fun fetchRepoMetadata(
         baseUrl: String,
         fallback: ChimahonExtensionRepoEntry? = null,
     ): ChimahonExtensionRepoEntry {
+        val normalizedBaseUrl = normalizeExtensionRepoBaseUrl(baseUrl)
         val metadata = runCatching {
             parseRepoMetadata(
                 json = json,
-                repoBaseUrl = baseUrl,
-                payload = fetchText("$baseUrl/repo.json"),
+                repoBaseUrl = normalizedBaseUrl,
+                payload = fetchText("$normalizedBaseUrl/repo.json"),
             )
         }.getOrNull()
             ?: runCatching {
                 fetchFirstCompatibleRepoMetadata(
-                    repoBaseUrl = baseUrl,
-                    urls = repoCatalogUrls(baseUrl),
+                    repoBaseUrl = normalizedBaseUrl,
+                    urls = repoCatalogUrls(normalizedBaseUrl),
                 )
             }.getOrNull()
 
-        return metadata ?: fallback ?: ChimahonExtensionRepoEntry(
-            baseUrl = baseUrl,
-            name = baseUrl.repoHost(),
-            shortName = baseUrl.repoHost().substringBefore(".").take(16),
-            website = baseUrl,
-            signingKeyFingerprint = "shared-${baseUrl.stableRepoHash()}",
+        return metadata ?: fallback?.copy(baseUrl = normalizedBaseUrl) ?: ChimahonExtensionRepoEntry(
+            baseUrl = normalizedBaseUrl,
+            name = normalizedBaseUrl.repoHost(),
+            shortName = normalizedBaseUrl.repoHost().substringBefore(".").take(16),
+            website = normalizedBaseUrl,
+            signingKeyFingerprint = "shared-${normalizedBaseUrl.stableRepoHash()}",
         )
     }
 
@@ -1019,30 +1172,38 @@ class ChimahonSharedAppServices private constructor(
         val details = runCatching {
             source.getMangaDetails(seed).withSeedFallback(seed)
         }.getOrElse { error ->
-            if (error.isUninitializedSourceUrlFailure()) {
+            if (error is CancellationException) throw error
+            if (error.isRecoverableRemoteMetadataFailure()) {
                 seed.withSeedFallback(seed)
             } else {
                 throw error
             }
         }
-        val chapters = source.getChapterList(details)
+        val chapters = runCatching {
+            source.getChapterList(details)
+        }.getOrElse { error ->
+            if (error is CancellationException) throw error
+            emptyList()
+        }
+        val title = details.safeTitle(remoteManga.title)
+        val statusCode = details.safeStatus().toLong()
 
         return ChimahonRemoteMangaDetail(
             sourceId = source.id,
             sourceName = source.name,
-            title = details.title,
-            artist = details.artist,
-            author = details.author,
-            description = details.description,
-            genres = details.getGenres().orEmpty(),
-            status = mangaStatus(details.status.toLong()),
-            statusCode = details.status.toLong(),
+            title = title,
+            artist = details.safeArtist(),
+            author = details.safeAuthor() ?: remoteManga.author,
+            description = details.safeDescription(),
+            genres = details.safeGenres(),
+            status = mangaStatus(statusCode),
+            statusCode = statusCode,
             url = details.safeUrl(remoteManga.url),
-            thumbnailUrl = details.thumbnail_url,
-            initialized = details.initialized,
+            thumbnailUrl = details.safeThumbnailUrl(),
+            initialized = details.safeInitialized(),
             chapters = chapters.mapIndexed { index, chapter ->
                 chapter.toRemoteChapterEntry(
-                    mangaTitle = details.title.ifBlank { remoteManga.title },
+                    mangaTitle = title.ifBlank { remoteManga.title },
                     sourceOrder = index,
                 )
             },
@@ -1402,6 +1563,39 @@ class ChimahonSharedAppServices private constructor(
                 imageUrl = readerPage.imageUrl,
             ),
         )
+    }
+
+    suspend fun loadReaderOcrBlocks(
+        readerPage: ChimahonReaderPage,
+        dictionarySettings: ChimahonDictionarySettings,
+    ): List<ChimahonReaderOcrBlock> {
+        val languageCode = dictionarySettings.enabledLanguages
+            .firstOrNull()
+            ?.toGlensLanguageCode()
+            ?: "ja"
+        val cacheKey = listOf(
+            readerPage.sourceId.toString(),
+            readerPage.index.toString(),
+            readerPage.url,
+            readerPage.imageUrl.orEmpty(),
+            languageCode,
+        ).joinToString(separator = "\n")
+        readerOcrCacheMutex.withLock {
+            readerOcrCache[cacheKey]?.let { return it }
+        }
+
+        val bytes = loadReaderPageImage(readerPage)
+        val blocks = platformServices.recognizeReaderOcr(
+            bytes = bytes,
+            languageCode = languageCode,
+        )
+        readerOcrCacheMutex.withLock {
+            if (readerOcrCache.size >= MAX_READER_OCR_CACHE_ENTRIES) {
+                readerOcrCache.keys.firstOrNull()?.let(readerOcrCache::remove)
+            }
+            readerOcrCache[cacheKey] = blocks
+        }
+        return blocks
     }
 
     suspend fun loadThumbnailImage(url: String): ByteArray {
@@ -2049,12 +2243,17 @@ internal expect class ChimahonPlatformServices() {
     val storageDirectories: PlatformStorageDirectories
     val sourceRegistry: SourceRegistry
     val database: Database
+    val animeDatabase: AnimeDatabase
     val databaseHandler: DatabaseHandler
     val javaScriptRuntimeFactory: JavaScriptRuntimeFactory
     val apkExtensionManager: ChimahonPlatformApkExtensionManager
 
     fun currentTimeMillis(): Long
     fun resolveExternalMangaUrl(source: CatalogueSource, manga: SManga): String?
+    suspend fun recognizeReaderOcr(
+        bytes: ByteArray,
+        languageCode: String,
+    ): List<ChimahonReaderOcrBlock>
     fun openExternalUrl(url: String): Boolean
     fun close()
 }
@@ -2066,6 +2265,37 @@ internal fun createDatabase(driver: SqlDriver): Database {
             genreAdapter = StringListColumnAdapter,
         ),
     )
+}
+
+internal fun createAnimeDatabase(driver: SqlDriver): AnimeDatabase {
+    return AnimeDatabase(
+        driver = driver,
+        animesAdapter = Animes.Adapter(
+            genreAdapter = StringListColumnAdapter,
+            update_strategyAdapter = ChimahonAnimeUpdateStrategyColumnAdapter,
+            fetch_typeAdapter = ChimahonAnimeFetchTypeColumnAdapter,
+        ),
+    )
+}
+
+private object ChimahonAnimeUpdateStrategyColumnAdapter : ColumnAdapter<UpdateStrategy, Long> {
+    override fun decode(databaseValue: Long): UpdateStrategy {
+        return UpdateStrategy.entries.getOrElse(databaseValue.toInt()) { UpdateStrategy.ALWAYS_UPDATE }
+    }
+
+    override fun encode(value: UpdateStrategy): Long {
+        return value.ordinal.toLong()
+    }
+}
+
+private object ChimahonAnimeFetchTypeColumnAdapter : ColumnAdapter<FetchType, Long> {
+    override fun decode(databaseValue: Long): FetchType {
+        return FetchType.entries.getOrElse(databaseValue.toInt()) { FetchType.Episodes }
+    }
+
+    override fun encode(value: FetchType): Long {
+        return value.ordinal.toLong()
+    }
 }
 
 private fun Mangas.toSharedMangaEntry(): ChimahonMangaEntry {
@@ -2093,20 +2323,32 @@ internal fun SManga.withSeedFallback(seed: SManga): SManga {
     if (safeUrl().isBlank()) {
         url = seed.safeUrl()
     }
-    if (title.isBlank()) {
-        title = seed.title
+    if (safeTitle().isBlank()) {
+        title = seed.safeTitle("Untitled")
     }
-    if (thumbnail_url.isNullOrBlank()) {
-        thumbnail_url = seed.thumbnail_url
+    if (safeThumbnailUrl().isNullOrBlank()) {
+        thumbnail_url = seed.safeThumbnailUrl()
     }
-    if (author.isNullOrBlank()) {
-        author = seed.author
+    if (safeAuthor().isNullOrBlank()) {
+        author = seed.safeAuthor()
+    }
+    if (safeArtist().isNullOrBlank()) {
+        artist = seed.safeArtist()
+    }
+    if (safeDescription().isNullOrBlank()) {
+        description = seed.safeDescription()
+    }
+    if (safeGenre().isNullOrBlank()) {
+        genre = seed.safeGenre()
+    }
+    if (safeStatus() == SManga.UNKNOWN && seed.safeStatus() != SManga.UNKNOWN) {
+        status = seed.safeStatus()
     }
     initialized = true
     return this
 }
 
-private fun Throwable.isUninitializedSourceUrlFailure(): Boolean {
+private fun Throwable.isRecoverableRemoteMetadataFailure(): Boolean {
     val detail = message.orEmpty()
     return detail.contains("url", ignoreCase = true) &&
         detail.contains("initialized", ignoreCase = true)
@@ -2119,6 +2361,58 @@ private fun SManga.safeUrl(fallback: String = ""): String {
         .ifBlank { fallback }
 }
 
+private fun SManga.safeTitle(fallback: String = ""): String {
+    return runCatching { title }
+        .getOrNull()
+        .orEmpty()
+        .ifBlank { fallback }
+}
+
+private fun SManga.safeArtist(): String? {
+    return runCatching { artist }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun SManga.safeAuthor(): String? {
+    return runCatching { author }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun SManga.safeDescription(): String? {
+    return runCatching { description }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun SManga.safeGenre(): String? {
+    return runCatching { genre }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun SManga.safeGenres(): List<String> {
+    return runCatching { getGenres().orEmpty() }
+        .getOrDefault(emptyList())
+}
+
+private fun SManga.safeStatus(): Int {
+    return runCatching { status }
+        .getOrDefault(SManga.UNKNOWN)
+}
+
+private fun SManga.safeThumbnailUrl(): String? {
+    return runCatching { thumbnail_url }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun SManga.safeInitialized(): Boolean {
+    return runCatching { initialized }
+        .getOrDefault(false)
+}
+
 private fun SChapter.safeUrl(fallback: String = ""): String {
     return runCatching { url }
         .getOrNull()
@@ -2126,11 +2420,27 @@ private fun SChapter.safeUrl(fallback: String = ""): String {
         .ifBlank { fallback }
 }
 
-private fun SChapter.safeName(): String {
+private fun SChapter.safeName(fallback: String = "Chapter"): String {
     return runCatching { name }
         .getOrNull()
         .orEmpty()
-        .ifBlank { "Chapter" }
+        .ifBlank { fallback }
+}
+
+private fun SChapter.safeDateUpload(): Long {
+    return runCatching { date_upload }
+        .getOrDefault(0L)
+}
+
+private fun SChapter.safeChapterNumber(): Double {
+    return runCatching { chapter_number.toDouble() }
+        .getOrDefault(-1.0)
+}
+
+private fun SChapter.safeScanlator(): String? {
+    return runCatching { scanlator }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
 }
 
 private fun CatalogueSource.toSharedSourceEntry(): ChimahonSourceEntry {
@@ -2256,14 +2566,23 @@ private fun LoadedScriptExtension.toSharedInstalledExtensionEntry(): ChimahonIns
 }
 
 private fun SManga.toRemoteMangaEntry(sourceId: Long): ChimahonRemoteMangaEntry {
+    val url = safeUrl()
+    val fallbackTitle = url
+        .substringBefore("?")
+        .substringBefore("#")
+        .trimEnd('/')
+        .substringAfterLast("/")
+        .replace('-', ' ')
+        .replace('_', ' ')
+        .ifBlank { "Untitled" }
     return ChimahonRemoteMangaEntry(
         sourceId = sourceId,
-        title = title,
-        author = author ?: artist,
-        status = mangaStatus(status.toLong()),
-        url = safeUrl(),
-        thumbnailUrl = thumbnail_url,
-        initialized = initialized,
+        title = safeTitle(fallbackTitle),
+        author = safeAuthor() ?: safeArtist(),
+        status = mangaStatus(safeStatus().toLong()),
+        url = url,
+        thumbnailUrl = safeThumbnailUrl(),
+        initialized = safeInitialized(),
     )
 }
 
@@ -2271,16 +2590,18 @@ private fun SChapter.toRemoteChapterEntry(
     mangaTitle: String,
     sourceOrder: Int,
 ): ChimahonRemoteChapterEntry {
+    val fallbackName = "Chapter ${sourceOrder + 1}"
+    val name = safeName(fallbackName)
     return ChimahonRemoteChapterEntry(
-        name = safeName(),
+        name = name,
         url = safeUrl(),
         chapterNumber = parseRemoteChapterNumber(
             mangaTitle = mangaTitle,
-            chapterName = safeName(),
-            chapterNumber = chapter_number.toDouble(),
+            chapterName = name,
+            chapterNumber = safeChapterNumber(),
         ),
-        scanlator = scanlator,
-        dateUpload = date_upload,
+        scanlator = safeScanlator(),
+        dateUpload = safeDateUpload(),
         sourceOrder = sourceOrder,
     )
 }
@@ -2349,23 +2670,80 @@ private fun parseRemoteChapterAlphaPostFix(alpha: String): Double {
 }
 
 private fun normalizeExtensionRepoBaseUrl(input: String): String {
-    val cleaned = input.trim().trimEnd('/')
-    require(cleaned.startsWith("https://")) { "Extension repo URL must start with https://." }
-    val baseUrl = cleaned
-        .removeSuffix("/chimahon.json")
-        .removeSuffix("/index.json")
-        .removeSuffix("/index.min.json")
+    val cleaned = input.trim()
+        .trim('"', '\'')
+        .substringBefore("#")
+        .substringBefore("?")
         .trimEnd('/')
-    require(baseUrl.length > "https://".length) { "Extension repo URL is empty." }
+        .let { value ->
+            if ("://" in value) {
+                value
+            } else {
+                "https://$value"
+            }
+        }
+    require(
+        cleaned.startsWith("https://", ignoreCase = true) ||
+            cleaned.startsWith("http://", ignoreCase = true),
+    ) {
+        "Extension repo URL must start with http:// or https://."
+    }
+    val baseUrl = cleaned
+        .normalizeGitHubRawUrl()
+        .removeRepoIndexSuffix()
+        .trimEnd('/')
+    val host = baseUrl.substringAfter("://", "").substringBefore("/")
+    require(host.isNotBlank()) { "Extension repo URL is empty." }
     return baseUrl
 }
 
 internal fun repoCatalogUrls(baseUrl: String): List<String> {
+    val normalizedBaseUrl = normalizeExtensionRepoBaseUrl(baseUrl)
     return listOf(
-        "$baseUrl/chimahon.json",
-        "$baseUrl/index.min.json",
-        "$baseUrl/index.json",
+        "$normalizedBaseUrl/chimahon.json",
+        "$normalizedBaseUrl/index.min.json",
+        "$normalizedBaseUrl/index.json",
     )
+}
+
+private fun normalizeExtensionRepoBaseUrlOrNull(input: String): String? {
+    return runCatching { normalizeExtensionRepoBaseUrl(input) }.getOrNull()
+}
+
+private fun Iterable<String>.normalizedExtensionRepoBaseUrls(): Set<String> {
+    return mapNotNull(::normalizeExtensionRepoBaseUrlOrNull).toSet()
+}
+
+private fun String.removeRepoIndexSuffix(): String {
+    return removeSuffix("/repo.json")
+        .removeSuffix("/chimahon.json")
+        .removeSuffix("/index.json")
+        .removeSuffix("/index.min.json")
+}
+
+private fun String.normalizeGitHubRawUrl(): String {
+    val scheme = substringBefore("://")
+    val remainder = substringAfter("://")
+    val host = remainder.substringBefore("/").lowercase()
+    val path = remainder.substringAfter("/", "")
+    if (host != "github.com") {
+        return "$scheme://$host${path.prependSlashIfNotBlank()}"
+    }
+
+    val segments = path.split('/').filter(String::isNotBlank)
+    if (segments.size < 4 || segments[2].lowercase() !in GITHUB_RAW_PATH_SEGMENTS) {
+        return "$scheme://$host${path.prependSlashIfNotBlank()}"
+    }
+
+    val owner = segments[0]
+    val repo = segments[1]
+    val branch = segments[3]
+    val rest = segments.drop(4).joinToString("/")
+    return "https://raw.githubusercontent.com/$owner/$repo/$branch${rest.prependSlashIfNotBlank()}"
+}
+
+private fun String.prependSlashIfNotBlank(): String {
+    return takeIf(String::isNotBlank)?.let { "/$it" }.orEmpty()
 }
 
 internal fun buildChimahonDownloadSnapshot(
@@ -2431,8 +2809,59 @@ private fun JsonObject.arrayValue(vararg keys: String): JsonArray? {
     return keys.firstNotNullOfOrNull { key -> this[key] as? JsonArray }
 }
 
-private fun JsonObject.intValue(key: String): Int? {
-    return runCatching { this[key]?.jsonPrimitive?.content?.toInt() }.getOrNull()
+private fun JsonObject.intValue(vararg keys: String): Int? {
+    return keys.firstNotNullOfOrNull { key ->
+        this[key]?.primitiveContentOrNull()?.toIntOrNull()
+    }
+}
+
+private fun JsonObject.booleanValue(vararg keys: String): Boolean? {
+    return keys.firstNotNullOfOrNull { key ->
+        when (val value = this[key]?.primitiveContentOrNull()?.lowercase()) {
+            "1", "true", "yes", "y" -> true
+            "0", "false", "no", "n" -> false
+            null -> null
+            else -> value.toIntOrNull()?.let { it != 0 }
+        }
+    }
+}
+
+private fun JsonObject.sourceCount(): Int {
+    return intValue("sourceCount", "source_count", "sourcesCount", "sources_count")
+        ?: when (val sources = this["sources"]) {
+            is JsonArray -> sources.size
+            is JsonObject -> sources.size
+            else -> 0
+        }
+}
+
+private fun JsonObject.commonSourceLanguage(): String {
+    val sourceLanguages = when (val sources = this["sources"]) {
+        is JsonArray -> sources.mapNotNull { source ->
+            (source as? JsonObject)?.stringValue("lang", "language")
+        }
+        is JsonObject -> sources.values.mapNotNull { source ->
+            (source as? JsonObject)?.stringValue("lang", "language")
+        }
+        else -> emptyList()
+    }
+    return sourceLanguages.distinct().singleOrNull().orEmpty()
+}
+
+private fun JsonObject.sourcesNsfw(): Boolean {
+    return when (val sources = this["sources"]) {
+        is JsonArray -> sources.any { source ->
+            (source as? JsonObject)?.booleanValue("isNsfw", "is_nsfw", "nsfw", "adult") == true
+        }
+        is JsonObject -> sources.values.any { source ->
+            (source as? JsonObject)?.booleanValue("isNsfw", "is_nsfw", "nsfw", "adult") == true
+        }
+        else -> false
+    }
+}
+
+private fun JsonElement.primitiveContentOrNull(): String? {
+    return runCatching { jsonPrimitive.content }.getOrNull()
 }
 
 internal fun parseRepoMetadata(
@@ -2440,6 +2869,7 @@ internal fun parseRepoMetadata(
     repoBaseUrl: String,
     payload: String,
 ): ChimahonExtensionRepoEntry? {
+    val baseUrl = normalizeExtensionRepoBaseUrl(repoBaseUrl)
     val root = json.parseToJsonElement(payload) as? JsonObject ?: return null
     val meta = root.objectValue("meta", "repo", "repository") ?: root
     val contact = meta.objectValue("contact") ?: root.objectValue("contact")
@@ -2472,14 +2902,14 @@ internal fun parseRepoMetadata(
     ) {
         return null
     }
-    val name = metadataName ?: repoBaseUrl.repoHost()
+    val name = metadataName ?: baseUrl.repoHost()
 
     return ChimahonExtensionRepoEntry(
-        baseUrl = repoBaseUrl,
+        baseUrl = baseUrl,
         name = name,
         shortName = metadataShortName ?: name.take(16),
-        website = metadataWebsite ?: repoBaseUrl,
-        signingKeyFingerprint = metadataSigningKey ?: "shared-${repoBaseUrl.stableRepoHash()}",
+        website = metadataWebsite ?: baseUrl,
+        signingKeyFingerprint = metadataSigningKey ?: "shared-${baseUrl.stableRepoHash()}",
     )
 }
 
@@ -2488,97 +2918,163 @@ internal fun parseRepoExtensions(
     repoBaseUrl: String,
     payload: String,
 ): List<ChimahonRepoExtensionEntry> {
+    val baseUrl = normalizeExtensionRepoBaseUrl(repoBaseUrl)
     val root = json.parseToJsonElement(payload)
     val entries = when (root) {
         is JsonArray -> root
         is JsonObject -> {
-            root.arrayValue("extensions", "packages", "items", "entries")
+            root.arrayValue("extensions", "packages", "items", "entries", "data")
                 ?: root.objectValue("extensionList", "extension_list", "data")
-                    ?.arrayValue("extensions", "packages", "items", "entries")
+                    ?.arrayValue("extensions", "packages", "items", "entries", "data")
                 ?: JsonArray(emptyList())
         }
         else -> JsonArray(emptyList())
     }
     val objects = entries.mapNotNull { it as? JsonObject }
     val scriptEntries = objects.mapNotNull { entry ->
+        val resources = entry.objectValue("resources", "assets", "files", "download")
+        val type = entry.stringValue("type", "kind", "packageType", "package_type").orEmpty()
         val scriptCandidate = entry.stringValue(
             "scriptUrl",
             "script_url",
             "downloadUrl",
             "download_url",
+            "artifactUrl",
+            "artifact_url",
             "url",
             "script",
+            "js",
+            "file",
+            "filename",
         )
-            ?: entry.objectValue("resources")
-                ?.stringValue("scriptUrl", "script_url", "downloadUrl", "download_url", "url")
+            ?: resources?.stringValue(
+                "scriptUrl",
+                "script_url",
+                "downloadUrl",
+                "download_url",
+                "artifactUrl",
+                "artifact_url",
+                "url",
+                "script",
+                "js",
+                "file",
+                "filename",
+            )
         val scriptPath = scriptCandidate
-            ?.takeIf {
-                it.startsWith("https://") ||
-                    it.startsWith("http://") ||
-                    it.substringBefore("?").endsWith(".js")
+            ?.takeIf { candidate ->
+                type.contains("script", ignoreCase = true) ||
+                    type.contains("javascript", ignoreCase = true) ||
+                    candidate.looksLikeJavaScriptArtifact()
             }
             ?: return@mapNotNull null
-        val scriptUrl = resolveRepoUrl(repoBaseUrl, scriptPath)
-        val fallbackId = scriptUrl.substringAfterLast("/").substringBeforeLast(".")
+        val scriptUrl = resolveRepoUrl(baseUrl, scriptPath)
+        val fallbackId = scriptUrl.artifactFallbackId("script-extension")
         ChimahonRepoExtensionEntry(
-            repoBaseUrl = repoBaseUrl,
-            id = entry.stringValue("id", "pkg", "package", "packageName", "package_name") ?: fallbackId,
-            name = entry.stringValue("name") ?: fallbackId,
-            version = entry.stringValue("version", "versionName", "version_name") ?: "remote",
+            repoBaseUrl = baseUrl,
+            id = entry.stringValue("id", "pkg", "package", "packageName", "package_name", "pkgName")
+                ?: fallbackId,
+            name = entry.stringValue("name", "displayName", "display_name") ?: fallbackId,
+            version = entry.stringValue("version", "versionName", "version_name", "code", "versionCode")
+                ?: "remote",
             artifactUrl = scriptUrl,
+            packageType = ChimahonExtensionPackageType.JavaScript,
+            language = entry.stringValue("lang", "language") ?: entry.commonSourceLanguage(),
+            sourceCount = entry.sourceCount(),
+            isNsfw = entry.nsfwValue(),
         )
     }
     val apkEntries = objects.mapNotNull { entry ->
-        val resources = entry.objectValue("resources")
-        val sources = entry.arrayValue("sources")
-        val apkName = entry.stringValue("apk", "apkUrl", "apk_url", "downloadUrl", "download_url")
-            ?: resources?.stringValue("apkUrl", "apk_url", "downloadUrl", "download_url", "url")
+        val resources = entry.objectValue("resources", "assets", "files", "download")
+        val type = entry.stringValue("type", "kind", "packageType", "package_type").orEmpty()
+        val explicitApk = entry.stringValue("apk", "apkName", "apk_name", "apkUrl", "apk_url")
+            ?: resources?.stringValue("apk", "apkName", "apk_name", "apkUrl", "apk_url")
+        val apkName = explicitApk
+            ?: (
+                entry.stringValue("downloadUrl", "download_url", "artifactUrl", "artifact_url", "url", "file", "filename")
+                    ?: resources?.stringValue(
+                        "downloadUrl",
+                        "download_url",
+                        "artifactUrl",
+                        "artifact_url",
+                        "url",
+                        "file",
+                        "filename",
+                    )
+                )?.takeIf { candidate ->
+                type.contains("apk", ignoreCase = true) || candidate.looksLikeApkArtifact()
+            }
             ?: return@mapNotNull null
-        val packageName = entry.stringValue("pkg", "package", "packageName", "package_name", "id")
+        val packageName = entry.stringValue("pkg", "package", "packageName", "package_name", "pkgName", "id")
             ?: return@mapNotNull null
-        val name = entry.stringValue("name")
+        val name = entry.stringValue("name", "displayName", "display_name")
             ?.substringAfter("Tachiyomi: ")
             ?.substringAfter("Mihon: ")
             ?: packageName.substringAfterLast(".")
         ChimahonRepoExtensionEntry(
-            repoBaseUrl = repoBaseUrl,
+            repoBaseUrl = baseUrl,
             id = packageName,
             name = name,
-            version = entry.stringValue("version", "versionName", "version_name") ?: "remote",
-            artifactUrl = resolveApkRepoUrl(repoBaseUrl, apkName),
+            version = entry.stringValue("version", "versionName", "version_name", "code", "versionCode")
+                ?: "remote",
+            artifactUrl = resolveApkRepoUrl(baseUrl, apkName),
             packageType = ChimahonExtensionPackageType.AndroidApk,
-            language = entry.stringValue("lang", "language")
-                ?: sources?.firstNotNullOfOrNull { source ->
-                    (source as? JsonObject)?.stringValue("lang", "language")
-                }
-                ?: "",
-            sourceCount = sources?.size ?: 0,
+            language = entry.stringValue("lang", "language") ?: entry.commonSourceLanguage(),
+            sourceCount = entry.sourceCount(),
             isNsfw = entry.nsfwValue(),
         )
     }
-    return scriptEntries + apkEntries
+    return (scriptEntries + apkEntries)
+        .distinctBy { entry -> "${entry.packageType}:${entry.id}:${entry.artifactUrl}" }
 }
 
 private fun JsonObject.nsfwValue(): Boolean {
-    intValue("nsfw")?.let { return it != 0 }
+    booleanValue("isNsfw", "is_nsfw", "nsfw", "adult")?.let { return it }
     val contentWarning = stringValue("contentWarning", "content_warning")
     return contentWarning?.contains("NSFW", ignoreCase = true) == true ||
-        contentWarning?.contains("ADULT", ignoreCase = true) == true
+        contentWarning?.contains("ADULT", ignoreCase = true) == true ||
+        sourcesNsfw()
 }
 
 private fun resolveRepoUrl(baseUrl: String, value: String): String {
-    if (value.startsWith("https://") || value.startsWith("http://")) return value
-    if (value.startsWith("/")) {
-        return "https://${baseUrl.removePrefix("https://").substringBefore("/")}$value"
+    val normalized = value.trim()
+    if (normalized.startsWith("https://", ignoreCase = true) ||
+        normalized.startsWith("http://", ignoreCase = true)
+    ) {
+        return normalized
     }
-    return "${baseUrl.trimEnd('/')}/${value.trimStart('/')}"
+    if (normalized.startsWith("/")) {
+        val scheme = baseUrl.substringBefore("://", "https")
+        val host = baseUrl.substringAfter("://", baseUrl).substringBefore("/")
+        return "$scheme://$host$normalized"
+    }
+    return "${baseUrl.trimEnd('/')}/${normalized.trimStart('/')}"
 }
 
 private fun resolveApkRepoUrl(baseUrl: String, value: String): String {
-    if (value.startsWith("https://") || value.startsWith("http://")) return value
+    if (value.startsWith("https://", ignoreCase = true) ||
+        value.startsWith("http://", ignoreCase = true)
+    ) {
+        return value
+    }
     val normalized = value.trimStart('/')
     val apkPath = if (normalized.contains("/")) normalized else "apk/$normalized"
     return resolveRepoUrl(baseUrl, apkPath)
+}
+
+private fun String.looksLikeJavaScriptArtifact(): Boolean {
+    return substringBefore("?").substringBefore("#").endsWith(".js", ignoreCase = true)
+}
+
+private fun String.looksLikeApkArtifact(): Boolean {
+    return substringBefore("?").substringBefore("#").endsWith(".apk", ignoreCase = true)
+}
+
+private fun String.artifactFallbackId(fallback: String): String {
+    return substringAfterLast("/")
+        .substringBefore("?")
+        .substringBefore("#")
+        .substringBeforeLast(".")
+        .ifBlank { fallback }
 }
 
 private fun String.normalizedExternalWebUrlOrNull(): String? {
@@ -2646,6 +3142,21 @@ private fun mangaStatus(status: Long): String = when (status) {
 private fun formatTimestamp(epochSeconds: Long): String {
     if (epochSeconds <= 0L) return "Unknown time"
     return "Unix $epochSeconds"
+}
+
+private fun String.toGlensLanguageCode(): String {
+    return when (trim().lowercase()) {
+        "jp", "jpn", "ja", "japanese" -> "ja"
+        "cn", "zh", "chinese" -> "zh"
+        "kr", "ko", "kor", "korean" -> "ko"
+        "gb", "uk", "us", "en", "english" -> "en"
+        "es", "spanish" -> "es"
+        "fr", "french" -> "fr"
+        "de", "german" -> "de"
+        "pt", "portuguese" -> "pt"
+        "ar", "arabic" -> "ar"
+        else -> take(2).lowercase().ifBlank { "ja" }
+    }
 }
 
 private fun ChimahonFileTreeStats.toStorageSection(path: Path): ChimahonStorageSection {
@@ -2730,6 +3241,7 @@ internal fun clearDirectoryContents(
 internal const val APP_NAME = "chimahon"
 internal const val DATABASE_DIRECTORY = "database"
 internal const val DATABASE_NAME = "chimahon.db"
+internal const val ANIME_DATABASE_NAME = "chimahon-anime.db"
 internal const val SETTINGS_FILE_NAME = "chimahon.settings"
 
 private const val CHAPTER_SHOW_BOOKMARKED = 0x00000020L
@@ -2737,8 +3249,10 @@ private const val CHAPTER_SHOW_NOT_BOOKMARKED = 0x00000040L
 private const val DEFAULT_SERVICE_PAGE_SIZE = 50
 private const val DEFAULT_LIBRARY_CATEGORY_ID = 0L
 private const val MAX_THUMBNAIL_CACHE_ENTRIES = 192
+private const val MAX_READER_OCR_CACHE_ENTRIES = 96
 private const val SCRIPT_EXTENSION_SUFFIX = ".js"
 private const val DOWNLOAD_PAGE_FETCH_PROGRESS_PERCENT = 90
 private const val DOWNLOAD_WRITING_PROGRESS_PERCENT = 95
 private const val DOWNLOAD_COLLISION_SUFFIX_LENGTH = 6
 private const val MAX_SOURCE_EMPTY_PAGE_ADVANCE = 4
+private val GITHUB_RAW_PATH_SEGMENTS = setOf("blob", "raw", "tree")

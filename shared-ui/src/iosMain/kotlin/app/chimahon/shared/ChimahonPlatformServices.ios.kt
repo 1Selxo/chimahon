@@ -15,6 +15,7 @@ import tachiyomi.core.platform.storage.PlatformStorageDirectories
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseHandler
 import tachiyomi.data.NativeDatabaseHandler
+import tachiyomi.mi.data.AnimeDatabase
 
 internal actual class ChimahonPlatformServices actual constructor() {
     actual val platformName: String = "iOS"
@@ -35,7 +36,15 @@ internal actual class ChimahonPlatformServices actual constructor() {
             (databaseDirectory / DATABASE_NAME).toString()
         },
     )
+    private val animeDatabaseDriver = NativeDatabaseDriverFactory().create(
+        schema = AnimeDatabase.Schema,
+        name = run {
+            FileSystem.SYSTEM.createDirectories(databaseDirectory)
+            (databaseDirectory / ANIME_DATABASE_NAME).toString()
+        },
+    )
     actual val database: Database = createDatabase(databaseDriver)
+    actual val animeDatabase: AnimeDatabase = createAnimeDatabase(animeDatabaseDriver)
     actual val databaseHandler: DatabaseHandler = NativeDatabaseHandler(database, databaseDriver)
     actual val javaScriptRuntimeFactory: JavaScriptRuntimeFactory = IosJavaScriptRuntimeFactory
 
@@ -52,6 +61,13 @@ internal actual class ChimahonPlatformServices actual constructor() {
         }
     }
 
+    actual suspend fun recognizeReaderOcr(
+        bytes: ByteArray,
+        languageCode: String,
+    ): List<ChimahonReaderOcrBlock> {
+        return IosVisionOcrClient.recognize(bytes = bytes, languageCode = languageCode)
+    }
+
     actual fun openExternalUrl(url: String): Boolean {
         return ChimahonPlatformIntegration.openExternalUrl(url)
     }
@@ -59,6 +75,7 @@ internal actual class ChimahonPlatformServices actual constructor() {
     actual fun close() {
         apkExtensionManager.close()
         databaseDriver.close()
+        animeDatabaseDriver.close()
     }
 }
 

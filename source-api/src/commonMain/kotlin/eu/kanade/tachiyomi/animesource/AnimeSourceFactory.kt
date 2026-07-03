@@ -1,5 +1,5 @@
 package eu.kanade.tachiyomi.animesource
 
-interface AnimeSourceFactory {
+expect interface AnimeSourceFactory {
     fun createSources(): List<AnimeSource>
 }

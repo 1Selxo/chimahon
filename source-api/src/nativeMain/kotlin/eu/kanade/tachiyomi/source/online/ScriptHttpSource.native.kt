@@ -10,7 +10,6 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.headers
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
@@ -191,10 +190,7 @@ class ScriptHttpSource(
 }
 
 private class NativeScriptHttpClient {
-    private val client = HttpClient(CIO) {
-        expectSuccess = false
-        followRedirects = true
-    }
+    private val client = createNativeScriptHttpClient()
 
     suspend fun execute(scriptRequest: ScriptHttpRequest): ScriptHttpResponse {
         val response = request(scriptRequest)
@@ -244,6 +240,8 @@ private class NativeScriptHttpClient {
 }
 
 private val nativeScriptHttpClient = NativeScriptHttpClient()
+
+internal expect fun createNativeScriptHttpClient(): HttpClient
 
 private fun ScriptMangasPage.toMangasPage(): MangasPage = MangasPage(
     mangas = mangas.map(ScriptManga::toSManga),

@@ -3,8 +3,6 @@ package app.chimahon.shared
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.ScriptHttpSource
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.headers
 import io.ktor.client.request.request
 import io.ktor.client.statement.readRawBytes
@@ -103,10 +101,7 @@ internal actual suspend fun loadSourcePageImage(
     }
 }
 
-private val sourceImageHttpClient = HttpClient(CIO) {
-    expectSuccess = false
-    followRedirects = true
-}
+private val sourceImageHttpClient = createChimahonHttpClient()
 
 private const val IOS_IMAGE_USER_AGENT = "Chimahon iOS"
 private const val IOS_IMAGE_ACCEPT = "image/avif,image/webp,image/*,*/*;q=0.8"

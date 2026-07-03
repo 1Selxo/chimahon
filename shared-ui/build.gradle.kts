@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 
 plugins {
     kotlin("multiplatform")
+    kotlin("plugin.serialization")
     id("org.jetbrains.kotlin.plugin.compose")
     id("mihon.code.lint")
 }
@@ -35,8 +36,8 @@ kotlin {
             implementation(projects.sourceApi)
             implementation(project.dependencies.platform(kotlinx.coroutines.bom))
             implementation(kotlinx.coroutines.core)
+            implementation(kotlinx.serialization.protobuf)
             implementation("io.ktor:ktor-client-core:3.5.0")
-            implementation("io.ktor:ktor-client-cio:3.5.0")
             implementation("org.jetbrains.compose.runtime:runtime:$composeMultiplatformVersion")
             implementation("org.jetbrains.compose.foundation:foundation:$composeMultiplatformVersion")
             // JetBrains last published the multiplatform extended icon pack at 1.7.3.
@@ -49,10 +50,23 @@ kotlin {
             dependencies {
                 implementation("de.femtopedia.dex2jar:dex-translator:2.4.36")
                 implementation("de.femtopedia.dex2jar:dex-tools:2.4.36")
+                implementation("io.ktor:ktor-client-cio:3.5.0")
                 implementation("net.dongliu:apk-parser:2.6.10")
                 implementation("org.ow2.asm:asm:9.9.1")
                 implementation("org.ow2.asm:asm-commons:9.9.1")
             }
+        }
+        val iosMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                implementation("io.ktor:ktor-client-darwin:3.5.0")
+            }
+        }
+        val iosArm64Main by getting {
+            dependsOn(iosMain)
+        }
+        val iosSimulatorArm64Main by getting {
+            dependsOn(iosMain)
         }
         val desktopTest by getting {
             dependencies {

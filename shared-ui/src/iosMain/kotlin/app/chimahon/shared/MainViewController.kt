@@ -16,5 +16,5 @@ fun MainViewController(): UIViewController = ComposeUIViewController {
     }
     ChimahonServiceApp(services)
 }.apply {
-    view.backgroundColor = UIColor.systemBackgroundColor
+    view.backgroundColor = UIColor.whiteColor
 }

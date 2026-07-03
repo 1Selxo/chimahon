@@ -69,12 +69,9 @@ import tachiyomi.core.database.AndroidDatabaseDriverFactory
 import tachiyomi.data.AndroidDatabaseHandler
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseHandler
-import tachiyomi.data.DateColumnAdapter
 import tachiyomi.data.FetchTypeColumnAdapter
-import tachiyomi.data.History
 import tachiyomi.data.MangaUpdateStrategyColumnAdapter
 import tachiyomi.data.Mangas
-import tachiyomi.data.Reading_sessions
 import tachiyomi.data.StringListColumnAdapter
 import tachiyomi.data.handlers.anime.AndroidAnimeDatabaseHandler
 import tachiyomi.data.handlers.anime.AnimeDatabaseHandler
@@ -92,7 +89,6 @@ import tachiyomi.source.local.image.anime.LocalEpisodeThumbnailManager
 import tachiyomi.source.local.io.LocalSourceFileSystem
 import tachiyomi.source.local.io.anime.LocalAnimeSourceFileSystem
 import tachiyomi.source.local.entries.anime.LocalAnimeFetchTypeManager
-import dataanime.Animehistory
 import uy.kohesive.injekt.api.InjektModule
 import uy.kohesive.injekt.api.InjektRegistrar
 import uy.kohesive.injekt.api.addSingleton
@@ -146,15 +142,8 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory {
             Database(
                 driver = get(),
-                historyAdapter = History.Adapter(
-                    last_readAdapter = DateColumnAdapter,
-                ),
                 mangasAdapter = Mangas.Adapter(
                     genreAdapter = StringListColumnAdapter,
-                    update_strategyAdapter = MangaUpdateStrategyColumnAdapter,
-                ),
-                reading_sessionsAdapter = Reading_sessions.Adapter(
-                    read_atAdapter = DateColumnAdapter,
                 ),
             )
         }
@@ -193,9 +182,6 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory {
             AnimeDatabase(
                 driver = sqlDriverAnime,
-                animehistoryAdapter = Animehistory.Adapter(
-                    last_seenAdapter = DateColumnAdapter,
-                ),
                 animesAdapter = dataanime.Animes.Adapter(
                     genreAdapter = StringListColumnAdapter,
                     update_strategyAdapter = MangaUpdateStrategyColumnAdapter,
